@@ -51,12 +51,23 @@ export function createHttpShell({ log }) {
       if (pathname.startsWith(prefix) && (!best || prefix.length > best.prefix.length)) best = { prefix, route };
     }
     if (!best) return json(res, 404, { error: 'not found' });
-    try {
-      best.route.handler(req, res);
-    } catch (err) {
+    // One attribution path for both failure timings. A rejected thenable lands
+    // here on a later tick, so the response-state guards must be re-checked
+    // then: the handler may already have fully responded (log-only) or already
+    // have headers out (destroy the socket, never double-respond).
+    const fail = (err) => {
       log.error(`http: ${best.route.owner} handler failed`, `${req.method} ${pathname}`, err);
-      if (res.headersSent) res.destroy(); // too late for a clean 500 — kill the socket, never double-respond
+      if (res.writableEnded) return; // full response already went out: logging is the whole remedy
+      if (res.headersSent) res.destroy();
       else json(res, 500, { error: err?.message ?? String(err) });
+    };
+    try {
+      const result = best.route.handler(req, res);
+      // Async handler: the sync try/catch above cannot see its rejection —
+      // without this, one rejected plugin promise kills the whole kernel.
+      if (result && typeof result.catch === 'function') result.catch(fail);
+    } catch (err) {
+      fail(err);
     }
   };
 

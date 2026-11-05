@@ -140,6 +140,40 @@ test('throw after headers sent → socket destroyed, no double-respond, still at
   } finally { await t.close(); }
 });
 
+test('async handler rejecting before headers → 500 {error}, owner attributed, no crash', { timeout: 5000 }, async () => {
+  const t = await boot();
+  try {
+    t.shell.register({ prefix: '/api/async', owner: 'plugin-async', handler: async () => {
+      await new Promise((r) => setTimeout(r, 10));
+      throw new Error('async boom');
+    }});
+    const r = await getJson(t.base, '/api/async');
+    assert.equal(r.status, 500);
+    assert.deepEqual(r.body, { error: 'async boom' });
+    assert.equal(t.errors.length, 1);
+    assert.match(String(t.errors[0]), /plugin-async/);
+    assert.match(String(t.errors[0]), /async boom/);
+  } finally { await t.close(); }
+});
+
+test('async handler rejecting after a full response → response intact, log-only, no double-write', { timeout: 5000 }, async () => {
+  const t = await boot();
+  try {
+    t.shell.register({ prefix: '/api/done-then-fail', owner: 'plugin-late', handler: async (req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ done: true }));
+      await new Promise((r) => setTimeout(r, 10));
+      throw new Error('post-response boom');
+    }});
+    const r = await getJson(t.base, '/api/done-then-fail'); // client still got the real 200 body
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, { done: true });
+    await waitUntil(() => t.errors.length === 1); // rejection lands on a later tick: wait for the log
+    assert.match(String(t.errors[0]), /plugin-late/);
+    assert.match(String(t.errors[0]), /post-response boom/);
+  } finally { await t.close(); }
+});
+
 test('register: duplicate prefix throws; prefix must start with "/"; kernel routes reserved', () => {
   const { log } = fakeLog();
   const shell = createHttpShell({ log });
