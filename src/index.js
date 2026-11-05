@@ -66,11 +66,16 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
   ];
 
   // Scan the roots for plugin dirs. The manifest id is read through the same
-  // cache-busted import the loader uses, so the module cache absorbs the
-  // double import and a plugin's top level never runs twice. `_`-prefixed
-  // dirs are scaffolding (_template), `.`-prefixed are not plugins; an
-  // unimportable dir is kept so activateAll records the failure instead of
-  // the plugin vanishing silently from every report.
+  // cache-busted import the loader uses, so an enabled plugin's module top
+  // level evaluates once per mtime (the loader's second import hits the
+  // module cache). Honest tradeoff, not a guarantee: this import runs for
+  // EVERY candidate dir — including plugins the enable table then filters
+  // out, so a disabled plugin's module top level still evaluates, and no
+  // timeout guards imports (the loader's 10s bound covers activate, not
+  // import): a disabled plugin with a hanging top-level await blocks boot
+  // and reload. `_`-prefixed dirs are scaffolding (_template), `.`-prefixed
+  // are not plugins; an unimportable dir is kept so activateAll records the
+  // failure instead of the plugin vanishing silently from every report.
   const discover = async () => {
     const found = [];
     for (const root of roots) {
@@ -128,13 +133,25 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
 
   // Four-phase reload (§2.5): drain → reverse teardown → rescan+activate →
   // afterAllActivated. loadPlugins re-reads plugins.json inside phase ③.
-  const reload = async ({ drainTimeoutMs = 5000 } = {}) => {
+  const doReload = async ({ drainTimeoutMs = 5000 } = {}) => {
     await lifecycle.fourPhase({ drainTimeoutMs, reloadFn: loadPlugins });
     return { active: [...lastLoad.active], failed: [...lastLoad.failed] };
   };
+  // Reloads are serialized through a chain: fourPhase is not reentrant, and
+  // two overlapping POSTs (or a POST racing a library reload()) would
+  // interleave their teardown/activation halves on the shared lifecycle —
+  // double activation and "prefix already registered" showing up as a false
+  // `failed` entry. Each caller awaits its own link's outcome; the chain
+  // itself swallows rejections so one bad reload cannot wedge the queue.
+  let reloadChain = Promise.resolve();
+  const reload = (opts) => {
+    const link = reloadChain.then(() => doReload(opts));
+    reloadChain = link.then(() => {}, () => {});
+    return link;
+  };
 
   let stopped = false;
-  const stop = async () => {
+  const stop = async ({ closeTimeoutMs = 5000 } = {}) => {
     if (stopped) return; // SIGINT then SIGTERM: the second signal must not re-run teardown
     stopped = true;
     // Phase-1-only stop semantics: drain while channels are still up, then
@@ -143,7 +160,20 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
     // failure must not skip the others.
     try { await lifecycle.drainEngine(5000); } catch (err) { logger.error('stop: engine drain failed', err); }
     try { await lifecycle.deactivateAll(); } catch (err) { logger.error('stop: deactivate failed', err); }
-    try { await http.close(); } catch (err) { logger.error('stop: http close failed', err); }
+    // http.close() waits out non-idle connections: a client wedged mid-request
+    // would hold stop() — and with it the lock release — hostage forever.
+    // Bounded wait; on timeout destroy the remaining connections by force.
+    try {
+      let settled = false;
+      let timer = null;
+      const closing = http.close().then(() => { settled = true; }, () => { settled = true; });
+      await Promise.race([closing, new Promise((resolve) => { timer = setTimeout(resolve, closeTimeoutMs); })]);
+      clearTimeout(timer); // the losing branch's timer must not linger
+      if (!settled) {
+        logger.warn(`stop: http close did not settle within ${closeTimeoutMs}ms, forcing connections closed`);
+        await http.forceClose();
+      }
+    } catch (err) { logger.error('stop: http close failed', err); }
     lock.release();
   };
 
@@ -169,7 +199,14 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
   }
 
   logger.info(`wao up: ${lastLoad.active.length} plugins on http://${host}:${http.port} (data: ${dir})`);
-  return { events, services, http, lifecycle, loader, portRegistry, status, reload, stop };
+  return {
+    events, services, http, lifecycle, loader, portRegistry, status, reload, stop,
+    // Not part of the library API surface: escape hatch for the CLI's
+    // second-signal force exit, so a wedged teardown cannot cost the
+    // operator the lock too (a released-then-leaked lock is adoptable on
+    // next boot anyway — config.js's stale-holder path).
+    releaseLock: lock.release,
+  };
 }
 
 // --- CLI (thin on purpose: parse, delegate, exit) ---------------------------
@@ -213,7 +250,19 @@ const cmdStart = async (flags) => {
   const st = kernel.status();
   console.log(`wao v${pkgVersion()} listening on http://${flags.host ?? '127.0.0.1'}:${st.port} (pid ${process.pid}, data ${st.dataDir})`);
   // Graceful stop (§1): SIGINT/SIGTERM run the four-phase teardown, then exit.
-  const shutdown = () => kernel.stop().then(() => process.exit(0));
+  let signalled = false;
+  const shutdown = () => {
+    if (signalled) {
+      // Force-exit hatch: a second signal during teardown means the operator
+      // wants out now — stop() may be wedged on a hung drain/effect past its
+      // own bounds. Best-effort lock release (idempotent, and a leaked lock
+      // is adoptable via the stale-holder path), then exit 0 immediately.
+      try { kernel.releaseLock(); } catch { /* best effort by definition */ }
+      process.exit(0);
+    }
+    signalled = true;
+    kernel.stop().then(() => process.exit(0));
+  };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
   return 0; // the listener keeps the process alive from here

@@ -7,6 +7,8 @@
 // loader only tell the truth against the real filesystem, not object doubles.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import net from 'node:net';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,7 +18,7 @@ import { createKernel } from '../../src/index.js';
 // {"type":"module"} so it parses as ESM on the Node 20 engines floor too.
 const writePlugin = (dir, manifestSrc, activateSrc = '') => {
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'plugin.js'), `export default { manifest: ${manifestSrc}, activate: async () => { ${activateSrc} } };`);
+  writeFileSync(join(dir, 'plugin.js'), `export default { manifest: ${manifestSrc}, activate: async (ctx) => { ${activateSrc} } };`);
   writeFileSync(join(dir, 'package.json'), '{"type":"module"}\n');
 };
 
@@ -138,4 +140,48 @@ test('EADDRINUSE boot rejects with the second-instance message and releases its 
       /in use \(second instance\?\)/,
     );
   }
+});
+
+test('stop() resolves within the close timeout when a client is wedged mid-request', { timeout: 8000 }, async () => {
+  const k = await start(dataDirWith(null), [emptyPluginsDir()]);
+  const sock = net.connect({ port: k.http.port, host: '127.0.0.1' });
+  await once(sock, 'connect');
+  // Incomplete request (no blank line): the server keeps waiting for headers,
+  // so the socket stays non-idle and an unbounded server.close() would hang.
+  sock.write('GET /healthz HTTP/1.1\r\nHost: localhost\r\n');
+  const began = Date.now();
+  await assert.doesNotReject(k.stop({ closeTimeoutMs: 300 }));
+  assert.ok(Date.now() - began < 4000, 'stop resolves via the bounded close, not by hanging');
+  const closed = await Promise.race([
+    once(sock, 'close').then(() => true),
+    new Promise((r) => setTimeout(() => r(false), 1000)),
+  ]);
+  assert.equal(closed, true, 'the wedged connection is destroyed once the timeout fires');
+});
+
+test('concurrent reloads serialize: each wave activates every plugin exactly once, none falsely failed', async () => {
+  delete globalThis.__waoPcActivations;
+  const dataDir = dataDirWith(null);
+  const pluginsDir = emptyPluginsDir();
+  // The route registration is the collision detector: overlapping four-phase
+  // reloads interleave their teardown/activation halves on the shared
+  // lifecycle, and the loser's register() throws "prefix already registered"
+  // → a false `failed` entry. The counter detects double activation.
+  writePlugin(
+    join(pluginsDir, 'p-c'),
+    "{ id: 'p-c', type: 'core', version: '1.0.0' }",
+    "globalThis.__waoPcActivations = (globalThis.__waoPcActivations ?? 0) + 1;"
+      + " ctx.http.register({ prefix: '/p-c', handler: (q, s) => s.end('hi') });",
+  );
+  const k = await start(dataDir, [pluginsDir]);
+  const url = base(k);
+  assert.equal(globalThis.__waoPcActivations, 1, 'boot activates once');
+  const waves = await Promise.all([k.reload(), k.reload(), k.reload(), k.reload(), k.reload()]);
+  for (const r of waves) {
+    assert.deepEqual(r.failed, [], 'no wave may report the healthy plugin as failed');
+    assert.deepEqual(r.active.map((a) => a.id), ['p-c']);
+  }
+  assert.equal(globalThis.__waoPcActivations, 6, 'boot + 5 waves, exactly one activation each');
+  assert.deepEqual(k.lifecycle.debugState().active, ['p-c'], 'no double-activated leftovers');
+  assert.equal(await (await fetch(url('/p-c'))).text(), 'hi');
 });

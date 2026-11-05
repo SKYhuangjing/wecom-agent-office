@@ -113,6 +113,16 @@ export function createHttpShell({ log }) {
         server.close(() => resolve()); // closing a non-listening server still calls back; that is fine here
       });
     },
+    // Force-exit counterpart for close(): destroy every live socket so a
+    // client wedged mid-request (or a handler that never responds) cannot
+    // hold server.close() — and with it kernel shutdown and the data-dir
+    // lock release — open indefinitely.
+    forceClose() {
+      if (!server) return Promise.resolve();
+      server.closeIdleConnections?.();
+      server.closeAllConnections?.();
+      return new Promise((resolve) => { server.close(() => resolve()); }); // second close() call: callback still fires
+    },
     get port() { return server?.listening ? server.address().port : null; },
   };
 }
