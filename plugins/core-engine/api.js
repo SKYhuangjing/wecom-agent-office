@@ -6,6 +6,7 @@
 // and EVERY JSON response is scrubbed by sanitize before serialization:
 // §8 — 响应永不回显 secret.
 import { saveBots, validateBot } from './bots.js';
+import { DRAIN_REFUSAL_TEXT } from './engine.js';
 
 const BODY_LIMIT_BYTES = 64 * 1024;
 const TEST_PROMPT = '回复：收到';
@@ -96,11 +97,35 @@ async function materialize(state, bot) {
 // DESIGN §8 校验→materialize→串行链 drain→重连: the bot's in-flight turn gets
 // its final frame and its ledger row lands BEFORE the adapter is torn down —
 // a swap that kills the chain mid-run would strand an unbooked turn.
+// The refusal-answer half of the per-bot drain: drainBot RECORDS this bot's
+// swept-pending and mid-swap refusals, but nothing on the engine's global
+// path ever sends them (a later global drain window even resets the list), so
+// answer them here — chains settled, old adapter still alive — per
+// DESIGN §2.5 「已入队任务：直接回拒绝终帧」. Entries of OTHER bots are left
+// in place for their own owners.
 const drainBotOf = async (state, botId) => {
   try {
     await state.engine.drainBot(botId);
   } catch (err) {
     state.log?.warn?.(`core-engine: drainBot(${botId}) before swap failed: ${err?.message ?? err}`);
+  }
+  const engine = state.engine;
+  if (!Array.isArray(engine?.drainRefusals)) return;
+  const mine = [];
+  const keep = [];
+  for (const r of engine.drainRefusals) {
+    if (r?.bot?.id === botId) mine.push(r); else keep.push(r);
+  }
+  if (mine.length === 0) return;
+  engine.drainRefusals = keep; // hand off synchronously: later refusals append to the fresh list
+  const adapter = state.adapterFor(botId);
+  for (const { msg } of mine) {
+    try {
+      if (adapter?.reply) await adapter.reply(msg.reqId, DRAIN_REFUSAL_TEXT);
+      else state.log?.warn?.(`core-engine: no adapter to answer the drain refusal for ${msg.chatKey}`);
+    } catch (err) {
+      state.log?.error?.(`core-engine: drain refusal reply failed: ${err?.message ?? err}`);
+    }
   }
 };
 

@@ -70,7 +70,9 @@ const ABORT_BANNER = '> ⚠️ 已被新消息打断';
 const ERROR_BANNER = '⚠️ 运行未正常结束';
 const EMPTY_DONE_TEXT = '（任务已完成）';
 const DRAIN_INFLIGHT_TEXT = '⚠️ 服务维护，任务已中断，请重发';
-const DRAIN_REFUSAL_TEXT = '⚠️ 服务维护，未处理，请重发';
+// Exported: api.js answers PER-BOT drain refusals with the same copy the
+// global sendDrainRefusals uses (one source for the user-facing line).
+export const DRAIN_REFUSAL_TEXT = '⚠️ 服务维护，未处理，请重发';
 const TRUNC_FINAL = '…（完整内容见会话页）';
 const TRUNC_PROGRESS = '…(内容较长，已截断)';
 const HANDOFF_HEADER = '以下是本对话此前的记录（供上下文参考）：';
@@ -530,8 +532,9 @@ export class Engine {
     }
     if (this._botDrains.has(bot.id)) {
       // Per-bot drain (PATCH/toggle/DELETE, DESIGN §8 串行链 drain): THIS bot
-      // is mid-swap; every other bot keeps running. Refused like a global
-      // drain so the message still gets its maintenance answer copy.
+      // is mid-swap; every other bot keeps running. Recorded like a global
+      // drain's refusals — but the ENGINE never sends these: the CRUD caller
+      // (api.js drainBotOf) replies to them before the old adapter dies.
       this.drainRefusals.push({ bot, msg, reason: 'draining' });
       this.log.warn?.(`engine: bot ${bot.id} draining (reconnect/delete), refused message for ${msg.chatKey}`);
       return;
@@ -687,14 +690,17 @@ export class Engine {
   }
 
   // Per-bot drain (DESIGN §8 校验→materialize→串行链 drain→重连): abort the
-  // bot's in-flight turns, clear its queued messages (recorded as refusals,
-  // same copy as a global drain) and await its chains — WITHOUT latching the
-  // global draining flag, so other bots' traffic is untouched. A per-bot
-  // latch refuses messages arriving mid-swap for THIS bot only, and the abort
-  // copy stays the maintenance line. The pending sweep and aborts run
-  // synchronously at call time (same-tick determinism as drain's latch).
-  // Bounded like drain(): a run ignoring its abort cannot wedge the swap.
-  // Returns true when the bot's chains settled in time, false on timeout.
+  // bot's in-flight turns, clear its queued messages (recorded as refusals)
+  // and await its chains — WITHOUT latching the global draining flag, so
+  // other bots' traffic is untouched. A per-bot latch refuses messages
+  // arriving mid-swap for THIS bot only, and the abort copy stays the
+  // maintenance line. The pending sweep and aborts run synchronously at call
+  // time (same-tick determinism as drain's latch). The recorded refusals are
+  // the CALLER's to answer (api.js drainBotOf replies before the adapter
+  // swap; the engine's global drain window RESETS the list, so leaving them
+  // here would silently drop them). Bounded like drain(): a run ignoring its
+  // abort cannot wedge the swap. Returns true when the bot's chains settled
+  // in time, false on timeout.
   drainBot(botId, timeoutMs = DRAIN_DEFAULT_TIMEOUT_MS) {
     if (typeof botId !== 'string' || botId === '') {
       throw new Error(`drainBot requires a non-empty bot id, got ${JSON.stringify(botId)}`);

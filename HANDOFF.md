@@ -34,7 +34,7 @@
 
 | 项 | 结果 |
 |---|---|
-| `npm test` | **254/254 pass, 0 fail**（含 e2e 六场景：happy/抢占/reload/换 provider 交接/凭证失败/secret 永不回显；2026-11-06 M1 终审修复 +11 用例：allowedUsers 执行/切回抢占丢 delta/drainBot/0600·0700/phase④ 韧性） |
+| `npm test` | **255/255 pass, 0 fail**（含 e2e 六场景：happy/抢占/reload/换 provider 交接/凭证失败/secret 永不回显；2026-11-06 M1 终审修复 +11 用例：allowedUsers 执行/切回抢占丢 delta/drainBot/0600·0700/phase④ 韧性；复审追加 +1：per-bot drain 拒答补发） |
 | `npm run contract -- --plugin plugins/provider-dsh --port dsh` | **11 passed, 0 failed, 0 skipped** |
 | `npm run contract`（_template 参考实现） | 4 passed, 7 skipped（skip=需真进程组/真 CLI 的组，预期） |
 | `bash test/smoke-dsh.sh`（真 dsh） | **PASS**：round1 暗号"菠萝"记住、round2 **同一 sessionId** `session-d3ede8e2…` 续跑答对、真 session 文件解码 2 turns / 0 warnings |
@@ -125,7 +125,7 @@ profile 成功并随 DELETE 清理。完整 minors 总账见 progress.md 各任�
 ## 6. 交接检查单
 
 ```sh
-npm test          # 254/254
+npm test          # 255/255
 npm run contract -- --plugin plugins/provider-dsh --port dsh   # 11/11
 bash test/smoke-dsh.sh      # 真 dsh PASS
 bash test/accept-m1.sh      # 真 dsh 验收 PASS

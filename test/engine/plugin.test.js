@@ -549,3 +549,74 @@ test('mid-run PATCH: the in-flight turn settles with its final frame BEFORE the 
 
   assert.equal((await fetch(url('/api/bots/hangbot'), { method: 'DELETE' })).status, 200);
 });
+
+// Re-review pin: per-bot drain REFUSALS must be answered by the CRUD swap —
+// drainBot records them, but the engine's global path never sends them (and a
+// later global drain window resets the list). The queued-never-acked message
+// must hear 「已入队任务：直接回拒绝终帧」, and OTHER bots' refusals must stay
+// for their own owners.
+test('per-bot drain answers its swept queued messages before the swap; other bots\' refusals are not consumed', async () => {
+  const REFUSAL = '⚠️ 服务维护，未处理，请重发';
+  const mk = (id) => ({ ...BOT_B1, id, providerConfig: { cwd: '/hang', mode: 'a' } });
+  assert.equal((await post('/api/bots', mk('qbot'))).status, 200);
+  assert.equal((await post('/api/bots', mk('obot'))).status, 200);
+  await waitFor(() => globalThis.__waoFakeAdapters.get('qbot') != null && globalThis.__waoFakeAdapters.get('obot') != null, 'both attached');
+  const svc = kernel.services.get('engine');
+  const doc = () => loadBots(join(dataDir, 'bots.json')).bots;
+
+  // Gate each bot's adapter: a first turn parks inside the (gated) ack, so a
+  // second message on the same chatKey preempts-merges into pending — the
+  // exact never-acked population a drain sweeps into drainRefusals.
+  const gate = (id) => {
+    const a = globalThis.__waoFakeAdapters.get(id);
+    const g = { marks: [], open: null };
+    const parked = new Promise((r) => { g.open = r; });
+    a.ack = async () => { g.marks.push('ack-park'); await parked; };
+    a.reply = async (reqId, text) => { g.marks.push(`reply:${reqId}:${text}`); };
+    a.stop = () => { g.marks.push('adapter-stop'); };
+    return g;
+  };
+  const gq = gate('qbot');
+  const go = gate('obot');
+  const send = (bot, chat, reqId, text) =>
+    svc.onMessage(bot, { reqId, chatKey: chat, chatKind: 'group', chatid: chat.split(':')[2], userid: 'u1', text, raw: {} });
+
+  send(doc().find((b) => b.id === 'qbot'), 'fake:group:Q', 'q1', '第一条');
+  await waitFor(() => gq.marks.includes('ack-park'), 'q1 parked in ack');
+  send(doc().find((b) => b.id === 'qbot'), 'fake:group:Q', 'q2', '排队的'); // preempt: q2 merged into pending
+  send(doc().find((b) => b.id === 'obot'), 'fake:group:O', 'o1', '另一bot第一条');
+  await waitFor(() => go.marks.includes('ack-park'), 'o1 parked in ack');
+  send(doc().find((b) => b.id === 'obot'), 'fake:group:O', 'o2', '另一bot排队');
+
+  // Fire both PATCHes without awaiting. saveBots runs in the SAME synchronous
+  // block as drainBot's pending sweep, so a persisted patch mode proves the
+  // sweep already happened — the gates then hold both chains parked.
+  const patchQ = patch('/api/bots/qbot', { providerConfig: { cwd: '/tmp', mode: 'b' } });
+  await waitFor(() => doc().find((b) => b.id === 'qbot')?.providerConfig?.mode === 'b', 'qbot drain swept its pending');
+  const patchO = patch('/api/bots/obot', { providerConfig: { cwd: '/tmp', mode: 'b' } });
+  await waitFor(() => doc().find((b) => b.id === 'obot')?.providerConfig?.mode === 'b', 'obot drain swept its pending');
+
+  try {
+    gq.open(); // q1 settles (pre-runner abort), qbot's drain completes and answers
+    assert.equal((await patchQ).status, 200);
+    assert.ok(gq.marks.includes(`reply:q2:${REFUSAL}`), `the queued message got the refusal copy: ${JSON.stringify(gq.marks)}`);
+    assert.ok(gq.marks.indexOf(`reply:q2:${REFUSAL}`) < gq.marks.indexOf('adapter-stop'), 'answered BEFORE the old adapter died');
+    assert.ok(!gq.marks.some((m) => m.startsWith('reply:o2')), "qbot's answering never touches another bot's refusal");
+    assert.ok(!go.marks.some((m) => m.startsWith('reply:')), `obot's refusal left unconsumed so far: ${JSON.stringify(go.marks)}`);
+
+    go.open(); // obot's own swap answers its own refusal
+    assert.equal((await patchO).status, 200);
+    assert.ok(go.marks.includes(`reply:o2:${REFUSAL}`), `obot's queued message answered by obot's own swap: ${JSON.stringify(go.marks)}`);
+
+    // Only the two interrupted first-turns are booked; the queued messages
+    // never ran (pending, never acked) and never reached the runner.
+    const qrows = await (await get('/api/ledger?bot=qbot')).json();
+    assert.deepEqual(qrows.map((r) => [r.user, r.reason]), [['第一条', 'interrupted']]);
+  } finally {
+    gq.open(); go.open(); // a failed assert must not leave turns parked on the gates
+    await Promise.allSettled([patchQ, patchO]); // nor floating request promises
+  }
+
+  assert.equal((await fetch(url('/api/bots/qbot'), { method: 'DELETE' })).status, 200);
+  assert.equal((await fetch(url('/api/bots/obot'), { method: 'DELETE' })).status, 200);
+});
