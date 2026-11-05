@@ -10,6 +10,8 @@
 // defaultProfile() — loud failure over silent skipping when someone forgets
 // to declare capabilities.
 import { join } from 'node:path';
+import { writeFileSync } from 'node:fs';
+import { zstdCompressSync } from 'node:zlib';
 
 export const PROFILES = {
   // plugins/_template/provider — the reference implementation the suite must
@@ -42,13 +44,22 @@ export const PROFILES = {
     // Where readHistory looks for a session file, relative to providerConfig
     // cwd. THE CONVENTION the suite and provider-dsh share (see README).
     historyPath: (cwd, sessionId) => join(cwd, 'sessions', `${sessionId}.zst`),
-    // Oversized-history fixture writer (2500 turns) — deliberately a hook:
-    // it must produce the provider's REAL on-disk format (zstd multi-frame
-    // for dsh), which only the provider task can encode. null → the huge
-    // case reports SKIP; Task 18 implements it (generate via dsh itself, or
-    // check in a compressed fixture). missing/corrupt cases are
-    // format-agnostic and always run.
-    hugeHistory: null,
+    // Oversized-history fixture writer — produces the provider's REAL on-disk
+    // format: a multi-frame zstd (3 frames; real dsh appends frames, so the
+    // decoder path under test is the real one) holding a session.v4-style
+    // JSONL with 2500 user/assistant turns. Built with node:zlib
+    // zstdCompressSync (Node 24 ships it) — no external zstd dependency.
+    hugeHistory: async (path) => {
+      const events = [{ type: 'session', createdAt: 1 }];
+      for (let i = 0; i < 2500; i++) {
+        events.push({ type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: `问题 ${i}` }] } });
+        events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: `回答 ${i}` }] } }, time: 100 + i });
+      }
+      const jsonl = events.map((e) => JSON.stringify(e)).join('\n') + '\n';
+      const chunk = Math.ceil(jsonl.length / 3);
+      writeFileSync(path, Buffer.concat([0, 1, 2].map((i) =>
+        zstdCompressSync(Buffer.from(jsonl.slice(i * chunk, (i + 1) * chunk), 'utf8')))));
+    },
     makeRunnerArgs: ({ cwd, mode, fakeHome, wrapBin }) => ({ dshBin: wrapBin(mode, fakeHome), cwd }),
   },
 };

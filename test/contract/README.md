@@ -58,9 +58,10 @@ FAKE_MODE/FAKE_HOME 后 `exec` fake-dsh，pid 不变），provider 只需兑现
 缺文件 warnings"把它变成显性 FAIL；正确做法是给该端口登记带真实 `historyPath`
 的 profile。
 
-## T18（provider-dsh）对接预期
+## T18（provider-dsh）对接状态
 
-`npm run contract -- --plugin plugins/provider-dsh` 应全绿（0 failed）。需要做的：
-runner 兑现 dshBin spawn / SIGTERM→SIGKILL 升级 / exit 3+stderr→lock-conflict /
-error 事件→missing-credential / `--session-id` resume argv / 统一事件映射（tool 的
-brief 含命令摘要）；readHistory 按 `sessions/<id>.zst` 约定读取并补 `hugeHistory`。
+已落地（11/11 全绿，0 skipped）：runner 兑现 dshBin spawn / SIGTERM→SIGKILL 升级 /
+exit 3+stderr→lock-conflict / error 事件→missing-credential / `--session-id` resume
+argv / 统一事件映射（tool 的 brief 含命令摘要）；readHistory 按 `sessions/<id>.zst`
+约定读取，`hugeHistory` 钩子用 node:zlib `zstdCompressSync` 生成 3 帧 zstd × 2500
+轮的真实格式 fixture。
