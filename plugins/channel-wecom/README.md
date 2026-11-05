@@ -10,6 +10,8 @@
   `connecting|online|reconnecting|stopped`；被踢（`disconnected_event`）即停机不重连；
   鉴权失败（subscribe ack `errcode≠0`）快速失败：`stopped` + `鉴权失败(errcode)`，
   只安排封顶 5 分钟的单次重试，不进快速退避循环。
+  运维注意：鉴权失败后的 5 分钟重试窗口内 `state` 仍读 `stopped`，但已静默排定一次
+  重试——`stopped` 未必是终态，以 `lastError`（`鉴权失败(...)`）区分。
 - `adapter.js` — channel 端口适配器：
   - 入站：`aibot_msg_callback` → 文本提取（`text`/`mixed` 文本部分；非文本、空 @
     分别用前身逐字文案回复）→ `engine.onMessage({botId, chatKey, chatKind, chatid,
@@ -19,8 +21,10 @@
     `welcome` → `respondWelcome`；`push(chatRef, text)` → `sendMarkdown`（`wecom:group:*`
     → chat_type 2，`wecom:single:*` → 1；4000 字截断；每 chatid 25 条/60s 限流，超限丢弃并 warn）。
   - 限流：入站每 chatid 30 条/60s（移植 bridge `_rateOk`）。
-  - 断线 final 补发（DESIGN §4）：`finish=true` 帧发送失败 → 暂存，客户端重连
-    `online` 后 best-effort 补发并清空。
+  - 断线 final 补发（DESIGN §4）：`finish=true` 帧发送失败 → 按 chatKey 暂存（同一
+    会话的新 final 覆盖旧的），客户端重连 `online` 后经 `push`（`aibot_send_msg`，
+    受 25 条/60s 推送限流）best-effort 补发；**不走 `respond_stream`**——回调 `req_id`
+    只在原连接的回调窗口内有效，跨连接复用未经验证（前身 `/send` 即为此而生）。
 - `plugin.js` — manifest + `accountSchema`（`botId` / `secret`(password) / `wsUrl`）+
   `ctx.registerChannel('wecom', ...)`；WebSocket 由内核 `ctx.ws` 注入，插件零 npm 依赖。
 

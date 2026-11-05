@@ -6,7 +6,9 @@
 //   outbound: five primitives ack/progress/reply/welcome/push
 //   safety  : 30/min inbound guard + 25/60s push limiter per chatid (ported
 //             生产语义), 4000-char push truncation, 断线 final 补发 (a lost
-//             finish=true frame is replayed after the client is online again)
+//             finish=true frame is replayed as an aibot_send_msg push after
+//             reconnect — DESIGN §4; see the 'state' handler for why the
+//             stale req_id is never reused)
 import { createWecomClient } from './client.js';
 
 const DEFAULT_WS_URL = 'wss://openws.work.weixin.qq.com';
@@ -32,6 +34,9 @@ const PUSH_RATE_MAX = 25; // 25 pushes / 60s per chatid, drop + warn
 // Inbound: WeCom allows 30 msgs/min per chat (bridge._rateOk, ported).
 const RATE_MAX = 30;
 const RATE_WINDOW_MS = 60000;
+// reqId→chatKey bound: only a reqId that arrived moments ago can still get a
+// final frame, so the most recent 256 mappings are plenty; oldest evicted.
+const REQ_CHAT_KEY_MAX = 256;
 
 // Ported from wecom-bridge bridge.js _extractText — with one deliberate
 // refinement: a `mixed` message whose parts contain NO text at all is
@@ -79,8 +84,12 @@ export function createAdapter({ account, bot, log, engine, WebSocket }) {
   // Per-chatid rate windows (ported bridge._rateOk shape).
   const inboundRate = new Map(); // chatid -> {count, windowStart}
   const pushRate = new Map(); // chatid -> {count, windowStart}
-  // 断线 final 补发 (DESIGN §4): reqId -> {reqId, streamId, text}
+  // 断线 final 补发 (DESIGN §4): chatKey -> {text}; a NEWER final for the
+  // same chat overwrites the queued older one.
   const pendingFinal = new Map();
+  // reqId -> chatKey for inbound messages that reached the engine; lets a
+  // failed final be re-addressed to the CHAT (push) instead of the req_id.
+  const reqChatKey = new Map();
 
   function rateOk(map, chatid, max) {
     const now = Date.now();
@@ -100,8 +109,14 @@ export function createAdapter({ account, bot, log, engine, WebSocket }) {
     return fn().catch((e) => {
       log.warn?.(`channel-wecom: send failed: ${e?.message || e}`);
       if (meta?.finish) {
-        pendingFinal.set(meta.reqId, meta);
-        log.info?.(`channel-wecom: final frame queued for replay reqId=${meta.reqId}`);
+        // Replay target is the CHAT (chatKey), not the failed req_id.
+        const chatKey = reqChatKey.get(meta.reqId);
+        if (!chatKey) {
+          log.warn?.(`channel-wecom: cannot queue final replay, no chatKey known for reqId=${meta.reqId}`);
+          return null;
+        }
+        pendingFinal.set(chatKey, { text: meta.text });
+        log.info?.(`channel-wecom: final frame queued for push replay chatKey=${chatKey}`);
       }
       return null;
     });
@@ -136,6 +151,12 @@ export function createAdapter({ account, bot, log, engine, WebSocket }) {
     const chatid = m[2];
     const chatType = m[1] === 'group' ? 2 : 1;
     let content = String(text ?? '');
+    // Predecessor /send semantics: empty (or whitespace-only) content is
+    // rejected with a warn, never sent.
+    if (!content.trim()) {
+      log.warn?.(`channel-wecom: push rejected, empty text for chatid=${chatid}`);
+      return Promise.resolve(null);
+    }
     if (content.length > MAX_PUSH_CHARS) content = content.slice(0, MAX_PUSH_CHARS - 1) + '…';
     if (!rateOk(pushRate, chatid, PUSH_RATE_MAX)) {
       log.warn?.(`channel-wecom: push rate limit hit for ${chatid}; dropped`);
@@ -172,7 +193,14 @@ export function createAdapter({ account, bot, log, engine, WebSocket }) {
       return;
     }
     const chatKind = chattype === 'group' ? 'group' : 'single';
-    engine.onMessage({ botId: bot.id, chatKey: `wecom:${chatKind}:${chatid}`, chatKind, chatid, userid, text, reqId, raw: msg });
+    const chatKey = `wecom:${chatKind}:${chatid}`;
+    // Remember reqId→chatKey so a later failed final can be replayed by push
+    // to the chat (bounded; only reqIds that reached the engine matter).
+    if (reqId) {
+      if (reqChatKey.size >= REQ_CHAT_KEY_MAX) reqChatKey.delete(reqChatKey.keys().next().value);
+      reqChatKey.set(reqId, chatKey);
+    }
+    engine.onMessage({ botId: bot.id, chatKey, chatKind, chatid, userid, text, reqId, raw: msg });
   });
 
   client.on('event', (msg) => {
@@ -205,17 +233,29 @@ export function createAdapter({ account, bot, log, engine, WebSocket }) {
     }
   });
 
-  // 断线 final 补发: once the client is online again (reconnected), flush
-  // every queued finish=true frame best-effort, then clear.
+  // 断线 final 补发 (DESIGN §4): once the client is online again (reconnected),
+  // flush every queued final via push (aibot_send_msg) — best-effort, subject
+  // to the 25/60s push limiter. respondStream is deliberately NOT used: a
+  // callback req_id belongs to the connection that delivered it and is only
+  // valid inside its short callback window; replaying the OLD connection's
+  // req_id on a NEW connection is unproven and unsafe. That is exactly why
+  // the predecessor's /send handler exists (wecom-bridge/src/index.js: there
+  // is no 5s callback window for proactive sends) and why DESIGN §4 mandates
+  // push for the replay.
   client.on('state', ({ state }) => {
     if (state !== 'online' || pendingFinal.size === 0) return;
-    const queued = [...pendingFinal.values()];
-    pendingFinal.clear();
-    for (const q of queued) {
-      log.info?.(`channel-wecom: replaying final frame reqId=${q.reqId}`);
-      client
-        .respondStream(q.reqId, q.streamId, q.text, true)
-        .catch((e) => log.warn?.(`channel-wecom: final replay failed reqId=${q.reqId}: ${e?.message || e}`));
+    for (const [chatKey, q] of [...pendingFinal]) {
+      log.info?.(`channel-wecom: replaying final via push chatKey=${chatKey}`);
+      try {
+        Promise.resolve(push(chatKey, q.text))
+          .then((ack) => {
+            if (ack) pendingFinal.delete(chatKey);
+            else log.warn?.(`channel-wecom: final push replay not confirmed for ${chatKey}; kept for next reconnect`);
+          })
+          .catch((e) => log.warn?.(`channel-wecom: final push replay failed for ${chatKey}: ${e?.message || e}`));
+      } catch (e) {
+        log.warn?.(`channel-wecom: final push replay failed for ${chatKey}: ${e?.message || e}`);
+      }
     }
   });
 
@@ -224,6 +264,11 @@ export function createAdapter({ account, bot, log, engine, WebSocket }) {
       client.start();
     },
     stop() {
+      // Observability: anything still queued is being dropped on the floor.
+      if (pendingFinal.size > 0) {
+        log.warn?.(`channel-wecom: stop() discarding ${pendingFinal.size} pending final replay(s)`);
+        pendingFinal.clear();
+      }
       client.stop();
     },
     status() {

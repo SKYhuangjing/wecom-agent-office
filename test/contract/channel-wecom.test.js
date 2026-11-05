@@ -363,12 +363,18 @@ test('disconnected_event → state stopped, kicked lastError, no reconnect for 5
   }
 });
 
-test('final frame lost on a dropped connection → replayed finish=true after reconnect', async () => {
+test('final frame lost on a dropped connection → replayed via push (aibot_send_msg) after reconnect; stop() discards the rest', async () => {
   const server = await startFakeWecom();
-  const adapter = makeAdapter(server, makeEngine(), makeLog());
+  const engine = makeEngine();
+  const log = makeLog();
+  const adapter = makeAdapter(server, engine, log);
   try {
     adapter.start();
     await until(() => adapter.status().state === 'online');
+
+    // inbound group message: reqId r-fin ↔ chatKey wecom:group:GF
+    server.sendToCurrent(msgCallback('r-fin', groupText('GF', 'u1', '跑个任务')));
+    await until(() => engine.messages.length === 1);
 
     await adapter.progress('r-fin', 'sid-fin', '第一段', false);
     await until(() => respondFrames(server).some((f) => f.body?.stream?.id === 'sid-fin'));
@@ -377,19 +383,32 @@ test('final frame lost on a dropped connection → replayed finish=true after re
     server.current().terminate();
     await until(() => adapter.status().state === 'reconnecting');
 
-    // final frame send fails → stored for replay (never throws to the engine)
+    // both final sends fail; the NEWER final for the chat wins the queue
+    await adapter.progress('r-fin', 'sid-fin', '旧答案', true);
     await adapter.progress('r-fin', 'sid-fin', '最终答案', true);
-    assert.ok(!respondFrames(server).some((f) => f.body?.stream?.finish === true), 'final not on the wire yet');
+    assert.ok(!respondFrames(server).some((f) => f.body?.stream?.finish === true), 'final not streamed on the dead connection');
 
-    // client reconnects (1s backoff), goes online → replay flush
+    // client reconnects (1s backoff), goes online → the replay must arrive
+    // as an aibot_send_msg push to the chat, NOT a respond_stream echo of
+    // the stale req_id (cross-connection req_id is unproven; DESIGN §4)
     await until(() => adapter.status().state === 'online', 10000);
-    await until(
-      () => respondFrames(server).some((f) => f.body?.stream?.id === 'sid-fin' && f.body.stream.finish === true),
-      5000,
-    );
-    const fin = respondFrames(server).find((f) => f.body?.stream?.finish === true);
-    assert.equal(fin.headers.req_id, 'r-fin');
-    assert.equal(fin.body.stream.content, '最终答案');
+    await until(() => server.frames.some((f) => f.cmd === 'aibot_send_msg'), 5000);
+    const pushes = server.frames.filter((f) => f.cmd === 'aibot_send_msg');
+    assert.equal(pushes.length, 1, 'exactly one replay push (newest final per chatKey)');
+    assert.equal(pushes[0].body.chatid, 'GF');
+    assert.equal(pushes[0].body.chat_type, 2); // wecom:group:GF → chat_type 2
+    assert.equal(pushes[0].body.markdown.content, '最终答案');
+    assert.ok(!respondFrames(server).some((f) => f.body?.stream?.finish === true), 'no stale-req_id respond_stream replay');
+
+    // stop() while another final is queued → discarded with one warn line
+    server.current().terminate();
+    await until(() => adapter.status().state === 'reconnecting');
+    await adapter.progress('r-fin', 'sid-fin', '停机前丢的', true);
+    const before = server.frames.filter((f) => f.cmd === 'aibot_send_msg').length;
+    adapter.stop();
+    assert.ok(log.warns.some((w) => /discard/i.test(w)), 'discard warn logged');
+    await sleep(1500); // past the 1s reconnect backoff the queue would have waited for
+    assert.equal(server.frames.filter((f) => f.cmd === 'aibot_send_msg').length, before, 'queued final discarded, never pushed');
   } finally {
     adapter.stop();
     await server.close();
@@ -420,6 +439,16 @@ test('push: 30 rapid pushes to one chat → at most 25 on the wire; 4000-char tr
     assert.equal(tx.body.chat_type, 1);
     assert.equal(tx.body.markdown.content.length, 4000);
     assert.ok(tx.body.markdown.content.endsWith('…'));
+
+    // empty / whitespace-only text → rejected with a warn, nothing on the
+    // wire (predecessor /send semantics; fresh chatid so the rate limiter
+    // is NOT what blocks it)
+    const before = server.frames.filter((f) => f.cmd === 'aibot_send_msg').length;
+    await adapter.push('wecom:single:EMPTY', '');
+    await adapter.push('wecom:single:EMPTY', '   ');
+    await sleep(200);
+    assert.equal(server.frames.filter((f) => f.cmd === 'aibot_send_msg').length, before, 'empty push never sent');
+    assert.ok(log.warns.some((w) => /empty/i.test(w)), 'empty-text warn logged');
   } finally {
     adapter.stop();
     await server.close();
