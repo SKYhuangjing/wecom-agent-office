@@ -24,6 +24,19 @@ node src/index.js start           # 日志出现 "wao up: N plugins"
 curl -s http://127.0.0.1:8792/api/plugins   # status: active
 ```
 
+## 契约套件（改名后必读）
+
+```bash
+npm run contract -- --plugin plugins/<你的插件名>
+```
+
+套件按 **PORT_ID**（你 `registerProvider` 的那个 id）查 `test/contract/profiles.js` 的预期档案；
+**改了名就没有档案** → 套件会按"全量契约"跑并对回显实现报一批 FAIL（ok/thinking/… 进程组
+需要一个真 CLI 子进程）——这是刻意的"宁失败不静默跳过"。如果你的 runner 确实不 spawn CLI，
+把 `profiles.js` 里 `template` 那条档案复制一份、键改成你的 PORT_ID（fakeCli/events 关、
+history:'deferred'），再跑应得 `4 passed, 7 skipped`。实现成真 CLI provider 后，参照 `dsh`
+档案声明 `fakeCli: true` 等并跑全量。
+
 ## 注意
 
 - `package.json` 的 `"type": "module"` **不可删**：Node < 22.7 下没有它，

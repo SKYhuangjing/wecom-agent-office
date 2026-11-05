@@ -8,7 +8,7 @@
 // fails the boot before anything serves traffic.
 import process from 'node:process';
 import net from 'node:net';
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLogger } from './kernel/log.js';
@@ -318,6 +318,19 @@ const checkPortFree = (host, port, timeoutMs = 2000) => new Promise((settled) =>
   sock.once('error', () => done(true));
 });
 
+// PATH scan without executing anything: the first executable entry named
+// `bin` wins (a `command -v` in pure node). null = not on PATH.
+const whichBin = (bin) => {
+  for (const dir of (process.env.PATH ?? '').split(':')) {
+    if (dir === '') continue;
+    try {
+      accessSync(join(dir, bin), constants.X_OK);
+      return join(dir, bin);
+    } catch { /* keep scanning */ }
+  }
+  return null;
+};
+
 const cmdDoctor = async (flags) => {
   let bad = 0;
   const mark = (sym, item, detail) => {
@@ -329,14 +342,33 @@ const cmdDoctor = async (flags) => {
   if (major > 20 || (major === 20 && minor >= 10)) mark('✓', 'node', `v${process.versions.node} (floor 20.10)`);
   else mark('!', 'node', `v${process.versions.node} is below the 20.10 floor (engines >=20.10) — warn only`);
 
+  try {
+    await import('ws');
+    mark('✓', 'ws', "module 'ws' resolvable");
+  } catch (err) {
+    mark('✗', 'ws', `'ws' not resolvable — run npm install (${err.code ?? err.message})`);
+  }
+
   for (const root of defaultPluginsDirs()) {
     let count = 0;
+    const nonEsm = [];
     try {
       for (const ent of readdirSync(root, { withFileTypes: true })) {
         if (ent.isDirectory() && !ent.name.startsWith('.') && !ent.name.startsWith('_')
-          && existsSync(join(root, ent.name, 'plugin.js'))) count++;
+          && existsSync(join(root, ent.name, 'plugin.js'))) {
+          count++;
+          // Node <22.7 parses a .js plugin without package.json
+          // {"type":"module"} as CommonJS — the loader records a load
+          // failure for it. Doctor names the dir so the fix is obvious.
+          let type = null;
+          try { type = JSON.parse(readFileSync(join(root, ent.name, 'package.json'), 'utf8')).type; } catch { /* missing/broken package.json */ }
+          if (type !== 'module') nonEsm.push(ent.name);
+        }
       }
       mark('✓', 'plugins', `${count} plugin dir${count === 1 ? '' : 's'} (${root})`);
+      for (const name of nonEsm) {
+        mark('!', 'plugins', `${name}: plugin.js present but package.json lacks {"type":"module"} — it will fail to load`);
+      }
     } catch (err) {
       mark('✗', 'plugins', `cannot scan ${root} (${err.code ?? err.message})`);
     }
@@ -358,11 +390,24 @@ const cmdDoctor = async (flags) => {
   const free = await checkPortFree(host, port);
   mark(free ? '✓' : '✗', 'port', free ? `${port} free on ${host}` : `port ${port} already in use`);
 
+  // Agent CLI presence is INFORMATIONAL (`!`, never ✗): a missing CLI only
+  // fails that provider's runs at runtime — the /api/bots/:id/test endpoint
+  // and probe.sh report it precisely; doctor just tells the operator which
+  // agent CLIs this machine currently has.
+  for (const cli of ['dsh', 'claude', 'codex']) {
+    const found = whichBin(cli);
+    if (found != null) mark('✓', `cli ${cli}`, `present (${found})`);
+    else mark('!', `cli ${cli}`, 'not found in PATH (informational — provider runs needing it will fail)');
+  }
+
+  // Claim+release probe with the REAL lock: a live holder (second instance)
+  // means start would refuse — that is a failure, not a warning.
   try {
-    await import('ws');
-    mark('✓', 'ws', "module 'ws' resolvable");
+    const lock = lockDataDir(dataDir);
+    lock.release();
+    mark('✓', 'lock', `${dataDir} lockable (claim+release probe)`);
   } catch (err) {
-    mark('✗', 'ws', `'ws' not resolvable — run npm install (${err.code ?? err.message})`);
+    mark('✗', 'lock', `${dataDir} not lockable (${err.message})`);
   }
   return bad === 0 ? 0 : 1;
 };
