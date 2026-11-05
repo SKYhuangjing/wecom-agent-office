@@ -1,6 +1,6 @@
 # codex minimal probe — raw NDJSON as captured (stdin prompt: 只回复两个字：收到)
 # captured 2026-11-06; exit=0; compare = run-length-collapsed .type sequence (bash test/probe.sh --check)
-{"type":"thread.started","thread_id":"01a1adc8-d2fb-7541-9e09-8817a37a70c8"}
+{"type":"thread.started","thread_id":"01a1ae22-fecd-7cd0-99c1-d08a576bcb11"}
 {"type":"turn.started"}
 {"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"收到"}}
 {"type":"turn.completed","usage":{"input_tokens":22075,"cached_input_tokens":3712,"cache_write_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0}}
