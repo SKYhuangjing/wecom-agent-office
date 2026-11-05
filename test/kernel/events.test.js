@@ -70,3 +70,17 @@ test('off() during emit does not break dispatch of remaining subscribers', () =>
   assert.deepEqual(calls, ['a', 'b', 'b']);
   assert.equal(errors.length, 0);
 });
+
+test('async subscriber rejection is attributed and isolated (no unhandled rejection)', async () => {
+  const { errors, log } = fakeLog();
+  const bus = createEventBus({ log });
+  let got = 0;
+  bus.on('t', async () => { throw new Error('async boom'); }, 'plugin-async');
+  bus.on('t', () => { got++; }, 'plugin-b');
+  bus.emit('t', null); // sync dispatch: the rejection escapes the loop's sync try/catch on a later tick
+  assert.equal(got, 1); // the sync subscriber already ran, unaffected
+  await new Promise((r) => setImmediate(r)); // let the rejected promise's catch handlers run
+  assert.equal(errors.length, 1); // without the thenable branch this is an unhandled rejection that kills the process
+  assert.match(String(errors[0]), /plugin-async/);
+  assert.match(String(errors[0]), /async boom/);
+});

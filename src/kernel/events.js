@@ -20,9 +20,16 @@ export function createEventBus({ log }) {
       const list = topics.get(topic);
       if (!list) return; // no subscribers is a normal state, not an error
       // Snapshot: a subscriber calling on/off mid-emit must not mutate the loop below.
+      // The result is inspected, not discarded: an async subscriber rejects on a
+      // later tick, outside this loop's sync catch — uncaught it becomes an
+      // unhandled rejection and kills the process, so the thenable gets the
+      // same attributed catch a sync throw gets.
       for (const { fn, owner } of [...list]) {
         try {
-          fn(payload);
+          const result = fn(payload);
+          if (result && typeof result.catch === 'function') {
+            result.catch((err) => log.error(`events: ${owner} handler failed`, topic, err));
+          }
         } catch (err) {
           log.error(`events: ${owner} handler failed`, topic, err);
         }

@@ -161,6 +161,26 @@ test('ctx.setInterval callback throw → attributed error, interval keeps firing
   assert.deepEqual(s.lifecycle.debugState().timers, {});
 });
 
+test('ctx.setInterval async rejecting callback → attributed error, no unhandled rejection, interval continues', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] }); // clears are mocked with their setters
+  const s = setup();
+  let ticks = 0;
+  const p1 = plugin('p1', (c) => c.setInterval(async () => { ticks += 1; throw new Error('async tick boom'); }, 100));
+  await s.lifecycle.activate(p1);
+  t.mock.timers.tick(100); // the rejection lands on a later tick, outside the sync guard
+  await new Promise((r) => setImmediate(r)); // drain microtasks: setImmediate is not mocked
+  assert.equal(ticks, 1);
+  assert.equal(s.errors.length, 1); // caught+attributed, not an unhandled rejection (which would fail this test process)
+  assert.match(String(s.errors[0]), /\[p1\]/);
+  assert.match(String(s.errors[0]), /async tick boom/);
+  t.mock.timers.tick(100); // the interval must keep firing after the rejection
+  await new Promise((r) => setImmediate(r));
+  assert.equal(ticks, 2);
+  assert.equal(s.errors.length, 2);
+  await s.lifecycle.deactivate(p1);
+  assert.deepEqual(s.lifecycle.debugState().timers, {});
+});
+
 test('port registration: visible with owner; re-register overwrites + warns; deactivate removes owned entries', async () => {
   const s = setup();
   const implA = { tag: 'a' }; const implB = { tag: 'b' };

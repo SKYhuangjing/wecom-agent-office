@@ -77,8 +77,17 @@ export function createLifecycle({ events, services, log, http, portRegistry = cr
     // Timer callbacks are a kernel-mediated failure boundary (spec §2.5): a
     // throwing callback is attributed and skipped; the timer keeps firing —
     // a broken callback must not silently disarm a heartbeat-ish interval.
+    // The return value is inspected, not discarded: an async callback rejects
+    // on a later tick, outside any sync catch — uncaught it would take the
+    // process down (Node ≥20 exits on unhandled rejection), breaking exactly
+    // the isolation this wrapper exists to enforce.
     const guarded = (fn) => (...args) => {
-      try { fn(...args); } catch (err) { childLog.error('timer callback failed', err); }
+      try {
+        const result = fn(...args);
+        if (result && typeof result.catch === 'function') {
+          result.catch((err) => { childLog.error('timer callback failed', err); });
+        }
+      } catch (err) { childLog.error('timer callback failed', err); }
     };
     const track = (timer) => { rec.timers.add(timer); return timer; };
     const untrack = (timer) => { rec.timers.delete(timer); };
