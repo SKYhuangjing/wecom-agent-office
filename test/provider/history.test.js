@@ -153,7 +153,9 @@ test('history: huge session (contract fixture writer) → truncated=true, 2000 t
     assert.deepEqual(r.warnings, []);
     assert.equal(r.truncated, true);
     assert.equal(r.turns.length, 2000);
-    assert.equal(r.turns[0].assistant, '回答 0');
-    assert.equal(r.turns[1999].assistant, '回答 1999');
+    // newest-first truncation (前身 slice(-limit)): the OLDEST 500 turns are
+    // the ones dropped; the most recent turn must survive
+    assert.equal(r.turns[0].assistant, '回答 500');
+    assert.equal(r.turns[1999].assistant, '回答 2499');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

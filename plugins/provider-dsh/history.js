@@ -133,6 +133,9 @@ export function readHistory(providerConfig, sessionId) {
     }
   }
 
-  if (turns.length > TURN_LIMIT) return { turns: turns.slice(0, TURN_LIMIT), truncated: true, warnings };
+  // Newest-first truncation (前身 readSessionTurns slice(-limit)): a session
+  // drill-down cares about the most recent turns, so an oversized history
+  // keeps the NEWEST TURN_LIMIT and drops the oldest tail.
+  if (turns.length > TURN_LIMIT) return { turns: turns.slice(-TURN_LIMIT), truncated: true, warnings };
   return { turns, truncated: false, warnings };
 }

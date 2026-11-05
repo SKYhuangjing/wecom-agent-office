@@ -34,6 +34,8 @@ export default {
         { key: 'prompt', label: '人设（多行，写入 profile system-prompt personaPrefix）', type: 'string' },
         { key: 'writableDirs', label: '沙箱额外可写目录（绝对路径列表）', type: 'list' },
         { key: 'compaction', label: '自动压缩 {enabled?, thresholdRatio?, headroomTokens?, retainRatio?}', type: 'object' },
+        // progressCoT is consumed by the core-engine progressor wiring (T19)
+        // per DESIGN §6.1 (providerConfig.progressCoT 默认 on) — do not remove.
         { key: 'progressCoT', label: '进度行展示思维链摘要', type: 'bool', default: true },
         { key: 'dshBin', label: 'dsh 可执行文件（PATH 或绝对路径）', type: 'string', default: 'dsh' },
         { key: 'nodeBin', label: 'node 可执行文件（profile 引导 PATH 用）', type: 'string' },
