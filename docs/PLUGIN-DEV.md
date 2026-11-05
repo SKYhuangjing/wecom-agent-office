@@ -289,9 +289,10 @@ Phase 3         afterAllActivated 重建 bot 运行时
 版本协商对这种耦合无能为力——这正是微内核要消灭的故障类。
 
 行为一致性不靠共享实现，靠**契约测试的共享夹具**：`test/contract/` 参数化套件
-（`run.js --plugin <id>`）用**同一组事件流 fixture** 跑所有 provider 插件，同一组 ws 假流跑
-所有 channel 插件。要改"公共"行为 = 改 fixture = 所有插件一起红 = 逐个改实现。
-宁可三份小复制，也不要一个影子 lib。
+（`npm run contract -- --plugin <插件目录>`，已落地 provider 端；详见 `test/contract/README.md`）
+用**同一组事件流 fixture**（`test/fake-bin/fake-dsh.js`）跑所有 provider 插件，同一组 ws 假流跑
+所有 channel 插件（channel 套件后续任务落地）。要改"公共"行为 = 改 fixture = 所有插件一起红 =
+逐个改实现。宁可三份小复制，也不要一个影子 lib。
 
 ---
 
