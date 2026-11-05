@@ -1,0 +1,575 @@
+// Task 13: the real turn orchestration (DESIGN §6 numbered flow) living in
+// defaultRunTurn. Everything below runs on millisecond-scale injected
+// limits/capabilities with a scripted fake runner and a frame-recording fake
+// adapter — the assertions pin:
+//   - session resolution: native resume / switch-back delta replay (rule 4) /
+//     full handoff prefix (rule 1, maxSeq with NO provider filter) / bornCwd
+//     drift / dirty self-handoff,
+//   - the outbound path: ack → throttled+budgeted progress → never-dropped
+//     final, heartbeat survival over budget,
+//   - two-phase deadline: warn frame closes the stream, late result goes via
+//     push with no second final frame,
+//   - code branches: completed / aborted / timeout (markDirty + reclassify
+//     from hard-timer abort) / lock-conflict retry-once / missing-credential,
+//   - bookkeeping: recordTurn four-state mapping, upsert with maxSeqAtBuild,
+//     setConsumed (rule 2), timeline rows, progressor reset,
+//   - abort-before-run and drain-refusal answering.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { Engine, defaultRunTurn } from '../../plugins/core-engine/engine.js';
+import { Ledger } from '../../plugins/core-engine/ledger.js';
+import { SessionCache } from '../../plugins/core-engine/sessionCache.js';
+import { Timeline } from '../../plugins/core-engine/timeline.js';
+import { createProgressor } from '../../plugins/core-engine/progressor.js';
+import { maskOutbound } from '../../plugins/core-engine/middleware.js';
+
+const K = 'wecom:group:g1';
+const CWD = '/ws';
+const HANDOFF_HEADER = '以下是本对话此前的记录（供上下文参考）：';
+const ACK_TEXT = '✅ 收到，马上处理…';
+const WARN_TEXT = '⏳ 任务仍在后台运行，完成后将主动推送结果';
+const LOCK_TEXT = '该会话的写锁被另一个进程占用（可能是别的实例），机器人暂时无法回复。请稍后重试。';
+const CANCEL_TEXT = '（已取消上一条回复）';
+const DRAIN_INFLIGHT_TEXT = '⚠️ 服务维护，任务已中断，请重发';
+const DRAIN_REFUSAL_TEXT = '⚠️ 服务维护，未处理，请重发';
+
+// ms-scale defaults: no throttling/heartbeat interference unless a test asks.
+const MS_LIMITS = {
+  concurrency: 4, minIntervalMs: 0, heartbeatMs: 10_000, maxContentChars: 100,
+  streamDeadlineMs: 600_000, hardTimeoutMs: 5_000, warnLeadMs: 90_000,
+  outboundBudgetPerMin: 28,
+};
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const tick = () => new Promise((r) => setImmediate(r));
+
+function mkBot({ id = 'bot1', provider = 'codex', cwd = CWD } = {}) {
+  return { id, provider, channel: 'wecom', providerConfig: { cwd } };
+}
+const mkMsg = (text, chatKey = K) => ({
+  chatKey, chatKind: 'group', chatid: chatKey.split(':')[2], userid: 'u1',
+  text, reqId: `req-${randomUUID()}`,
+});
+
+function fakeLog() {
+  const lines = { debug: [], info: [], warn: [], error: [] };
+  return {
+    lines,
+    debug: (m) => lines.debug.push(m), info: (m) => lines.info.push(m),
+    warn: (m) => lines.warn.push(m), error: (m) => lines.error.push(m),
+  };
+}
+
+// Channel adapter that records every outbound frame in order.
+function fakeAdapter({ capabilities = { stream: true, push: true } } = {}) {
+  const frames = [];
+  return {
+    frames, capabilities,
+    ack: async (reqId, streamId, text) => { frames.push({ method: 'ack', at: Date.now(), reqId, streamId, text }); },
+    progress: async (reqId, streamId, text, finish) => { frames.push({ method: 'progress', at: Date.now(), reqId, streamId, text, finish: !!finish }); },
+    reply: async (reqId, text) => { frames.push({ method: 'reply', at: Date.now(), reqId, text }); },
+    push: async (chatRef, text) => { frames.push({ method: 'push', at: Date.now(), chatRef, text }); },
+  };
+}
+
+// Scripted provider runner: steps are consumed one per run() call (a
+// lock-conflict retry therefore consumes the next step). `hangMs` parks the
+// run until abort (the §5 contract: abort settles, never rejects).
+function scriptedRunner(steps) {
+  const calls = [];
+  let idx = 0;
+  const resultOf = (step, args, code) => ({
+    ok: code === 'completed',
+    code,
+    finalText: step.finalText ?? '',
+    aborted: step.aborted ?? code === 'aborted',
+    sessionId: step.returnsSessionId !== undefined ? step.returnsSessionId : args.sessionId ?? null,
+    reason: code,
+    detail: step.detail,
+  });
+  return {
+    calls,
+    describeError: (r) => `DE[${r?.code ?? '?'}|${r?.detail ?? ''}]`,
+    async run(args) {
+      calls.push({ prompt: args.prompt, sessionId: args.sessionId, timeoutMs: args.timeoutMs });
+      const step = steps[Math.min(idx++, steps.length - 1)];
+      if (step.emit) for (const ev of step.emit) args.onEvent?.(ev);
+      if (step.emitOver) for (const ev of step.emitOver) { args.onEvent?.(ev); if (ev.gapMs) await sleep(ev.gapMs); }
+      if (step.delayMs) await sleep(step.delayMs);
+      if (step.hangMs !== undefined) {
+        await new Promise((resolve) => {
+          const t = setTimeout(resolve, step.hangMs);
+          if (args.signal.aborted) { clearTimeout(t); return resolve(); }
+          args.signal.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });
+        });
+        return resultOf(step, args, step.hangCode ?? 'aborted');
+      }
+      return resultOf(step, args, step.code ?? 'completed');
+    },
+  };
+}
+
+const COMPLETE = (o = {}) => ({ code: 'completed', finalText: '答案内容', returnsSessionId: 's1', ...o });
+
+function makeHarness({ steps, capabilities, limits, bot, middleware = { maskOutbound } } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'wao-run-'));
+  const log = fakeLog();
+  const ledger = new Ledger({ file: join(dir, 'ledger.jsonl'), log });
+  const cache = new SessionCache({ file: join(dir, 'sessions.json'), log, ledger });
+  const timeline = new Timeline();
+  const progressor = createProgressor();
+  const resets = [];
+  const origReset = progressor.reset.bind(progressor);
+  progressor.reset = () => { resets.push(Date.now()); origReset(); };
+  const adapter = fakeAdapter({ capabilities });
+  const runner = scriptedRunner(steps ?? [COMPLETE()]);
+  const b = bot ?? mkBot();
+  const engine = new Engine({
+    log, getRunner: () => runner, getAdapter: () => adapter,
+    ledgerFactory: () => ({ ledger, cache }),
+    timeline, progressor, middleware, limits: { ...MS_LIMITS, ...limits },
+  });
+  engine.attachBot(b, { adapter, runner });
+  const send = async (text, bb = b, chatKey = K) => {
+    engine.onMessage(bb, mkMsg(text, chatKey));
+    await engine.chains.get(chatKey);
+    await tick();
+  };
+  return { engine, adapter, runner, ledger, cache, timeline, progressor, resets, log, bot: b, send, dir };
+}
+
+// One §3 ledger row, seed-style (seq allocated by the ledger itself).
+const seedRow = (ledger, o = {}) => ledger.recordTurn({
+  chatKey: K, channel: 'wecom', chatKind: 'group', chatid: 'g1', userid: 'u1',
+  user: '旧问题', assistant: '旧回答', provider: 'dsh', sessionId: 's-dsh',
+  ok: true, reason: 'completed', tokens: null, cost: null, ...o,
+});
+
+// --- 1: happy path -----------------------------------------------------------
+
+test('happy path: ack → throttled progress → final; ledger/cache/timeline/progressor effects', async () => {
+  const h = makeHarness({
+    steps: [{
+      emit: [
+        { type: 'tool', name: 'read', brief: '读取配置' },
+        { type: 'text', text: '正文开始' },
+      ],
+      code: 'completed', finalText: '最终答案全文', returnsSessionId: 's1',
+    }],
+  });
+  seedRow(h.ledger); seedRow(h.ledger); // two prior turns: maxSeq at build = 2
+
+  await h.send('新问题');
+
+  // frame order: ack (opens the stream) → ≥1 tool progress → final finish=true
+  const frames = h.adapter.frames;
+  assert.equal(frames[0].method, 'ack');
+  assert.equal(frames[0].text, ACK_TEXT);
+  assert.ok(/^s-/.test(frames[0].streamId), 'streamId is a fresh s-uuid');
+  const progressFrames = frames.filter((f) => f.method === 'progress' && !f.finish);
+  assert.ok(progressFrames.length >= 1, 'at least one progress frame');
+  assert.ok(progressFrames.some((f) => f.text.includes('🔧')), 'tool line rendered');
+  const final = frames[frames.length - 1];
+  assert.equal(final.method, 'progress');
+  assert.equal(final.finish, true);
+  assert.ok(final.text.includes('最终答案全文'));
+  assert.equal(final.streamId, frames[0].streamId, 'final lands on the same stream');
+
+  // ledger row: completed with the runner's sessionId, raw user text
+  const rows = h.ledger.turns({ chatKey: K });
+  assert.equal(rows.length, 3);
+  const row = rows[2];
+  assert.equal(row.reason, 'completed');
+  assert.equal(row.ok, true);
+  assert.equal(row.sessionId, 's1');
+  assert.equal(row.user, '新问题');
+  assert.equal(row.assistant, '最终答案全文');
+
+  // cache: rule-1 upsert used maxSeq BEFORE this turn (consumedAtBuild=2),
+  // then rule 2 advanced consumedSeq to this turn's own row seq (3).
+  const rec = h.cache.get(K);
+  assert.equal(rec.current, 'codex');
+  assert.equal(rec.cache.codex.sessionId, 's1');
+  assert.equal(rec.cache.codex.bornCwd, CWD);
+  assert.equal(rec.cache.codex.consumedAtBuild, 2);
+  assert.equal(rec.cache.codex.consumedSeq, 3);
+
+  // timeline got the event rows and the closing turn row; progressor reset once
+  const kinds = h.timeline.get({ botId: h.bot.id }).map((r) => r.kind);
+  assert.ok(kinds.includes('tool'), `tool row present (${kinds})`);
+  assert.ok(kinds.includes('turn'), `turn row present (${kinds})`);
+  assert.equal(h.resets.length, 1);
+});
+
+// --- 2: throttle + outbound budget -------------------------------------------
+
+test('outbound budget + throttle: progress drops over budget, heartbeat survives, final never dropped', async () => {
+  const h = makeHarness({
+    limits: { minIntervalMs: 10, heartbeatMs: 60, outboundBudgetPerMin: 2 },
+    steps: [{
+      emitOver: Array.from({ length: 40 }, (_, i) => ({ type: 'tool', name: 't', brief: `b${i}`, gapMs: 8 })),
+      code: 'completed', finalText: '预算内最终答案', returnsSessionId: 's1',
+    }],
+  });
+  await h.send('灌事件');
+  const frames = h.adapter.frames;
+
+  const acks = frames.filter((f) => f.method === 'ack');
+  const nonFinalProgress = frames.filter((f) => f.method === 'progress' && !f.finish);
+  const hearts = frames.filter((f) => f.text && f.text.includes('已运行'));
+  const finals = frames.filter((f) => f.method === 'progress' && f.finish);
+
+  assert.equal(acks.length, 1, 'exactly one ack');
+  // ack + event progress stay inside the per-minute budget (2): the event
+  // stream stops first (DESIGN §6.4 超→先停事件流)
+  assert.ok(acks.length + nonFinalProgress.length - hearts.length <= 2,
+    `ack+event frames within budget: ack=${acks.length} progress=${nonFinalProgress.length} heart=${hearts.length}`);
+  assert.equal(nonFinalProgress.filter((f) => !f.text.includes('已运行')).length, 1,
+    'exactly one event progress frame (40 events collapsed by throttle+budget)');
+  assert.ok(nonFinalProgress.some((f) => /🔧 t: b\d+/.test(f.text)), 'throttle kept the latest line');
+  assert.ok(hearts.length >= 2, `heartbeat survives over budget (${hearts.length} seen)`);
+  assert.equal(finals.length, 1);
+  assert.ok(finals[0].text.includes('预算内最终答案'), 'final is never dropped');
+});
+
+// --- 3: two-phase deadline ----------------------------------------------------
+
+test('two-phase: warn frame closes the stream at warnAt; late completion pushes, no second final frame', async () => {
+  const h = makeHarness({
+    limits: { streamDeadlineMs: 600, warnLeadMs: 100 }, // warnAt = 500ms
+    steps: [{
+      emit: [{ type: 'tool', name: 'slow', brief: '慢工具' }],
+      delayMs: 1000, code: 'completed', finalText: '两阶段最终答案', returnsSessionId: 's1',
+    }],
+  });
+  const t0 = Date.now();
+  await h.send('长任务');
+
+  const progressFrames = h.adapter.frames.filter((f) => f.method === 'progress');
+  const warns = progressFrames.filter((f) => f.text === WARN_TEXT);
+  assert.equal(warns.length, 1, 'exactly one warn frame');
+  assert.equal(warns[0].finish, true, 'warn frame closes the stream');
+  const warnDelay = warns[0].at - t0;
+  assert.ok(warnDelay >= 440 && warnDelay <= 950, `warn fired at ~warnAt (+${warnDelay}ms)`);
+
+  const pushes = h.adapter.frames.filter((f) => f.method === 'push');
+  assert.equal(pushes.length, 1, 'background result delivered via push');
+  assert.ok(pushes[0].text.includes('两阶段最终答案'));
+  assert.equal(pushes[0].chatRef, K, 'push resolves the chat via the saved chatKey');
+
+  // background mode: the final text NEVER re-appears as a stream frame
+  assert.ok(!progressFrames.some((f) => f.text.includes('两阶段最终答案')),
+    'final not re-sent as stream after the warn closed it');
+  const lastProgress = progressFrames[progressFrames.length - 1];
+  assert.equal(lastProgress.text, WARN_TEXT);
+
+  const row = h.ledger.turns({ chatKey: K })[0];
+  assert.equal(row.reason, 'completed', 'background mode does not change bookkeeping');
+});
+
+// --- 4: hard timeout → dirty session + self-handoff ---------------------------
+
+test('hard timeout: markDirty, timeout row, ⚠️ final; next turn self-handoffs without the old sessionId', async () => {
+  const h = makeHarness({
+    limits: { hardTimeoutMs: 300 },
+    steps: [ // turn 1 establishes the native session; turn 2 hangs past 300ms;
+      COMPLETE(),               // turn 3 runs on the fresh post-timeout session
+      { hangMs: 60_000, hangCode: 'aborted', finalText: '' }, // runner can't distinguish abort causes
+      COMPLETE({ returnsSessionId: 's2' }),
+    ],
+  });
+  await h.send('第一轮');
+  assert.equal(h.cache.get(K).cache.codex.sessionId, 's1');
+
+  await h.send('第二轮');
+  // engine reclassified the hard-timer abort to timeout
+  const rows = h.ledger.turns({ chatKey: K });
+  assert.equal(rows[1].reason, 'timeout');
+  assert.equal(rows[1].ok, false);
+  const final = h.adapter.frames.filter((f) => f.finish).pop();
+  assert.ok(final.text.includes('⚠️ 任务超时未完成'), `timeout final text (${final.text})`);
+  assert.equal(h.cache.get(K).cache.codex.dirty, true, 'session marked dirty');
+
+  await h.send('第三轮');
+  // dirty session → self-handoff: prefix present, old sessionId NOT passed
+  const third = h.runner.calls[2];
+  assert.equal(third.sessionId, null, 'old (dirty) sessionId must not be resumed');
+  assert.ok(third.prompt.startsWith(HANDOFF_HEADER), 'self-handoff carries the ledger prefix');
+  assert.ok(third.prompt.includes('第三轮'));
+  assert.equal(h.cache.get(K).cache.codex.dirty, false, 'new session is clean');
+  assert.equal(h.cache.get(K).cache.codex.sessionId, 's2');
+});
+
+// --- 5: preempted turn --------------------------------------------------------
+
+test('aborted turn: partial + 打断 banner, interrupted row, consumedSeq advanced (rule 2)', async () => {
+  const h = makeHarness({
+    steps: [COMPLETE(), { code: 'aborted', aborted: true, finalText: '部分答案', returnsSessionId: 's1' }],
+  });
+  await h.send('第一轮');
+  assert.equal(h.cache.get(K).cache.codex.consumedSeq, 1);
+  await h.send('第二轮');
+
+  const final = h.adapter.frames.filter((f) => f.finish).pop();
+  assert.equal(final.method, 'progress');
+  assert.ok(final.text.includes('部分答案'));
+  assert.ok(final.text.includes('已被新消息打断'));
+
+  const row = h.ledger.turns({ chatKey: K })[1];
+  assert.equal(row.reason, 'interrupted');
+  assert.equal(row.ok, false);
+  assert.equal(row.assistant, '部分答案', 'partial output preserved in the row');
+  assert.equal(h.cache.get(K).cache.codex.consumedSeq, 2, 'rule 2: interrupted row still advances');
+});
+
+test('aborted turn with no output sends the cancel copy', async () => {
+  const h = makeHarness({ steps: [COMPLETE(), { code: 'aborted', aborted: true, finalText: '' }] });
+  await h.send('第一轮');
+  await h.send('第二轮');
+  const final = h.adapter.frames.filter((f) => f.finish).pop();
+  assert.equal(final.text, CANCEL_TEXT);
+  assert.equal(h.ledger.turns({ chatKey: K })[1].reason, 'interrupted');
+});
+
+// --- 6: lock-conflict ---------------------------------------------------------
+
+test('lock-conflict: retried once with the same sessionId, then normal final', async () => {
+  const h = makeHarness({
+    steps: [
+      { code: 'lock-conflict', detail: 'busy' },
+      { code: 'completed', finalText: '重试后完成', returnsSessionId: 's1' },
+    ],
+  });
+  await h.send('抢锁');
+  assert.equal(h.runner.calls.length, 2, 'exactly one retry');
+  assert.equal(h.runner.calls[0].prompt, h.runner.calls[1].prompt, 'same prompt');
+  assert.equal(h.runner.calls[1].sessionId, h.runner.calls[0].sessionId, 'sessionId resolution is NOT redone');
+  const finals = h.adapter.frames.filter((f) => f.finish);
+  assert.equal(finals.length, 1, 'single final');
+  assert.ok(finals[0].text.includes('重试后完成'));
+  const row = h.ledger.turns({ chatKey: K })[0];
+  assert.equal(row.reason, 'completed');
+});
+
+test('lock-conflict twice: exact 防线三 reply, error row, no session cached', async () => {
+  const h = makeHarness({
+    steps: [{ code: 'lock-conflict' }, { code: 'lock-conflict' }],
+  });
+  await h.send('还是抢锁');
+  assert.equal(h.runner.calls.length, 2);
+  const replies = h.adapter.frames.filter((f) => f.method === 'reply');
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0].text, LOCK_TEXT);
+  const row = h.ledger.turns({ chatKey: K })[0];
+  assert.equal(row.reason, 'error');
+  assert.equal(row.ok, false);
+  assert.equal(h.cache.get(K), undefined, 'no session cached for a failed turn');
+});
+
+// --- 7: missing credential ----------------------------------------------------
+
+test('missing-credential: describeError reply verbatim, error row', async () => {
+  const h = makeHarness({ steps: [{ code: 'missing-credential', detail: '凭证失效' }] });
+  await h.send('坏凭证');
+  const replies = h.adapter.frames.filter((f) => f.method === 'reply');
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0].text, 'DE[missing-credential|凭证失效]');
+  const row = h.ledger.turns({ chatKey: K })[0];
+  assert.equal(row.reason, 'error');
+  assert.equal(h.cache.get(K), undefined);
+});
+
+test('error with partial text keeps the partial plus a warning banner', async () => {
+  const h = makeHarness({ steps: [{ code: 'error', finalText: '半成品' }] });
+  await h.send('出错');
+  const final = h.adapter.frames.filter((f) => f.finish).pop();
+  assert.ok(final.text.includes('半成品'));
+  assert.ok(final.text.includes('⚠️ 运行未正常结束'));
+  assert.equal(h.ledger.turns({ chatKey: K })[0].reason, 'error');
+});
+
+// --- 8: provider switch -------------------------------------------------------
+
+test('switch provider: full handoff prefix, upsert consumedAtBuild = maxSeq(chatKey) without provider filter', async () => {
+  const h = makeHarness({ bot: mkBot({ provider: 'claude' }) });
+  seedRow(h.ledger); seedRow(h.ledger); // two dsh rows: seq 1, 2
+  h.cache.upsert(K, 'dsh', { sessionId: 's-dsh', bornCwd: CWD }, 1);
+
+  await h.send('切到claude');
+  const call = h.runner.calls[0];
+  assert.equal(call.sessionId, null, 'new provider starts a fresh session');
+  assert.ok(call.prompt.startsWith(HANDOFF_HEADER));
+  assert.ok(call.prompt.includes('旧回答'), 'history crosses providers');
+  assert.ok(call.prompt.endsWith('切到claude'));
+
+  // counterexample-A pin: consumedAtBuild = 2 = maxSeq({chatKey}) over ALL
+  // providers — a provider-filtered maxSeq would be 0 here.
+  const rec = h.cache.get(K);
+  assert.equal(rec.current, 'claude');
+  assert.equal(rec.cache.claude.sessionId, 's1');
+  assert.equal(rec.cache.claude.consumedAtBuild, 2);
+  assert.equal(rec.cache.claude.consumedSeq, 3, 'rule 2 advanced past the claude row');
+});
+
+test('switch back: resumes INTO the cached session with only the delta replayed (rule 4)', async () => {
+  const claudeBot = mkBot({ provider: 'claude' });
+  const dshBot = mkBot({ provider: 'dsh', id: 'bot1' });
+  const h = makeHarness({
+    bot: claudeBot,
+    steps: [
+      COMPLETE({ finalText: 'claude的回答' }),
+      { code: 'completed', finalText: 'dsh切回后的回答' }, // returns args.sessionId: the resumed id
+    ],
+  });
+  seedRow(h.ledger, { user: 'q1', assistant: 'a1' });   // seq 1 (dsh)
+  seedRow(h.ledger, { user: 'q2', assistant: 'a2' });   // seq 2 (dsh)
+  h.cache.upsert(K, 'dsh', { sessionId: 's-dsh', bornCwd: CWD }, 1); // consumed through seq 1
+
+  await h.send('claude轮', claudeBot); // seq 3 on claude, current=claude
+  await h.send('切回dsh', dshBot);
+
+  const call = h.runner.calls[1];
+  assert.equal(call.sessionId, 's-dsh', 'switch-back resumes the cached dsh session');
+  assert.ok(call.prompt.startsWith(HANDOFF_HEADER));
+  assert.ok(call.prompt.includes('q2') && call.prompt.includes('a2'), 'delta includes the missed dsh row');
+  assert.ok(!call.prompt.includes('q1'), 'already-consumed rows are NOT replayed');
+  assert.ok(call.prompt.includes('claude的回答'), 'the other provider\'s turn is carried too');
+  assert.ok(call.prompt.endsWith('切回dsh'));
+
+  const dshEntry = h.cache.get(K).cache.dsh;
+  assert.equal(dshEntry.sessionId, 's-dsh');
+  assert.ok(dshEntry.consumedSeq >= 3, `consumed advanced to the delivered delta (${dshEntry.consumedSeq})`);
+  assert.equal(h.cache.get(K).current, 'dsh');
+});
+
+// --- 9: bornCwd drift ---------------------------------------------------------
+
+test('bornCwd mismatch: treated as a new-session handoff (prefix, sessionId null)', async () => {
+  const h = makeHarness({ bot: mkBot({ cwd: '/new-ws' }) });
+  seedRow(h.ledger);
+  h.cache.upsert(K, 'codex', { sessionId: 's-old', bornCwd: '/old-ws' }, 1);
+
+  await h.send('换了目录');
+  const call = h.runner.calls[0];
+  assert.equal(call.sessionId, null, 'a session born in another cwd is never resumed');
+  assert.ok(call.prompt.startsWith(HANDOFF_HEADER));
+  const rec = h.cache.get(K);
+  assert.equal(rec.cache.codex.sessionId, 's1');
+  assert.equal(rec.cache.codex.bornCwd, '/new-ws', 'upsert stamps the new bornCwd');
+});
+
+// --- 10: aborted before the runner starts --------------------------------------
+
+test('preempt during ack: no runner call, interrupted row with empty assistant, cancel frame', async () => {
+  const h = makeHarness({ steps: [COMPLETE()] });
+  let openAck;
+  const ackGate = new Promise((r) => { openAck = r; });
+  const origAck = h.adapter.ack.bind(h.adapter);
+  h.adapter.ack = async (...a) => { await ackGate; await origAck(...a); };
+
+  h.engine.onMessage(h.bot, mkMsg('first'));
+  await tick(); // impl is parked inside the ack await
+  h.engine.onMessage(h.bot, mkMsg('second')); // preempt: abort while acking
+  openAck();
+  await h.engine.chains.get(K);
+  await tick();
+
+  // The interrupted 'first' row IS real history: the replacement turn's new
+  // session legitimately carries it in the handoff prefix.
+  assert.equal(h.runner.calls.length, 1, 'doomed turn never reached the runner');
+  assert.ok(h.runner.calls[0].prompt.endsWith('second'));
+  const rows = h.ledger.turns({ chatKey: K });
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].user, 'first');
+  assert.equal(rows[0].reason, 'interrupted');
+  assert.equal(rows[0].assistant, '');
+  assert.equal(rows[1].reason, 'completed');
+  const finals = h.adapter.frames.filter((f) => f.finish);
+  assert.equal(finals.length, 2);
+  assert.ok(finals.some((f) => f.text === CANCEL_TEXT), 'the opened stream is closed with the cancel copy');
+});
+
+// --- 11: non-stream channel ----------------------------------------------------
+
+test('non-stream caps: ack and final go through reply(), no stream frames at all', async () => {
+  const h = makeHarness({
+    capabilities: { stream: false, push: true },
+    steps: [{ emit: [{ type: 'tool', name: 't', brief: 'b' }], code: 'completed', finalText: '非流式答案', returnsSessionId: 's1' }],
+  });
+  await h.send('无流式');
+  const frames = h.adapter.frames;
+  assert.equal(frames.length, 2, 'exactly ack + final');
+  assert.deepEqual(frames.map((f) => f.method), ['reply', 'reply']);
+  assert.equal(frames[0].text, ACK_TEXT);
+  assert.ok(frames[1].text.includes('非流式答案'));
+  assert.equal(h.ledger.turns({ chatKey: K })[0].reason, 'completed');
+  assert.equal(h.cache.get(K).cache.codex.sessionId, 's1');
+});
+
+// --- 12: drain refusals --------------------------------------------------------
+
+test('drain: in-flight turn gets the maintenance final, pending refusal answered by sendDrainRefusals', async () => {
+  const h = makeHarness({ steps: [{ hangMs: 60_000, hangCode: 'aborted', finalText: '' }] });
+  h.engine.onMessage(h.bot, mkMsg('m1'));
+  await tick();
+  h.engine.onMessage(h.bot, mkMsg('m2')); // preempt m1 → m2 pending
+  const drainP = h.engine.drain(2000);
+  assert.equal(await drainP, true);
+
+  const final = h.adapter.frames.filter((f) => f.finish).pop();
+  assert.equal(final.text, DRAIN_INFLIGHT_TEXT, 'in-flight turn is closed with the maintenance copy');
+  assert.equal(h.ledger.turns({ chatKey: K })[0].reason, 'interrupted');
+
+  await h.engine.sendDrainRefusals();
+  const replies = h.adapter.frames.filter((f) => f.method === 'reply');
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0].text, DRAIN_REFUSAL_TEXT);
+  assert.ok(replies[0].reqId.startsWith('req-'), 'refusal answered on its own reqId');
+  assert.equal(h.engine.drainRefusals.length, 0, 'refusals consumed');
+});
+
+// --- 13: outbound masking is on by default --------------------------------------
+
+test('null middleware still masks secrets on every outbound frame (builtin default)', async () => {
+  const h = makeHarness({
+    middleware: null,
+    steps: [{ emit: [{ type: 'thinking', text: '用 sk-abcdefghijklmnop1234 调用。' }], code: 'completed', finalText: '结果 sk-abcdefghijklmnop1234 泄漏', returnsSessionId: 's1' }],
+  });
+  await h.send('带密钥');
+  for (const f of h.adapter.frames) {
+    assert.ok(!String(f.text).includes('sk-abcdefghijklmnop1234'), `frame leaks the secret: ${f.text}`);
+  }
+  const final = h.adapter.frames.filter((f) => f.finish).pop();
+  assert.ok(final.text.includes('***'), `final masked: ${final.text}`);
+  const progress = h.adapter.frames.find((f) => f.method === 'progress' && !f.finish);
+  assert.ok(progress && progress.text.includes('***'), `thinking line masked: ${progress?.text}`);
+});
+
+// --- wiring sanity ---------------------------------------------------------------
+
+test('defaultRunTurn is the engine default and stays injectable; bare engine skips cleanly', async () => {
+  assert.equal(typeof defaultRunTurn, 'function');
+  const log = fakeLog();
+  const engine = new Engine({ log });
+  engine.attachBot(mkBot(), {});
+  engine.onMessage(mkBot(), mkMsg('裸引擎'));
+  await tick(); await tick();
+  assert.equal(engine.inFlight.size, 0);
+  assert.ok(log.lines.warn.some((l) => String(l).includes('wiring')), 'missing deps are a loud skip, not a crash');
+});
+
+test('long final is truncated with the 会话页 marker', async () => {
+  const h = makeHarness({
+    steps: [{ code: 'completed', finalText: 'x'.repeat(300), returnsSessionId: 's1' }],
+  });
+  await h.send('长回答');
+  const final = h.adapter.frames.filter((f) => f.finish).pop();
+  assert.ok(final.text.length <= 100 + '…（完整内容见会话页）'.length, `final capped (${final.text.length})`);
+  assert.ok(final.text.includes('…（完整内容见会话页）'));
+  // the ledger keeps the FULL text — truncation is presentation-only
+  assert.equal(h.ledger.turns({ chatKey: K })[0].assistant.length, 300);
+});

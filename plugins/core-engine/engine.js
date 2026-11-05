@@ -1,7 +1,8 @@
 // Engine: core-engine's concurrency core (DESIGN §6 串行链, review-pinned).
 // This file owns WHEN a run starts, WHEN it is preempted and WHEN the chain
 // picks up the next message — the turn body itself (ack / two-phase / code
-// branches / recordTurn) is injected as runTurnImpl and lands in Task 13.
+// branches / recordTurn) lives in defaultRunTurn below and is injectable as
+// { runTurnImpl } for tests that only want the chain machinery.
 //
 // The three pinned invariants every line here protects:
 //   1. PER-CHATKEY SERIAL CHAIN: turns for one chatKey run strictly one at a
@@ -21,9 +22,13 @@
 // (before a gate slot is acquired), which makes "abort before spawn" a
 // first-class case: a doomed turn never reaches runTurnImpl at all.
 
+import { randomUUID } from 'node:crypto';
+import { maskOutbound } from './middleware.js';
+import { formatTurnBlock } from './ledger.js';
+
 // Channel-capability defaults (DESIGN §4/§6). minIntervalMs/maxContentChars/
-// streamDeadlineMs etc. are consumed by the outbound path (Task 13) and the
-// adapters — the engine itself only enforces `concurrency` today.
+// streamDeadlineMs etc. are consumed by the outbound path (defaultRunTurn) and
+// the adapters — the chain machinery itself only enforces `concurrency`.
 export const ENGINE_LIMITS = Object.freeze({
   concurrency: 4,
   minIntervalMs: 2200,
@@ -35,9 +40,6 @@ export const ENGINE_LIMITS = Object.freeze({
   outboundBudgetPerMin: 28,
 });
 
-// Task 13 replaces this with the real turn orchestration via { runTurnImpl }.
-const noopRunTurn = async () => {};
-
 // Lifecycle Phase-0 drain cap: a drain must never be able to wait forever —
 // one hung run (an impl that ignores its abort signal) would otherwise leave
 // `draining` latched and the engine refusing every message permanently.
@@ -46,6 +48,376 @@ const DRAIN_DEFAULT_TIMEOUT_MS = 5000;
 const noopLog = Object.freeze({
   debug: () => {}, info: () => {}, warn: () => {}, error: () => {},
 });
+
+// —— the default turn body (DESIGN §6 numbered flow) ———————————————————————
+//
+// defaultRunTurn is what a turn DOES once the serial chain grants it a slot:
+// resolve the session (§6.3 + §7 consumedSeq rules), ack, stream throttled +
+// budgeted progress with a heartbeat, enforce the two-phase deadline (§6.7),
+// branch on the runner's machine-readable code (§5), and leave the ledger /
+// session-cache / timeline world consistent for EVERY outcome. It is the
+// constructor default for runTurnImpl and stays replaceable wholesale.
+
+const OUTBOUND_WINDOW_MS = 60_000; // §6.4: the outbound budget is per minute
+
+// Outbound copy — single source; tests pin several of these verbatim.
+const ACK_TEXT = '✅ 收到，马上处理…';
+const WARN_TEXT = '⏳ 任务仍在后台运行，完成后将主动推送结果';
+const TIMEOUT_TEXT = '⚠️ 任务超时未完成（会话已标记，下次将新开会话续接）';
+const LOCK_TEXT = '该会话的写锁被另一个进程占用（可能是别的实例），机器人暂时无法回复。请稍后重试。';
+const CANCEL_TEXT = '（已取消上一条回复）';
+const ABORT_BANNER = '> ⚠️ 已被新消息打断';
+const ERROR_BANNER = '⚠️ 运行未正常结束';
+const EMPTY_DONE_TEXT = '（任务已完成）';
+const DRAIN_INFLIGHT_TEXT = '⚠️ 服务维护，任务已中断，请重发';
+const DRAIN_REFUSAL_TEXT = '⚠️ 服务维护，未处理，请重发';
+const TRUNC_FINAL = '…（完整内容见会话页）';
+const TRUNC_PROGRESS = '…(内容较长，已截断)';
+const HANDOFF_HEADER = '以下是本对话此前的记录（供上下文参考）：';
+
+// Unified events (§5) → timeline kinds (§3). session/error/final get no
+// timeline row here: the closing 'turn' row already carries the outcome.
+const EV_TO_KIND = { step: 'step', tool: 'tool', thinking: 'thinking', text: 'turn' };
+
+export async function defaultRunTurn(bot, msg, ac) {
+  const engine = this;
+  // A bare engine (kernel boot) has no wiring: skip loudly instead of crashing
+  // inside the chain — the serial machinery still settles cleanly.
+  if (!engine.getRunner || !engine.getAdapter || !engine.ledgerFactory) {
+    engine.log.warn?.('engine: turn skipped — runner/adapter/ledger wiring incomplete');
+    return;
+  }
+  const { ledger, cache } = engine.ledgerFactory(bot.id);
+  const adapter = engine.getAdapter(bot);
+  const runner = engine.getRunner(bot);
+
+  // Channel capabilities (§4) with engine-limit fallbacks (§6): the engine
+  // never hardcodes one channel's numbers.
+  const caps = adapter.capabilities ?? {};
+  const L = engine.limits;
+  const minIntervalMs = caps.minIntervalMs ?? L.minIntervalMs;
+  const heartbeatMs = caps.heartbeatMs ?? L.heartbeatMs;
+  const maxContentChars = caps.maxContentChars ?? L.maxContentChars;
+  const streaming = caps.stream !== false;
+  const pushable = caps.push !== false;
+  const warnAt = Math.max(0, (caps.streamDeadlineMs ?? L.streamDeadlineMs) - L.warnLeadMs);
+  const hardTimeoutMs = L.hardTimeoutMs;
+  const budgetPerMin = L.outboundBudgetPerMin;
+  // Masking is ALWAYS on: an injected middleware may replace the pattern, but
+  // a missing one must not silently become a passthrough.
+  const maskFn = engine.middleware?.maskOutbound ?? maskOutbound;
+  const describeError = runner.describeError ?? bot.describeError
+    ?? ((r) => `任务失败（${r?.code ?? 'error'}）`);
+
+  const chatKey = msg.chatKey;
+  const provider = bot.provider;
+  const bornCwd = bot.providerConfig?.cwd;
+  const chatRef = msg.raw ?? chatKey; // the adapter resolves the push target (§4)
+
+  // —— 1. session resolution (§6.3 + §7) ————————————————————————————————
+  const entry = cache.get(chatKey);
+  const pe = entry?.cache?.[provider] ?? null;
+  const nativeOk = !!entry && entry.current === provider && !!pe
+    && pe.bornCwd === bornCwd && pe.dirty !== true && entry.dirty !== true;
+  // Rule-1 pin (review counterexample A): the upsert's consumedSeq argument is
+  // maxSeq({chatKey}) — NO provider filter — captured BEFORE this turn's own
+  // row exists, because the prefix physically contains cross-provider history.
+  const maxSeqAtBuild = ledger.maxSeq({ chatKey });
+  let sessionId = null;
+  let prefix = '';
+  if (nativeOk) {
+    sessionId = pe.sessionId; // native resume: no prefix, the session has it all
+  } else if (entry && pe && pe.bornCwd === bornCwd && pe.dirty !== true) {
+    // Switching BACK to a provider with a clean cached session: resume INTO it
+    // and replay only the delta that session has not consumed (rule 4).
+    const { rows, consumedUpTo } = cache.handoffReplay(chatKey, provider);
+    if (rows.length > 0) prefix = HANDOFF_HEADER + '\n\n' + rows.map(formatTurnBlock).join('\n\n');
+    sessionId = pe.sessionId;
+    cache.setConsumed(chatKey, provider, consumedUpTo); // only what was delivered
+    cache.setCurrent(chatKey, provider); // the delta is in THIS session now
+  } else {
+    // New provider, dirty session (self-handoff) or bornCwd drift: fresh
+    // session carrying the ledger prefix. Switching away does NOT dirty the
+    // old provider's entry — only timeout / hard kill does (§7 切回语义).
+    prefix = ledger.buildHandoffPrefix({ chatKey });
+    sessionId = null;
+  }
+  const sessionIdWasNull = sessionId === null;
+  const prompt = prefix ? `${prefix}\n\n---\n\n${msg.text}` : msg.text;
+
+  // —— 2. outbound plumbing: budget + throttle + truncation + mask (§6.4) ————
+  const startedAt = Date.now();
+  const streamId = `s-${randomUUID()}`;
+  const outWindow = []; // frame timestamps inside the sliding budget window
+  let lastFrameAt = 0;
+  let pendingLine = null; // latest throttled line, flushed at the interval edge
+  let flushTimer = null;
+  let hbSendToggle = false;
+  let backgroundMode = false; // warn frame sent: stream closed, result → push
+  let hardTimedOut = false; // engine-side cause stamp for the reclassify
+
+  const truncateTo = (text, marker) => {
+    if (typeof text !== 'string' || text.length <= maxContentChars) return text ?? '';
+    return text.slice(0, maxContentChars) + (marker ?? TRUNC_PROGRESS);
+  };
+  // Mask BEFORE truncating: a truncation-split secret would dodge the pattern.
+  const outboundText = (text, marker = TRUNC_PROGRESS) => truncateTo(maskFn(text), marker);
+
+  const windowCount = (now) => {
+    while (outWindow.length > 0 && now - outWindow[0] >= OUTBOUND_WINDOW_MS) outWindow.shift();
+    return outWindow.length;
+  };
+  const stamp = () => { lastFrameAt = Date.now(); outWindow.push(lastFrameAt); };
+  // Adapter calls must never take the turn down — not on rejection, and not on
+  // a (buggy) synchronous throw either, or the bookkeeping below is skipped.
+  const sendVia = (what, call) => {
+    try {
+      return Promise.resolve(call()).catch((e) => {
+        engine.log.warn?.(`engine: ${what} send failed: ${e?.message ?? e}`);
+      });
+    } catch (e) {
+      engine.log.warn?.(`engine: ${what} send failed: ${e?.message ?? e}`);
+      return Promise.resolve();
+    }
+  };
+
+  const sendProgress = (text, finish = false) => {
+    stamp(); // every engine-issued frame counts against the budget (§6.4)
+    return sendVia('progress', () => adapter.progress(msg.reqId, streamId, text, finish));
+  };
+  const sendReply = (text) => {
+    stamp();
+    return sendVia('reply', () => adapter.reply(msg.reqId, text));
+  };
+  const sendPush = (text) => sendVia('push', () => adapter.push(chatRef, text)); // push quota is adapter-side (§4)
+  // Final delivery routes by mode: in background the stream was closed by the
+  // warn frame, so the result must not re-appear as a stream frame.
+  const deliverFinal = (text) => {
+    if (backgroundMode) return pushable ? sendPush(text) : sendReply(text);
+    return streaming ? sendProgress(text, true) : sendReply(text);
+  };
+
+  const offerProgress = (line) => {
+    if (!streaming) return; // nothing to refresh on a reply-only channel
+    if (windowCount(Date.now()) >= budgetPerMin) {
+      pendingLine = null; // over budget: the event stream stops first (§6.4)
+      return;
+    }
+    const since = Date.now() - lastFrameAt;
+    if (lastFrameAt === 0 || since >= minIntervalMs || since >= heartbeatMs) {
+      pendingLine = null;
+      void sendProgress(outboundText(line));
+      return;
+    }
+    pendingLine = line; // latest wins; the trailing flush keeps the freshest state
+    if (flushTimer == null) flushTimer = setTimeout(flushPending, Math.max(0, minIntervalMs - since));
+  };
+  const flushPending = () => {
+    flushTimer = null;
+    const line = pendingLine;
+    pendingLine = null;
+    if (line != null) offerProgress(line);
+  };
+
+  // §5 contract: onEvent is ordered and synchronous — outbound inside it is
+  // fire-and-forget so a slow adapter call can never stall the provider.
+  let answer = '';
+  const onEvent = (ev) => {
+    try {
+      if (ev?.type === 'text' && typeof ev.text === 'string') answer = ev.text; // cumulative
+      const line = engine.progressor ? engine.progressor.compose(ev, { answer }) : null;
+      if (line != null) {
+        offerProgress(line);
+        engine.setProgress(bot.id, line, ev.type);
+      }
+      const kind = EV_TO_KIND[ev?.type];
+      if (kind !== undefined && engine.timeline) {
+        // Raw text (full CoT, tool brief) lives in the local timeline only —
+        // the channel only ever saw the composed line (§6.1).
+        const raw = typeof ev?.text === 'string' ? ev.text : (ev?.brief ?? '');
+        engine.timeline.push({ botId: bot.id, chatKey, kind, text: raw || line || '' });
+      }
+    } catch (e) {
+      engine.log.warn?.(`engine: event handling failed: ${e?.message ?? e}`);
+    }
+  };
+
+  // Heartbeat: elapsed-time line even with no events; halved (every other
+  // tick) once the budget is spent — liveness survives, spam does not (§6.4).
+  const ticker = heartbeatMs > 0
+    ? setInterval(() => {
+        if (!streaming) return;
+        const now = Date.now();
+        if (windowCount(now) >= budgetPerMin) {
+          hbSendToggle = !hbSendToggle;
+          if (!hbSendToggle) return; // over budget: heartbeat every other tick
+        }
+        if (lastFrameAt !== 0 && now - lastFrameAt < minIntervalMs) return; // a frame just went out
+        const secs = Math.max(1, Math.round((now - startedAt) / 1000));
+        void sendProgress(outboundText(`⏳ 已运行 ${secs} 秒`));
+      }, heartbeatMs)
+    : null;
+
+  // §6.7 two-phase deadline: warn closes the stream (background mode on, run
+  // keeps going); the hard timer aborts — the runner only sees 'aborted', so
+  // hardTimedOut is what reclassifies the result to a timeout.
+  const warnTimer = setTimeout(() => {
+    backgroundMode = true; // the 10min cliff degrades to a channel switch
+    const text = outboundText(WARN_TEXT);
+    if (streaming) void sendProgress(text, true);
+    else void sendReply(text);
+  }, warnAt);
+  const hardTimer = setTimeout(() => {
+    hardTimedOut = true;
+    ac.abort();
+  }, hardTimeoutMs);
+  const stopTimers = () => {
+    if (ticker != null) clearInterval(ticker);
+    clearTimeout(warnTimer);
+    clearTimeout(hardTimer);
+    if (flushTimer != null) { clearTimeout(flushTimer); flushTimer = null; }
+  };
+
+  // Bookkeeping (§6.6): runs for EVERY outcome — row, cache, timeline — so
+  // the consumedSeq protocol survives aborted/timed-out/failed turns.
+  const bookkeep = (result) => {
+    // A null result means "aborted before the runner started" — same ledger
+    // shape as a preempted run. hardTimedOut reclassifies a hard-timer abort
+    // (the runner itself can only see 'aborted') to a timeout.
+    const effCode = !result ? 'aborted'
+      : result.code === 'aborted' && hardTimedOut ? 'timeout' : result.code;
+    const reason = effCode === 'completed' ? 'completed'
+      : effCode === 'aborted' ? 'interrupted'
+        : effCode === 'timeout' ? 'timeout' : 'error';
+    // §5 abort 处置: a FIRST session aborted mid-write is never cached.
+    if (result?.sessionId && !(result.aborted && sessionIdWasNull)) {
+      if (sessionIdWasNull || result.sessionId !== sessionId) {
+        cache.upsert(chatKey, provider, { sessionId: result.sessionId, bornCwd }, maxSeqAtBuild);
+      }
+    }
+    // markDirty AFTER the upsert: upsert resets dirty on the entry it writes,
+    // and a timed-out brand-new session must END dirty.
+    if (effCode === 'timeout') cache.markDirty(chatKey, provider);
+    const seq = ledger.nextSeq();
+    ledger.recordTurn({
+      seq, at: Date.now(), chatKey,
+      channel: bot.channel ?? chatKey.split(':')[0], chatKind: msg.chatKind,
+      chatid: msg.chatid ?? chatKey.split(':')[2] ?? '', userid: msg.userid,
+      user: msg.text, assistant: result?.finalText || '', provider,
+      sessionId: result?.sessionId || sessionId || '',
+      ok: reason === 'completed', reason, tokens: null, cost: null,
+    });
+    cache.setConsumed(chatKey, provider, seq); // rule 2: every row advances
+    engine.timeline?.push({
+      botId: bot.id, chatKey, kind: 'turn',
+      text: `${msg.text} → ${(result?.finalText || '').slice(0, 60)}`,
+    });
+    engine.progressor?.reset();
+    engine.setProgress(bot.id, null, 'run');
+  };
+
+  // Abort-before-run (defensive: the chain skips aborted turns pre-impl, but a
+  // preempt can land while the ack await below is open).
+  if (ac.signal.aborted) {
+    stopTimers();
+    bookkeep(null);
+    return;
+  }
+
+  // —— 3. ack (§6.2): open the stream, or the plain hint on reply-only channels
+  const ackText = outboundText(ACK_TEXT);
+  if (streaming) {
+    stamp();
+    await sendVia('ack', () => adapter.ack(msg.reqId, streamId, ackText));
+  } else {
+    await sendReply(ackText);
+  }
+  if (ac.signal.aborted) {
+    // The stream was just opened; close it honestly instead of leaving it
+    // dangling, record the interrupted row, never spawn the runner.
+    try {
+      await deliverFinal(outboundText(CANCEL_TEXT));
+    } finally {
+      stopTimers();
+      bookkeep(null);
+    }
+    return;
+  }
+
+  // —— 4/5. run + code branches (§6.4/§6.5) ————————————————————————————
+  const runArgs = () => ({ prompt, sessionId, signal: ac.signal, timeoutMs: hardTimeoutMs, onEvent });
+  const synthError = (e) => ({
+    ok: false, code: 'error', finalText: '', aborted: false,
+    sessionId: sessionId ?? null, reason: 'exception', detail: { error: String(e?.message ?? e) },
+  });
+  let result;
+  try {
+    try {
+      result = await runner.run(runArgs());
+    } catch (e) {
+      // §5 says run() never rejects; a violating runner still gets a row.
+      engine.log.error?.(`engine: runner threw for ${chatKey}: ${e?.stack ?? e}`);
+      result = synthError(e);
+    }
+    if (result?.code === 'lock-conflict') {
+      engine.log.warn?.(`engine: ${chatKey} write-lock conflict — retrying once`);
+      try {
+        result = await runner.run(runArgs()); // same prompt + same sessionId
+      } catch (e) {
+        engine.log.error?.(`engine: lock retry threw for ${chatKey}: ${e?.stack ?? e}`);
+        result = synthError(e);
+      }
+    }
+    if (result == null) result = synthError(new Error('runner resolved without a result'));
+    const effCode = result.code === 'aborted' && hardTimedOut ? 'timeout' : result.code;
+    switch (effCode) {
+      case 'completed': {
+        // Push carries the FULL text (the adapter chunks it, §6.7); a stream
+        // final is capped at maxContentChars with the 会话页 pointer.
+        const full = maskFn(result.finalText || EMPTY_DONE_TEXT);
+        if (backgroundMode && pushable) await sendPush(full);
+        else if (streaming) await sendProgress(truncateTo(full, TRUNC_FINAL), true);
+        else await sendReply(truncateTo(full, TRUNC_FINAL));
+        break;
+      }
+      case 'aborted': {
+        const base = result.finalText ? outboundText(result.finalText) : '';
+        // During drain the abort cause is maintenance, not a newer message.
+        const text = engine.draining
+          ? (base ? `${base}\n\n${DRAIN_INFLIGHT_TEXT}` : DRAIN_INFLIGHT_TEXT)
+          : (base ? `${base}\n\n${ABORT_BANNER}` : CANCEL_TEXT);
+        await deliverFinal(text);
+        break;
+      }
+      case 'timeout': {
+        const base = result.finalText ? outboundText(result.finalText) + '\n\n' : '';
+        await deliverFinal(base + outboundText(TIMEOUT_TEXT));
+        break; // markDirty happens in bookkeep, after the upsert
+      }
+      case 'lock-conflict': {
+        await sendReply(LOCK_TEXT); // 防线三 copy (§5.1)
+        break;
+      }
+      case 'missing-credential': {
+        await sendReply(outboundText(describeError(result)));
+        break;
+      }
+      default: {
+        if (result.finalText) await deliverFinal(`${outboundText(result.finalText)}\n\n${ERROR_BANNER}`);
+        else await sendReply(outboundText(`❌ 任务未能完成：${describeError(result)}`));
+      }
+    }
+  } finally {
+    stopTimers();
+    try {
+      bookkeep(result);
+    } catch (e) {
+      // A bookkeeping failure (bad row, full disk...) must not mask the branch
+      // handling above — but it is loudly an error.
+      engine.log.error?.(`engine: bookkeeping failed for ${chatKey}: ${e?.stack ?? e}`);
+    }
+  }
+}
 
 export class Engine {
   constructor({
@@ -77,7 +449,7 @@ export class Engine {
     this.progressor = progressor;
     this.middleware = middleware;
     this.limits = { ...ENGINE_LIMITS, ...limits };
-    this._runTurnImpl = runTurnImpl ?? noopRunTurn;
+    this._runTurnImpl = runTurnImpl ?? defaultRunTurn;
 
     this.chains = new Map();    // chatKey → tail promise (settles when the chain goes idle)
     this.pending = new Map();   // chatKey → { bot, msg } merged-but-not-started (latest-wins)
@@ -240,6 +612,24 @@ export class Engine {
       });
     } finally {
       if (this._drainBusy === 1) this.draining = false;
+    }
+  }
+
+  // Task 13: answer every message a drain refused (T12 parked them here).
+  // Lifecycle calls this after drain() resolves; ownership transfers on call
+  // so a second call can never double-send. Pending turns were never acked,
+  // so the honest channel is a plain reply, not a stream frame.
+  async sendDrainRefusals() {
+    const refusals = this.drainRefusals;
+    this.drainRefusals = [];
+    for (const { bot, msg } of refusals) {
+      try {
+        const adapter = this.getAdapter?.(bot);
+        if (adapter?.reply) await adapter.reply(msg.reqId, DRAIN_REFUSAL_TEXT);
+        else this.log.warn?.(`engine: no adapter to answer the drain refusal for ${msg.chatKey}`);
+      } catch (e) {
+        this.log.error?.(`engine: drain refusal reply failed: ${e?.message ?? e}`);
+      }
     }
   }
 
