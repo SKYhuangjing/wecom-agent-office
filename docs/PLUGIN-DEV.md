@@ -193,6 +193,7 @@ ctx.registerProvider('dsh', {
   configSchema: [ { key: 'cwd', type: 'string', required: true }, /* … */ ],
   validate(providerConfig) → string[],                 // [] = 合法；字段级错误文案
   materializeConfig(bot, { log }) → { changed } | null, // 可选（dsh 专用：tmp+rename 原子写 profile）
+  removeConfig(bot, { log }) → { removed } | null,      // 可选：DELETE /api/bots 时清理物化产物（dsh 删 profile）
   createRunner({ bot, providerConfig, log }) {
     return {
       run({ prompt, sessionId, signal, timeoutMs, onEvent }) → {

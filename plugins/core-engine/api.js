@@ -166,6 +166,18 @@ async function deleteBotHandler({ res, m, state }) {
   const bot = findBot(state, idOf(m));
   if (bot == null) throw httpError(404, 'bot not found');
   state.detach(bot.id, 'deleted');
+  // materializeConfig's counterpart: if the provider port implements
+  // removeConfig, the bot's materialized files (dsh profile) go with the
+  // record. Best-effort — a cleanup failure must not resurrect the deleted
+  // bot; it lands in the log for the operator.
+  const port = state.ports?.getProvider?.(bot.provider);
+  if (port != null && typeof port.removeConfig === 'function') {
+    try {
+      await port.removeConfig(bot, { log: state.log });
+    } catch (err) {
+      state.log?.warn?.(`core-engine: removeConfig failed for ${bot.id}: ${err?.message ?? err}`);
+    }
+  }
   state.doc.bots.splice(state.doc.bots.indexOf(bot), 1);
   saveBots(state.botsFile, state.doc);
   sendJson(res, 200, { ok: true });

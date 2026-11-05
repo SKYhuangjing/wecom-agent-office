@@ -7,7 +7,7 @@
 // providerConfig block), semantic validate, materializeConfig hook and the
 // code→中文 describeError copy (前身 bridge.js _friendly/_describeFailure).
 import { createRunner } from './runner.js';
-import { writeBotProfile } from './profiles.js';
+import { writeBotProfile, removeProfile } from './profiles.js';
 
 const PORT_ID = 'dsh';
 const PERMS = ['workspace-write', 'read-only', 'danger-full-access'];
@@ -90,6 +90,17 @@ export default {
         });
         log?.info?.(`provider-dsh: materialized profile ${profile} → ${res.path}`);
         return { changed: true, profile, path: res.path };
+      },
+
+      // materializeConfig's counterpart: DELETE /api/bots/:id takes the bot's
+      // materialized profile with it — no orphaned ~/.dsh/profiles/wecom-<botId>
+      // outlives the bot record. Best-effort by contract; removeProfile returns
+      // false when nothing was there (never an error).
+      removeConfig(bot, { log } = {}) {
+        const profile = bot?.providerConfig?.profile || `wecom-${bot?.id}`;
+        const removed = removeProfile(profile);
+        log?.info?.(`provider-dsh: removeConfig profile ${profile} → ${removed ? 'removed' : 'absent'}`);
+        return { removed };
       },
 
       createRunner({ bot, providerConfig, log }) {

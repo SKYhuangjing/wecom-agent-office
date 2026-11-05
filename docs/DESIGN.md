@@ -102,7 +102,7 @@ channel-wecom 唯一的外部依赖收归内核，使「import 限于自身目�
 |---|---|---|
 | `core` | `ctx.services.register(...)` | `core-engine` |
 | `channel` | `ctx.registerChannel(id, {capabilities, accountSchema, createAdapter})` | `channel-wecom` |
-| `provider` | `ctx.registerProvider(id, {configSchema, validate, materializeConfig, createRunner, readHistory, describeError})` | `provider-dsh/claude/codex` |
+| `provider` | `ctx.registerProvider(id, {configSchema, validate, materializeConfig, removeConfig, createRunner, readHistory, describeError})` | `provider-dsh/claude/codex` |
 | `ui` | `ctx.registerPage({id, title, icon, order, entry})` | `ui-workbench`、`ui-office3d`、各插件自带页 |
 | `middleware` | `ctx.registerMiddleware({onInbound, onOutbound})` 链式 | core-engine 内置掩码 |
 | `progressor` | `ctx.registerProgressor({compose})` | core-engine 内置语义进度 |
@@ -277,6 +277,8 @@ ctx.registerProvider('dsh', {
   validate(providerConfig) → string[],
   // 物化（dsh 专用；可选钩子）。tmp+rename 原子写；失败=保留 last-good + bot offline+原因 + API 4xx
   materializeConfig(bot, { log }) → { changed } | null,
+  // 反物化（可选钩子）：DELETE /api/bots/:id 时清理该 bot 的物化产物（dsh 删 profile 目录），尽力而为
+  removeConfig(bot, { log }) → { removed } | null,
   createRunner({ bot, providerConfig, log }) {
     return {
       // timeoutMs 由引擎按 channel capabilities 传入。
@@ -400,7 +402,7 @@ core-engine 内置：空 onInbound + 简单掩码 onOutbound（密钥模式→`*
 | 内核原生 | `GET /api/ui/*` | 页面插件静态资源（含 harness，§9） |
 | 内核原生 | `GET /healthz` `/readyz` | 自检 |
 | core-engine 注册 | `GET /api/agents` | 每 bot 实况（status/progress{line,source}/todayTurns/连接态） |
-| core-engine 注册 | `POST /api/bots` `PATCH /api/bots/:id` `DELETE` `POST :id/toggle` `POST :id/test` | CRUD（校验→materialize→串行链 drain→重连）+试跑 |
+| core-engine 注册 | `POST /api/bots` `PATCH /api/bots/:id` `DELETE` `POST :id/toggle` `POST :id/test` | CRUD（校验→materialize→串行链 drain→重连；DELETE→removeConfig 清理物化产物）+试跑 |
 | core-engine 注册 | `GET /api/ledger` `GET /api/session` `GET /api/export` `GET /api/timeline` | 台账/原生会话钻取/导出/事件环形缓冲（30min） |
 | core-engine 注册 | `POST /api/send` | 主动推送 |
 

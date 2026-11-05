@@ -64,6 +64,12 @@ export default {
         if (bot.providerConfig?.cwd === '/fail') throw new Error('materialize boom');
         return { changed: true };
       },
+      removeConfig(bot) {
+        globalThis.__waoFakeRemoveCfg = (globalThis.__waoFakeRemoveCfg ?? 0) + 1;
+        (globalThis.__waoFakeRemoveCfgLog ??= []).push({ id: bot.id, cwd: bot.providerConfig?.cwd });
+        if (bot.providerConfig?.cwd === '/rm-fail') throw new Error('removeConfig boom');
+        return { removed: true };
+      },
       createRunner({ bot }) {
         return {
           async run({ prompt, sessionId, signal, onEvent }) {
@@ -209,6 +215,23 @@ test('POST /api/bots/:id/test runs the provider runner engine-independently; led
   // engine-independent: the probe run must not journal a ledger turn
   const ledger = await (await get('/api/ledger?bot=b1')).json();
   assert.deepEqual(ledger, []);
+});
+
+test('DELETE /api/bots/:id detaches, removeConfig cleans materialized files, persists; failure is non-fatal', async () => {
+  assert.equal((await post('/api/bots', { ...BOT_B1, id: 'bye', providerConfig: { cwd: '/tmp/bye', mode: 'a' } })).status, 200);
+  assert.equal((await post('/api/bots', { ...BOT_B1, id: 'boom', providerConfig: { cwd: '/rm-fail', mode: 'a' } })).status, 200);
+  const before = globalThis.__waoFakeRemoveCfg ?? 0;
+
+  // A throwing removeConfig must NOT block the delete (best-effort cleanup).
+  assert.equal((await fetch(url('/api/bots/boom'), { method: 'DELETE' })).status, 200);
+  assert.deepEqual(loadBots(join(dataDir, 'bots.json')).bots.map((b) => b.id), ['b1', 'bye']);
+
+  assert.equal((await fetch(url('/api/bots/bye'), { method: 'DELETE' })).status, 200);
+  assert.equal((globalThis.__waoFakeRemoveCfg ?? 0) - before, 2, 'DELETE calls provider removeConfig');
+  assert.equal(globalThis.__waoFakeRemoveCfgLog.at(-1).cwd, '/tmp/bye', 'removeConfig saw the deleted bot');
+  assert.deepEqual(loadBots(join(dataDir, 'bots.json')).bots.map((b) => b.id), ['b1'], 'both bots gone from bots.json');
+  assert.ok(!(await agentsOf()).some((a) => a.id === 'bye' || a.id === 'boom'), 'gone from /api/agents');
+  assert.equal((await fetch(url('/api/bots/bye'), { method: 'DELETE' })).status, 404, 'second delete 404s');
 });
 
 test('invalid bot records → 400 with field-level errors', async () => {
