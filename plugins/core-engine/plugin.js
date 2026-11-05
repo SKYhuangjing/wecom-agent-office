@@ -98,13 +98,27 @@ export default {
     // message a drain refused must be answered, not dropped.
     const engineFacade = {
       onMessage: (bot, msg) => engine.onMessage(bot, msg),
+      onChannelEvent: (bot, ev) => engine.onChannelEvent(bot, ev),
       drain: async (timeoutMs) => {
         await engine.drain(timeoutMs);
         await engine.sendDrainRefusals();
       },
       status: (botId) => engine.status(botId),
+      // A4 seam: an engine-side channel-event handler returning true means
+      // "the engine handled it" — the channel then skips its default behavior
+      // (e.g. the default enter_chat welcome).
+      setChannelEventHandler: (fn) => { engine.channelEventHandler = fn; },
     };
     services.register('engine', engineFacade);
+
+    // The facade a CHANNEL ADAPTER receives (DESIGN §4): inbound is
+    // single-object — onMessage({botId, chatKey, ...}) / onChannelEvent(ev) —
+    // and every call closes over THIS bot, so the adapter never has to know
+    // the kernel-internal (bot, msg) shape the engine service speaks.
+    const channelFacadeFor = (botRecord) => ({
+      onMessage: (msg) => engine.onMessage(botRecord, msg),
+      onChannelEvent: (ev) => engine.onChannelEvent(botRecord, ev),
+    });
 
     const makeRunner = (bot) => {
       const port = ports?.getProvider?.(bot.provider);
@@ -140,7 +154,7 @@ export default {
       }
       try {
         const channelPort = ports.getChannel(bot.channel);
-        const adapter = channelPort.createAdapter({ account: bot.account, bot, log, engine: engineFacade });
+        const adapter = channelPort.createAdapter({ account: bot.account, bot, log, engine: channelFacadeFor(bot) });
         const runner = makeRunner(bot);
         adapters.set(bot.id, adapter);
         runners.set(bot.id, runner);

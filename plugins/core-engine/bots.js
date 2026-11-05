@@ -74,8 +74,13 @@ const lookup = (reg, id) => {
 };
 
 // One pass surfaces ALL problems (same discipline as the loader's manifest
-// validation): id/name presence, known channel/provider ids, then the
-// channel's accountSchema and the provider's configSchema field by field.
+// validation): id/name presence, known channel/provider ids, the channel's
+// accountSchema and the provider's configSchema field by field, and finally
+// the provider port's semantic validate() — PLUGIN-DEV §8: validate 是权威
+// 校验，its errors surface wherever validateBot runs (API 400s, attach refusal,
+// boot revalidate). A throwing validate() becomes one error line, never a
+// crashed validation; duplicate messages (schema + validate both flagging the
+// same field) collapse.
 export function validateBot(bot, { channels, providers } = {}) {
   if (bot == null || typeof bot !== 'object' || Array.isArray(bot)) return ['bot must be a plain object'];
   const errors = [];
@@ -87,6 +92,18 @@ export function validateBot(bot, { channels, providers } = {}) {
   if (provider == null) errors.push(`unknown provider: ${JSON.stringify(bot.provider ?? null)}`);
   if (channel != null) errors.push(...validateSchema(channel.accountSchema, bot.account, 'account'));
   if (provider != null) errors.push(...validateSchema(provider.configSchema, bot.providerConfig, 'providerConfig'));
+  if (provider != null && typeof provider.validate === 'function') {
+    let providerErrors;
+    try {
+      providerErrors = provider.validate(bot.providerConfig);
+    } catch (err) {
+      providerErrors = [`provider validate() threw: ${err?.message ?? err}`];
+    }
+    const list = Array.isArray(providerErrors) ? providerErrors : [providerErrors];
+    for (const e of list) {
+      if (typeof e === 'string' && e !== '' && !errors.includes(e)) errors.push(e);
+    }
+  }
   return errors;
 }
 

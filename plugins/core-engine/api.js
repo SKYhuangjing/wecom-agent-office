@@ -102,12 +102,21 @@ async function agentsHandler({ res, state }) {
     const todayTurns = rows.filter((r) => (r.at ?? 0) >= midnight.getTime()).length;
     const users = new Set(rows.map((r) => r.userid).filter(Boolean)).size;
     const chats = new Set(rows.map((r) => r.chatKey).filter(Boolean)).size;
+    // 连接态 (§8): a terminal 'stopped' adapter (subscribe 鉴权失败, kicked)
+    // means the bot cannot receive — report offline with the adapter's
+    // lastError as the reason (DESIGN §4 凭证错误快速失败: bot 标 error).
+    const adapter = state.adapterFor(bot.id);
+    let chan = null;
+    try { chan = typeof adapter?.status === 'function' ? adapter.status() : null; } catch { chan = null; }
+    const chanStopped = chan?.state === 'stopped';
     return {
       id: bot.id, name: bot.name, enabled: bot.enabled !== false,
       provider: bot.provider, channel: bot.channel,
-      status: st.status, running: st.running, progress: st.progress,
+      status: st.status === 'offline' || chanStopped ? 'offline' : st.status,
+      running: st.running, progress: st.progress,
       todayTurns, users, chats, turns: rows.length,
-      reason: state.offlineReason(bot.id),
+      reason: state.offlineReason(bot.id) ?? (chanStopped ? (chan.lastError ?? 'channel stopped') : null),
+      channelState: chan == null ? null : { state: chan.state ?? null, lastError: chan.lastError ?? null },
     };
   });
   sendJson(res, 200, { agents });

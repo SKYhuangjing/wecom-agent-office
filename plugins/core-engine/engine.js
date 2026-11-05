@@ -221,11 +221,16 @@ export async function defaultRunTurn(bot, msg, ac) {
 
   // §5 contract: onEvent is ordered and synchronous — outbound inside it is
   // fire-and-forget so a slow adapter call can never stall the provider.
+  // §6.1 progressCoT (default on): a bot that opted out never sees a 💭 line;
+  // the filter sits BEFORE compose (progressor untouched), and the raw text
+  // still lands in the local timeline below.
+  const progressCoT = bot.providerConfig?.progressCoT !== false;
   let answer = '';
   const onEvent = (ev) => {
     try {
       if (ev?.type === 'text' && typeof ev.text === 'string') answer = ev.text; // cumulative
-      const line = engine.progressor ? engine.progressor.compose(ev, { answer }) : null;
+      const composeIt = engine.progressor != null && !(ev?.type === 'thinking' && !progressCoT);
+      const line = composeIt ? engine.progressor.compose(ev, { answer }) : null;
       if (line != null) {
         offerProgress(line);
         engine.setProgress(bot.id, line, ev.type);
@@ -430,13 +435,15 @@ export class Engine {
     middleware = null,
     limits = {},
     runTurnImpl = null,
+    channelEventHandler = null,
   } = {}) {
     if (limits.concurrency !== undefined
       && (!Number.isInteger(limits.concurrency) || limits.concurrency < 1)) {
       throw new Error(`limits.concurrency must be a positive integer, got ${JSON.stringify(limits.concurrency)}`);
     }
     for (const [name, fn] of [['getRunner', getRunner], ['getAdapter', getAdapter],
-      ['ledgerFactory', ledgerFactory], ['runTurnImpl', runTurnImpl]]) {
+      ['ledgerFactory', ledgerFactory], ['runTurnImpl', runTurnImpl],
+      ['channelEventHandler', channelEventHandler]]) {
       if (fn !== null && typeof fn !== 'function') {
         throw new Error(`${name} must be a function or null, got ${typeof fn}`);
       }
@@ -450,6 +457,7 @@ export class Engine {
     this.middleware = middleware;
     this.limits = { ...ENGINE_LIMITS, ...limits };
     this._runTurnImpl = runTurnImpl ?? defaultRunTurn;
+    this.channelEventHandler = channelEventHandler;
 
     this.chains = new Map();    // chatKey → tail promise (settles when the chain goes idle)
     this.pending = new Map();   // chatKey → { bot, msg } merged-but-not-started (latest-wins)
@@ -522,6 +530,29 @@ export class Engine {
     const line = `engine: bot ${botId} detached (${reason}) — messages dropped until reattach`;
     if (had) this.log.warn?.(line); else this.log.debug?.(line);
     return had;
+  }
+
+  // Channel events (DESIGN §4 评审补): enter_chat / disconnected / ... arrive
+  // from a channel adapter through the per-bot facade. Return true when the
+  // ENGINE fully handled the event — the channel then SKIPS its own default
+  // behavior (e.g. the default enter_chat welcome); false/undefined → the
+  // channel's fallback fires. channelEventHandler is the extension seam
+  // (M1 core-engine only observes: no engine-side enter_chat copy yet).
+  onChannelEvent(bot, ev) {
+    const type = ev?.type ?? 'unknown';
+    if (type === 'disconnected') {
+      this.log.warn?.(`engine: bot ${JSON.stringify(bot?.id)} channel disconnected`);
+    } else {
+      this.log.info?.(`engine: channel event ${type} for bot ${JSON.stringify(bot?.id)}`);
+    }
+    if (typeof this.channelEventHandler === 'function') {
+      try {
+        return this.channelEventHandler(bot, ev) === true;
+      } catch (e) {
+        this.log.warn?.(`engine: channelEventHandler threw: ${e?.message ?? e}`);
+      }
+    }
+    return false;
   }
 
   // Called by Task 13's runTurnImpl to refresh the status line. First call

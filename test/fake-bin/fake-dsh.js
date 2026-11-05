@@ -10,6 +10,10 @@
 // Modes:
 //   ok            full happy dsh-style NDJSON stream, exit 0
 //   thinking      ok plus a thinking event before tool_call
+//   slow          ok-family but stretched to ~4.7s so events land past the
+//                 wecom 2200ms progress throttle (e2e needs a mid-run 🔧
+//                 frame actually flushed to the wire, plus a live window for
+//                 preemption/reload to hit a run in flight)
 //   lock          stderr lock error, exit 3, nothing on stdout
 //   credential    stdout error event MISSING_CREDENTIAL, exit 1
 //   hang-sigterm  session + partial text, then SIGTERM is ignored — dies only
@@ -80,6 +84,26 @@ async function happyStream() {
   }
 }
 
+// slow: same event sequence, but the gaps straddle the engine's 2200ms
+// progress throttle — thinking flushes as a 💭 frame at ~2.2s, the tool_call
+// line (🔧) flushes at ~4.4s, then text/final land ~4.6s. No SIGTERM handler:
+// an abort kills it immediately (the preemption/reload scenarios depend on
+// that) while the remaining events give those scenarios a live run to hit.
+async function slowStream() {
+  const sid = sessionIdFromArgv() || freshSid();
+  emit({ type: 'session', sessionId: sid });
+  await sleep(50);
+  emit({ type: 'thinking', text: '好的，让我先查看一下目录结构。' });
+  await sleep(2250);
+  emit({ type: 'tool_call', name: 'Bash', input: { command: 'ls -la' } });
+  await sleep(2150);
+  emit({ type: 'text', text: '答案文本' });
+  await sleep(100);
+  emit({ type: 'status', phase: 'step_end', step: 1, usage: { inputTokens: 120, outputTokens: 60 } });
+  emit({ type: 'status', phase: 'turn_end', turn: 1, reason: { kind: 'completed' } });
+  emit({ type: 'final', text: '答案文本' });
+}
+
 async function main() {
   // Drain ALL of stdin first (the prompt); stored raw for suite assertions.
   const chunks = [];
@@ -93,6 +117,10 @@ async function main() {
       // Natural exit (exitCode, not process.exit) lets pending stdout writes
       // flush — an abrupt exit could truncate the final line on a pipe.
       await happyStream();
+      process.exitCode = 0;
+      return;
+    case 'slow':
+      await slowStream();
       process.exitCode = 0;
       return;
     case 'lock':
