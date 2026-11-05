@@ -1,0 +1,9 @@
+# dsh minimal probe — raw NDJSON as captured (stdin prompt: 只回复两个字：收到)
+# captured 2026-11-06; exit=0; compare = run-length-collapsed .type sequence (bash test/probe.sh --check)
+{"type":"session","sessionId":"session-99347e74-67ff-4c68-9747-4b9aaa9a9f1f","cwd":"/Users/sky/develop/workbuddy_workspace/wecom-agent-office"}
+{"type":"status","phase":"turn_start","turn":1}
+{"type":"status","phase":"step_start","turn":1,"step":1}
+{"type":"text","text":"收到"}
+{"type":"status","phase":"step_end","turn":1,"step":1,"usage":{"inputTokens":235,"outputTokens":1,"totalTokens":7020,"cacheReadTokens":6784}}
+{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"completed"}}
+{"type":"final","text":"收到"}

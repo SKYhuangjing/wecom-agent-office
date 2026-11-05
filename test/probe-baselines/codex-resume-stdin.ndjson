@@ -1,0 +1,14 @@
+# codex resume+stdin sentinel probe — captured 2026-11-06
+# first run: `codex exec --json --skip-git-repo-check -` exit=0; thread_id=captured
+# resume: WORKS — `codex exec resume <tid> --json -` accepts the STDIN sentinel prompt and answers it
+# sentinel reply (first 60 chars): 收到了
+# ---- first run output (raw) ----
+{"type":"thread.started","thread_id":"01a1adc8-faea-7061-9e03-271d778247e8"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"收到"}}
+{"type":"turn.completed","usage":{"input_tokens":22075,"cached_input_tokens":21888,"cache_write_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0}}
+# ---- resume run output (raw, first 6 JSON lines) ----
+{"type":"thread.started","thread_id":"01a1adc8-faea-7061-9e03-271d778247e8"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"收到了"}}
+{"type":"turn.completed","usage":{"input_tokens":44169,"cached_input_tokens":43776,"cache_write_input_tokens":0,"output_tokens":35,"reasoning_output_tokens":22}}
