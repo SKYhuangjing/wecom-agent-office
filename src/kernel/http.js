@@ -78,6 +78,10 @@ export function createHttpShell({ log }) {
       if (routes.has(prefix)) throw new Error(`http: prefix already registered: ${prefix}`);
       routes.set(prefix, { handler, owner });
     },
+    // Teardown counterpart of register (lifecycle deactivation): drop the route
+    // so a deactivated plugin can neither serve nor shadow a prefix. Unknown
+    // prefix is a silent no-op — teardown must stay idempotent.
+    unregister(prefix) { routes.delete(prefix); },
     handle,
     sseSend(event, data) {
       const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;

@@ -184,6 +184,22 @@ test('register: duplicate prefix throws; prefix must start with "/"; kernel rout
   assert.throws(() => shell.register({ prefix: '/api/events', handler: jsonHandler({}), owner: 'p2' }), /reserved/);
 });
 
+test('unregister(prefix): route 404s afterwards, other routes unaffected, unknown prefix is a no-op', async () => {
+  const t = await boot();
+  try {
+    t.shell.register({ prefix: '/api/gone', owner: 'p1', handler: jsonHandler({ gone: 1 }) });
+    t.shell.register({ prefix: '/api/keep', owner: 'p2', handler: jsonHandler({ keep: 1 }) });
+    assert.equal((await getJson(t.base, '/api/gone')).status, 200);
+    t.shell.unregister('/api/gone'); // lifecycle deactivation revokes the plugin's route
+    assert.deepEqual((await getJson(t.base, '/api/gone')).body, { error: 'not found' });
+    assert.equal((await getJson(t.base, '/api/keep')).status, 200); // neighbors untouched
+    assert.doesNotThrow(() => t.shell.unregister('/never-registered')); // teardown must be idempotent
+    // the prefix is free again: a re-activated plugin may reclaim it
+    t.shell.register({ prefix: '/api/gone', owner: 'p3', handler: jsonHandler({ back: 1 }) });
+    assert.deepEqual((await getJson(t.base, '/api/gone')).body, { back: 1 });
+  } finally { await t.close(); }
+});
+
 test('longest registered prefix wins at dispatch', async () => {
   const t = await boot();
   try {
