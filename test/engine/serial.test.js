@@ -70,7 +70,7 @@ function makeHarness({ limits, abortSettles = false, attach = [bot] } = {}) {
     log,
     getRunner: () => runner,
     getAdapter: () => adapter,
-    ledgerFor: () => ({}),
+    ledgerFactory: () => ({}),
     timeline: null,
     progressor: null,
     middleware: null,
@@ -102,6 +102,7 @@ test('constructor rejects invalid concurrency and non-function deps', () => {
   assert.throws(() => new Engine({ limits: { concurrency: 0 } }), /concurrency/);
   assert.throws(() => new Engine({ limits: { concurrency: 1.5 } }), /concurrency/);
   assert.throws(() => new Engine({ getRunner: 'nope' }), /getRunner/);
+  assert.throws(() => new Engine({ ledgerFactory: 'nope' }), /ledgerFactory/);
   assert.throws(() => new Engine({ runTurnImpl: 42 }), /runTurnImpl/);
   new Engine(); // bare constructor is legal: tests/T14 fill deps later
 });
@@ -281,6 +282,8 @@ test('drain: aborts in-flight, refuses pending and new messages, settles chains 
 
 test('drain timeout: returns false when a run refuses to settle; engine reopens afterwards', async () => {
   const h = makeHarness(); // abortSettles=false: run stays parked on its gate
+  assert.throws(() => h.engine.drain(-1), /timeoutMs/);
+  assert.throws(() => h.engine.drain(Infinity), /timeoutMs/);
   h.engine.onMessage(bot, msg('stuck', KEY));
   await tick();
   const drainP = h.engine.drain(50);
@@ -292,6 +295,72 @@ test('drain timeout: returns false when a run refuses to settle; engine reopens 
   h.runner.gates.get('stuck').resolve();
   await h.engine.chains.get(KEY);
   assert.equal(h.engine.inFlight.size, 0);
+});
+
+test('drain() default timeout is bounded (5s): a hung run cannot brick the engine', async () => {
+  const h = makeHarness(); // abortSettles=false: run ignores abort, stays parked
+  h.engine.onMessage(bot, msg('stuck', KEY));
+  await tick();
+  const t0 = Date.now();
+  assert.equal(await h.engine.drain(), false, 'no-arg drain still settles the wait');
+  const elapsed = Date.now() - t0;
+  assert.ok(elapsed < 6000, `default drain must be finite (took ${elapsed}ms)`);
+  assert.equal(h.engine.draining, false, 'engine reopens after the default timeout');
+
+  h.runner.gates.get('stuck').resolve();
+  await h.engine.chains.get(KEY);
+});
+
+test('onMessage validation precedes draining: junk never enters drainRefusals', async () => {
+  const h = makeHarness();
+  h.engine.onMessage(bot, msg('stuck', KEY));
+  await tick();
+  const drainP = h.engine.drain(30);
+  h.engine.onMessage(bot, {});                   // no chatKey → normal drop
+  h.engine.onMessage({ id: 'ghost' }, msg('x')); // never attached → normal drop
+  assert.equal(await drainP, false);
+  assert.deepEqual(h.engine.drainRefusals, [], 'only runnable messages are refused');
+  assert.ok(h.log.lines.warn.some((l) => /chatKey/.test(String(l))));
+  assert.ok(h.log.lines.warn.some((l) => /offline/.test(String(l))));
+
+  h.runner.gates.get('stuck').resolve();
+  await h.engine.chains.get(KEY);
+});
+
+test('gate FIFO: multiple waiters start in arrival order as slots free', async () => {
+  const h = makeHarness({ limits: { concurrency: 4 } });
+  const keys = Array.from({ length: 6 }, (_, i) => `wecom:group:f${i + 1}`);
+  keys.forEach((k, i) => h.engine.onMessage(bot, msg(`m${i + 1}`, k)));
+  await tick();
+  assert.equal(h.runner.spawns.length, 4);
+
+  h.runner.gates.get('m1').resolve(); // first slot frees → first waiter (m5)
+  await tick();
+  assert.deepEqual(h.runner.spawns.map((s) => s.prompt), ['m1', 'm2', 'm3', 'm4', 'm5']);
+
+  h.runner.gates.get('m2').resolve(); // second slot frees → next waiter (m6)
+  await tick();
+  assert.deepEqual(h.runner.spawns.map((s) => s.prompt), ['m1', 'm2', 'm3', 'm4', 'm5', 'm6'],
+    'waiters start strictly in arrival order');
+
+  for (const p of ['m3', 'm4', 'm5', 'm6']) h.runner.gates.get(p).resolve();
+  await Promise.all(keys.map((k) => h.engine.chains.get(k)));
+});
+
+test('drain reentry: overlapping drains serialize — both resolve, refusals survive', async () => {
+  const h = makeHarness({ abortSettles: true });
+  h.engine.onMessage(bot, msg('m1', KEY));
+  await tick();
+  const d1 = h.engine.drain(1000);
+  const d2 = h.engine.drain(1000); // called while d1 is in flight
+  h.engine.onMessage(bot, msg('during', KEY)); // refused inside the shared window
+  assert.equal(await d1, true);
+  assert.equal(await d2, true);
+  assert.deepEqual(h.engine.drainRefusals.map((r) => r.msg.text), ['during'],
+    'queued drain must not clobber the window\'s refusals');
+  assert.equal(h.engine.inFlight.size, 0);
+  assert.equal(h.engine.pending.size, 0);
+  assert.equal(h.engine.chains.size, 0);
 });
 
 test('attach/detach: detached bot drops messages with warn; status reflects offline', async () => {

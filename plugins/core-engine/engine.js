@@ -38,6 +38,11 @@ export const ENGINE_LIMITS = Object.freeze({
 // Task 13 replaces this with the real turn orchestration via { runTurnImpl }.
 const noopRunTurn = async () => {};
 
+// Lifecycle Phase-0 drain cap: a drain must never be able to wait forever —
+// one hung run (an impl that ignores its abort signal) would otherwise leave
+// `draining` latched and the engine refusing every message permanently.
+const DRAIN_DEFAULT_TIMEOUT_MS = 5000;
+
 const noopLog = Object.freeze({
   debug: () => {}, info: () => {}, warn: () => {}, error: () => {},
 });
@@ -47,7 +52,7 @@ export class Engine {
     log = noopLog,
     getRunner = null,
     getAdapter = null,
-    ledgerFor = null,
+    ledgerFactory = null,
     timeline = null,
     progressor = null,
     middleware = null,
@@ -59,7 +64,7 @@ export class Engine {
       throw new Error(`limits.concurrency must be a positive integer, got ${JSON.stringify(limits.concurrency)}`);
     }
     for (const [name, fn] of [['getRunner', getRunner], ['getAdapter', getAdapter],
-      ['ledgerFor', ledgerFor], ['runTurnImpl', runTurnImpl]]) {
+      ['ledgerFactory', ledgerFactory], ['runTurnImpl', runTurnImpl]]) {
       if (fn !== null && typeof fn !== 'function') {
         throw new Error(`${name} must be a function or null, got ${typeof fn}`);
       }
@@ -67,7 +72,7 @@ export class Engine {
     this.log = log;
     this.getRunner = getRunner;
     this.getAdapter = getAdapter;
-    this.ledgerFor = ledgerFor;
+    this.ledgerFactory = ledgerFactory;
     this.timeline = timeline;
     this.progressor = progressor;
     this.middleware = middleware;
@@ -84,17 +89,15 @@ export class Engine {
     this._waiters = [];         // FIFO of slot resolve callbacks (fairness across bots)
     this.draining = false;
     this.drainRefusals = [];    // { bot, msg, reason } — Task 13/14 send refusal copy
+    this._drainSeq = Promise.resolve(); // serializes drains (same pattern as reload)
+    this._drainBusy = 0;        // drains queued+running; refusals reset only at 0
   }
 
   onMessage(bot, msg) {
-    if (this.draining) {
-      // Drain is short-lived (lifecycle reload / bot CRUD): refuse loudly and
-      // keep the message for the refusal copy rather than queueing work the
-      // drain just promised to finish.
-      this.drainRefusals.push({ bot, msg, reason: 'draining' });
-      this.log.warn?.(`engine draining: refused message for ${msg?.chatKey}`);
-      return;
-    }
+    // Input validation comes FIRST, before the draining branch: junk (an
+    // offline bot, a message without chatKey) is dropped by the normal rules
+    // no matter the engine state — drainRefusals must carry only messages
+    // that would otherwise have RUN, since Task 13 answers every refusal.
     if (!this._bots.has(bot?.id)) {
       this.log.warn?.(`engine: bot ${JSON.stringify(bot?.id)} is offline, dropping message`);
       return;
@@ -103,6 +106,14 @@ export class Engine {
     // no defined semantics, so drop it loudly instead of corrupting the maps.
     if (typeof msg?.chatKey !== 'string' || msg.chatKey === '') {
       this.log.warn?.(`engine: dropping message without chatKey from bot ${bot.id}`);
+      return;
+    }
+    if (this.draining) {
+      // Drain is short-lived (lifecycle reload / bot CRUD): refuse loudly and
+      // keep the message for the refusal copy rather than queueing work the
+      // drain just promised to finish.
+      this.drainRefusals.push({ bot, msg, reason: 'draining' });
+      this.log.warn?.(`engine draining: refused message for ${msg.chatKey}`);
       return;
     }
     const key = msg.chatKey;
@@ -174,35 +185,62 @@ export class Engine {
 
   // Abort every in-flight turn, refuse everything queued (and everything
   // arriving while draining), then wait for all chain tails to settle —
-  // bounded by timeoutMs. Returns true when everything settled in time,
-  // false on timeout (tails may keep settling afterwards; the engine
-  // reopens for new messages either way). Task 13 layers the in-flight
-  // final frame on top of this; drainRefusals carries what it must answer.
-  drain(timeoutMs) {
-    if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs < 0)) {
+  // bounded by timeoutMs (default 5s: an unbounded drain plus one hung run
+  // would latch `draining` and brick the engine). Returns true when
+  // everything settled in time, false on timeout (tails may keep settling
+  // afterwards; the engine reopens for new messages either way). Task 13
+  // layers the in-flight final frame on top of this; drainRefusals carries
+  // what it must answer. Overlapping drains serialize (reload-style chain):
+  // the second queues behind the first instead of interleaving aborts.
+  drain(timeoutMs = DRAIN_DEFAULT_TIMEOUT_MS) {
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
       throw new Error(`drain requires a non-negative timeoutMs, got ${JSON.stringify(timeoutMs)}`);
     }
+    // Refusals reset only at the start of a drain WINDOW (the first drain of
+    // a batch): a follow-up drain queued behind an active one shares the
+    // window and must not clobber refusals the first drain's caller has not
+    // read yet.
+    const firstOfWindow = this._drainBusy === 0;
+    this._drainBusy++;
+    if (firstOfWindow) this.drainRefusals = []; // synchronous, like the latch below
+    // Latch SYNCHRONOUSLY: a message arriving in the same tick as drain()
+    // (before the body's microtask) must already see draining=true and be
+    // refused — otherwise it would preempt-merge into pending and survive.
     this.draining = true;
-    this.drainRefusals = []; // each drain collects its own refusals
-    for (const [key, entry] of this.pending) {
-      this.drainRefusals.push({ bot: entry.bot, msg: entry.msg, reason: 'pending' });
-      this.pending.delete(key);
-    }
-    for (const ac of this.inFlight.values()) ac.abort();
+    const run = this._drainSeq.then(async () => {
+      try {
+        return await this._drainBody(timeoutMs);
+      } finally {
+        this._drainBusy--;
+      }
+    });
+    // The chain swallows the result so a later drain never sees this one's
+    // rejection as its own precondition (mirrors reload serialization).
+    this._drainSeq = run.then(() => {}, () => {});
+    return run;
+  }
 
-    const tails = [...this.chains.values()];
-    const allSettled = tails.length === 0
-      ? Promise.resolve([])
-      : Promise.allSettled(tails);
-    let timer = null;
-    const timeout = timeoutMs === undefined
-      ? new Promise(() => {}) // unbounded wait when no timeout is given
-      : new Promise((resolve) => { timer = setTimeout(resolve, timeoutMs); });
-    return Promise.race([allSettled.then(() => true), timeout.then(() => false)])
-      .finally(() => {
-        if (timer !== null) clearTimeout(timer);
-        this.draining = false;
+  async _drainBody(timeoutMs) {
+    try {
+      for (const [key, entry] of this.pending) {
+        this.drainRefusals.push({ bot: entry.bot, msg: entry.msg, reason: 'pending' });
+        this.pending.delete(key);
+      }
+      for (const ac of this.inFlight.values()) ac.abort();
+
+      const tails = [...this.chains.values()];
+      const allSettled = tails.length === 0
+        ? Promise.resolve([])
+        : Promise.allSettled(tails);
+      // _drainBusy still counts THIS drain here, so "1" means no other drain
+      // is queued or running: the window is over and the engine may reopen.
+      return await new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(false), timeoutMs);
+        allSettled.then(() => { clearTimeout(timer); resolve(true); });
       });
+    } finally {
+      if (this._drainBusy === 1) this.draining = false;
+    }
   }
 
   // —— internal: chain machinery ————————————————————————————————————————
