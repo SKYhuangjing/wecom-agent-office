@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync,
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLogger } from './kernel/log.js';
-import { lockDataDir, readJson } from './kernel/config.js';
+import { lockDataDir, readJson, writeJson } from './kernel/config.js';
 import { createEventBus } from './kernel/events.js';
 import { createServices } from './kernel/services.js';
 import { createHttpShell } from './kernel/http.js';
@@ -61,13 +61,17 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
   const startedAt = Date.now();
   const uptimeSec = () => Math.round((Date.now() - startedAt) / 1000);
   let lastLoad = { active: [], failed: [] };
+  let lastDisabled = []; // {id,type,version} — plugins the enable table filtered out
+  let knownPluginIds = new Set(); // every manifest id ever discovered (incl. disabled/failed)
 
   // Snapshot view of the last activateAll batch: /api/state, /api/plugins and
   // status() answer from a copy, never from loader state a concurrent reload
-  // could be mid-mutating.
+  // could be mid-mutating. Disabled plugins are LISTED (status 'disabled')
+  // rather than omitted — the UI must be able to show what to re-enable.
   const pluginList = () => [
     ...lastLoad.active.map(({ id, type, version }) => ({ id, type, version, status: 'active' })),
     ...lastLoad.failed.map(({ id, error }) => ({ id, status: 'failed', error })),
+    ...lastDisabled.map((d) => ({ ...d, status: 'disabled' })),
   ];
 
   // Scan the roots for plugin dirs. The manifest id is read through the same
@@ -89,9 +93,9 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
       for (const ent of entries) {
         if (!ent.isDirectory() || ent.name.startsWith('.') || ent.name.startsWith('_')) continue;
         const pluginDir = join(root, ent.name);
-        let id = null;
-        try { id = (await loader.importPlugin(pluginDir)).manifest?.id ?? null; } catch { /* import failure surfaces via activateAll */ }
-        found.push({ dir: pluginDir, id });
+        let manifest = null;
+        try { manifest = (await loader.importPlugin(pluginDir)).manifest ?? null; } catch { /* import failure surfaces via activateAll */ }
+        found.push({ dir: pluginDir, id: manifest?.id ?? null, manifest });
       }
     }
     return found;
@@ -106,6 +110,10 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
     const table = readJson(join(dir, 'plugins.json'))?.plugins ?? {};
     const enabled = (id) => !(table[id] && table[id].enabled === false);
     const found = await discover();
+    knownPluginIds = new Set(found.filter(({ id }) => id != null).map(({ id }) => id));
+    lastDisabled = found
+      .filter(({ id }) => id != null && !enabled(id))
+      .map(({ id, manifest }) => ({ id, type: manifest?.type, version: manifest?.version }));
     const dirs = found.filter(({ id, dir: d }) => enabled(id ?? basename(d))).map((f) => f.dir);
     const pluginConfig = {};
     for (const { id } of found) if (id != null && enabled(id)) pluginConfig[id] = table[id]?.options ?? {};
@@ -133,6 +141,30 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
       // Returned promise: the shell's dispatch wrapper turns a rejection into
       // an attributed 500 instead of an unhandled crash.
       return reload().then(() => json(res, 200, { ok: true }));
+    },
+  });
+  // Plugin runtime enable/disable (DESIGN §8 kernel-native): body-less POST
+  // flips the enable table in plugins.json (atomic read-modify-write, other
+  // options preserved) and drives the four-phase reload — disable of a core
+  // plugin goes through the same drain→teardown→rescan path, so the engine
+  // drain obligation chain fires. Longer prefix than any plugin's '/api', so
+  // it wins dispatch over core-engine's catch-all.
+  http.register({
+    prefix: '/api/plugins/', owner: 'kernel', handler: (req, res) => {
+      if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' }, { Allow: 'POST' });
+      const pathname = new URL(req.url, 'http://localhost').pathname;
+      const m = /^\/api\/plugins\/([^/]+)\/(enable|disable)$/.exec(pathname);
+      if (m == null) return json(res, 404, { error: 'not found' });
+      let id = m[1];
+      try { id = decodeURIComponent(id); } catch { /* keep raw */ }
+      if (!knownPluginIds.has(id)) return json(res, 404, { error: `unknown plugin: ${id}` });
+      const file = join(dir, 'plugins.json');
+      const doc = readJson(file) ?? {};
+      const plugins = { ...((doc != null && typeof doc === 'object' && !Array.isArray(doc)) ? doc.plugins : {}) };
+      plugins[id] = { ...plugins[id], enabled: m[2] === 'enable' };
+      writeJson(file, { ...(doc ?? {}), plugins });
+      // Reload chains with any in-flight one; the response carries the NEW list.
+      return reload().then(() => json(res, 200, { ok: true, plugins: pluginList() }));
     },
   });
 

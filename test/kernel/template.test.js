@@ -116,7 +116,12 @@ test('plugins.json enabled:false on all three ids: 0 active, ports unregistered'
     },
   });
   const body = await (await fetch(`http://127.0.0.1:${k.http.port}/api/plugins`)).json();
-  assert.deepEqual(body.plugins, []);
+  // Disabled plugins are LISTED with status 'disabled' (they stay re-enableable)
+  assert.deepEqual(body.plugins, [
+    { id: 'template-channel', type: 'channel', version: '0.1.0', status: 'disabled' },
+    { id: 'template-page', type: 'ui', version: '0.1.0', status: 'disabled' },
+    { id: 'template-provider', type: 'provider', version: '0.1.0', status: 'disabled' },
+  ]);
   assert.equal(k.portRegistry.getProvider('template'), undefined);
   assert.equal(k.portRegistry.getChannel('template'), undefined);
   assert.equal(k.portRegistry.page.get('template-page'), undefined);

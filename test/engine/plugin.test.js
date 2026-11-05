@@ -249,6 +249,28 @@ test('reconcile: provider disabled via plugins.json + reload → bot offline wit
   assert.ok((globalThis.__waoFakeChanStarted ?? 0) >= 2);
 });
 
+test('reconcile (direct): plugin/lifecycle with a changed port registry detaches, then re-attaches', async () => {
+  // The reload path above rebuilds core-engine wholesale; this exercises the
+  // reconcile handler DIRECTLY — the port registry changed under a live
+  // instance (the future single-plugin disable/enable surface).
+  const reg = kernel.portRegistry;
+  const entry = reg.provider.get('fakeprov');
+  assert.ok(entry, 'fakeprov registered');
+
+  reg.provider.delete('fakeprov');
+  kernel.events.emit('plugin/lifecycle', {});
+  let agents = await agentsOf();
+  assert.equal(agents[0].status, 'offline');
+  assert.equal(agents[0].reason, 'provider fakeprov 已禁用', 'DESIGN §2.5 wording');
+
+  // Port restored (fresh runner is minted from the port impl at attach)
+  reg.provider.set('fakeprov', entry);
+  kernel.events.emit('plugin/lifecycle', {});
+  agents = await agentsOf();
+  assert.equal(agents[0].status, 'idle');
+  assert.equal(agents[0].reason, null);
+});
+
 test('end-to-end message through the engine service feeds ledger/export/timeline/agents + /api/send', async () => {
   const svc = kernel.services.get('engine');
   assert.ok(svc && typeof svc.onMessage === 'function' && typeof svc.drain === 'function');

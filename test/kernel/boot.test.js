@@ -9,7 +9,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import net from 'node:net';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createKernel } from '../../src/index.js';
@@ -74,14 +74,17 @@ test('a second kernel on the same dataDir is rejected: the lock is exclusive', a
   );
 });
 
-test('plugins.json enabled:false filters the dir at boot and on reload; _template dirs are skipped', async () => {
+test('plugins.json enabled:false filters the dir at boot and on reload; disabled plugins are LISTED; _template dirs are skipped', async () => {
   const dataDir = dataDirWith({ plugins: { 'p-x': { enabled: false } } });
   const pluginsDir = emptyPluginsDir();
   writePlugin(join(pluginsDir, 'p-x'), "{ id: 'p-x', type: 'core', version: '1.0.0' }");
   writePlugin(join(pluginsDir, '_template'), "{ id: 'tpl', type: 'core', version: '1.0.0' }");
   const k = await start(dataDir, [pluginsDir]);
   const url = base(k);
-  assert.deepEqual((await (await fetch(url('/api/state'))).json()).plugins, []);
+  // Disabled = listed with status 'disabled' (UI must show what to re-enable)
+  assert.deepEqual((await (await fetch(url('/api/state'))).json()).plugins, [
+    { id: 'p-x', type: 'core', version: '1.0.0', status: 'disabled' },
+  ]);
 
   // Re-enable through plugins.json → the four-phase reload (driven here via
   // the kernel-native HTTP route, not just the library call) picks it up.
@@ -90,11 +93,51 @@ test('plugins.json enabled:false filters the dir at boot and on reload; _templat
   const list = (await (await fetch(url('/api/plugins'))).json()).plugins;
   assert.deepEqual(list, [{ id: 'p-x', type: 'core', version: '1.0.0', status: 'active' }]);
 
-  // Disable again → gone on the next reload (the enable table is re-read).
+  // Disable again → listed as disabled on the next reload (table is re-read).
   writeFileSync(join(dataDir, 'plugins.json'), JSON.stringify({ plugins: { 'p-x': { enabled: false } } }));
   const r = await k.reload();
   assert.deepEqual(r, { active: [], failed: [] });
-  assert.deepEqual((await (await fetch(url('/api/state'))).json()).plugins, []);
+  assert.deepEqual((await (await fetch(url('/api/state'))).json()).plugins, [
+    { id: 'p-x', type: 'core', version: '1.0.0', status: 'disabled' },
+  ]);
+});
+
+test('POST /api/plugins/:id/enable|disable flips the table, reloads, and survives a world without the plugin', async () => {
+  const dataDir = dataDirWith(null);
+  const pluginsDir = emptyPluginsDir();
+  // A core-like plugin (afterAllActivated + route): disabling it reloads a
+  // world whose afterAllActivated batch is empty — must not crash, and its
+  // route must be gone until re-enabled.
+  writePlugin(
+    join(pluginsDir, 'p-core-like'),
+    "{ id: 'p-core-like', type: 'core', version: '1.0.0' }",
+    "ctx.afterAllActivated(() => {}); ctx.http.register({ prefix: '/p-core-like', handler: (q, s) => s.end('hi') });",
+  );
+  const k = await start(dataDir, [pluginsDir]);
+  const url = base(k);
+  assert.equal(await (await fetch(url('/p-core-like'))).text(), 'hi');
+
+  // unknown id → 404; wrong method → 405
+  assert.equal((await fetch(url('/api/plugins/nope/disable'), { method: 'POST' })).status, 404);
+  assert.equal((await fetch(url('/api/plugins/p-core-like/disable'))).status, 405);
+
+  // disable → ok + NEW list, plugin torn down (route 404), kernel healthy
+  let resp = await fetch(url('/api/plugins/p-core-like/disable'), { method: 'POST' });
+  assert.equal(resp.status, 200);
+  let body = await resp.json();
+  assert.equal(body.ok, true);
+  assert.deepEqual(body.plugins, [{ id: 'p-core-like', type: 'core', version: '1.0.0', status: 'disabled' }]);
+  assert.equal((await fetch(url('/p-core-like'))).status, 404);
+  assert.equal((await fetch(url('/healthz'))).status, 200);
+
+  // enable → back active, route alive; table entry preserved + persisted
+  resp = await fetch(url('/api/plugins/p-core-like/enable'), { method: 'POST' });
+  assert.equal(resp.status, 200);
+  body = await resp.json();
+  assert.deepEqual(body.plugins, [{ id: 'p-core-like', type: 'core', version: '1.0.0', status: 'active' }]);
+  assert.equal(await (await fetch(url('/p-core-like'))).text(), 'hi');
+  const table = JSON.parse(readFileSync(join(dataDir, 'plugins.json'), 'utf8'));
+  assert.equal(table.plugins['p-core-like'].enabled, true);
 });
 
 test('GET /api/service/reload is 405 (POST-only)', async () => {
