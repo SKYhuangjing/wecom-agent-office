@@ -27,9 +27,9 @@ node test/contract/run.js --plugin <dir> [--port <portId>]   # 任意 provider �
 | kill-escalation | SIGTERM 被忽略 → SIGKILL 升级，≤5s resolve 且子进程死透 |
 | timeout | timeoutMs → code=timeout、子进程死透 |
 | lock / credential | fake 的锁冲突 / 凭证错误 → 对应 code |
-| history | readHistory 容错：缺文件→warnings；坏文件→warnings；超大→truncated（见下） |
+| history | readHistory 容错：缺文件→warnings；坏文件→warnings（默认 profile 下须与缺文件可区分）；超大→truncated（见下）。runner 缺 readHistory 方法或抛 not implemented = **FAIL**——唯一跳法是 profile `history:'deferred'` |
 | event-timing | run() resolve 后 150ms 内无新事件 |
-| disable-clean | deactivate 撤销端口；`getActiveResourcesInfo` 无 ChildProcess 残留、句柄噪声 ≤+1 |
+| disable-clean | deactivate 撤销端口；`getActiveResourcesInfo` 无 ChildProcess 残留、**非子进程句柄零残留**（套件侧噪声须具名豁免并附证据） |
 
 ## fake-dsh 注入（fakeCli 类 provider）
 
@@ -41,8 +41,11 @@ FAKE_MODE/FAKE_HOME 后 `exec` fake-dsh，pid 不变），provider 只需兑现
 
 ## profile（test/contract/profiles.js，按端口 id 索引）
 
-- `makeRunnerArgs({cwd, mode, fakeHome, wrapBin})`：把 fake 注入进 providerConfig
-- `fakeCli` / `events` / `history`：声明能力缺位 → 相关组 SKIP（模板据此跳过进程组）
+- `makeRunnerArgs({cwd, mode, fakeHome, wrapBin})`：把 fake 注入进 providerConfig（包装脚本名只带序号，不含 FAKE_MODE）
+- `fakeCli` / `events`：声明能力缺位 → 相关组 SKIP（模板据此跳过进程组）
+- `history`：仅 `'deferred'` 一种取值可跳过 history 组（套件侧声明"真实 reader 未落地"）；
+  **插件侧没有任何逃生门**——`capabilities.history=false`、runner 缺 readHistory、抛
+  "not implemented" 一律 FAIL（模板的 stub reader 据此声明 deferred）
 - `expect.okFinalText(prompt)`：ok 组 finalText 断言（模板是 echo，dsh 固定 `答案文本`）
 - `historyPath(cwd, sessionId)` + `hugeHistory(path)`：历史 fixture 约定——
   **dsh 会话文件位于 `<cwd>/sessions/<sessionId>.zst`**；缺/坏两个 case 格式无关、
@@ -50,6 +53,10 @@ FAKE_MODE/FAKE_HOME 后 `exec` fake-dsh，pid 不变），provider 只需兑现
   未提供则该 case SKIP（T18 落地时实现，或改动 profiles.js 补）。
 
 未登记端口的 provider 默认跑**全量**契约——能力缺位要显式声明，不允许静默跳过。
+默认 profile 的 `historyPath` 是 **dsh 布局假定**（`assumedHistoryPath`）：别的布局
+读不到坏文件 fixture，会以"缺文件"语义混过——套件用"坏文件 warnings 必须不同于
+缺文件 warnings"把它变成显性 FAIL；正确做法是给该端口登记带真实 `historyPath`
+的 profile。
 
 ## T18（provider-dsh）对接预期
 

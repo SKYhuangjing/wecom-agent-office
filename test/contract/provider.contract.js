@@ -107,9 +107,11 @@ export async function runContractSuite({ pluginDir, providerId = null }) {
   mkdirSync(join(root, 'bin'), { recursive: true });
   // Mode injection without env-passthrough support in the provider: a tiny
   // /bin/sh wrapper exports FAKE_MODE/FAKE_HOME, then exec's fake-dsh (exec
-  // keeps the pid, so last-pid is the pid the provider spawned).
+  // keeps the pid, so last-pid is the pid the provider spawned). The filename
+  // carries a bare sequence number only — embedding FAKE_MODE would let a
+  // provider smell the test mode from argv[0]/$0.
   const wrapBin = (mode, fakeHome) => {
-    const script = join(root, 'bin', `dsh-${mode}-${++seq}.sh`);
+    const script = join(root, 'bin', `dsh-${++seq}.sh`);
     writeFileSync(script, '#!/bin/sh\n'
       + `export FAKE_MODE="${mode}"\n`
       + `export FAKE_HOME="${fakeHome}"\n`
@@ -202,15 +204,7 @@ export async function runContractSuite({ pluginDir, providerId = null }) {
         try {
           await fn(g);
         } catch (err) {
-          // A group may bail mid-flight into a skip (e.g. readHistory turns
-          // out unimplemented on first call) — that is a declaration, not a
-          // failure.
-          if (err && typeof err === 'object' && typeof err.skipGroup === 'string') {
-            row.status = 'skip';
-            row.detail = err.skipGroup;
-          } else {
-            fails.push(`threw: ${err?.stack ?? err?.message ?? err}`);
-          }
+          fails.push(`threw: ${err?.stack ?? err?.message ?? err}`);
         } finally {
           for (const home of groupHomes) killLeftover(home);
         }
@@ -235,6 +229,8 @@ export async function runContractSuite({ pluginDir, providerId = null }) {
       g.check(res?.aborted === false, `aborted=false (got ${res?.aborted})`);
       g.check(res?.reason !== undefined, 'reason field present (may be null)');
       g.check(res?.detail == null || typeof res?.detail === 'object', 'detail field shape (object or absent)');
+      g.check(res?.detail?.exitCode === 0, `detail.exitCode=0 (got ${JSON.stringify(res?.detail?.exitCode)})`);
+      g.check(typeof res?.detail?.stderrTail === 'string', `detail.stderrTail is a string (got ${typeof res?.detail?.stderrTail})`);
       if (profile.fakeCli && profile.events) {
         const tool = events.find((ev) => ev?.type === 'tool');
         g.check(tool !== undefined, `onEvent carried a tool event (types seen: ${events.map((ev) => ev?.type).join(',') || 'none'})`);
@@ -320,8 +316,12 @@ export async function runContractSuite({ pluginDir, providerId = null }) {
       const events = [];
       const ac = new AbortController();
       const p = runOnce(runner, { signal: ac.signal, onEvent: (ev) => events.push(ev) });
-      if (profile.events) await until(() => events.some((ev) => ev?.type === 'text'), 3000);
-      else await sleep(300); // the SIGTERM-ignorer is installed right after the text line
+      if (profile.events) {
+        const sawText = await until(() => events.some((ev) => ev?.type === 'text'), 3000);
+        g.check(sawText, 'text event observed before abort (fake installs its SIGTERM-ignorer after it)');
+      } else {
+        await sleep(300); // the SIGTERM-ignorer is installed right after the text line
+      }
       ac.abort();
       const t0 = Date.now();
       const res = await withWatchdog(p, 15_000);
@@ -332,6 +332,7 @@ export async function runContractSuite({ pluginDir, providerId = null }) {
       g.check(res?.code === 'aborted', `code='aborted' (got ${JSON.stringify(res?.code)})`);
       g.check(res?.aborted === true, `aborted=true (got ${res?.aborted})`);
       const pid = readPid(e.fakeHome);
+      g.check(Number.isInteger(pid), 'fake wrote last-pid (did the provider spawn the fake CLI?)');
       if (Number.isInteger(pid)) g.check(await pidDeadWithin(pid, 3000), `child dead (ESRCH) within 3s of resolve (pid ${pid})`);
     }, noFakeCli);
 
@@ -339,12 +340,19 @@ export async function runContractSuite({ pluginDir, providerId = null }) {
     await group('timeout', 'timeout: timeoutMs kills with code=timeout', async (g) => {
       const e = genv('tmo');
       const runner = makeRunner(argsFor(e, 'hang-timeout'));
-      const res = await withWatchdog(runOnce(runner, { timeoutMs: 400 }), 10_000);
+      // The runner's deadline starts at run() — before the child has booted.
+      // Measured spawn→last-pid latency for the wrapper+node fake runs
+      // 400-900ms on this class of machine, so a sub-second timeoutMs would
+      // SIGTERM the wrapper before the fake ever starts and the mandatory
+      // last-pid check below would flake. 2s keeps the kill semantics under
+      // test while giving the fixture firm boot headroom.
+      const res = await withWatchdog(runOnce(runner, { timeoutMs: 2000 }), 15_000);
       g.check(res !== WATCHDOG, 'run() resolved on timeout (watchdog: never settled)');
       if (res === WATCHDOG) return;
       g.check(res?.code === 'timeout', `code='timeout' (got ${JSON.stringify(res?.code)})`);
       g.check(res?.ok === false, `ok=false (got ${res?.ok})`);
       const pid = readPid(e.fakeHome);
+      g.check(Number.isInteger(pid), 'fake wrote last-pid (did the provider spawn the fake CLI?)');
       if (Number.isInteger(pid)) g.check(await pidDeadWithin(pid, 3000), `child dead (ESRCH) within 3s of resolve (pid ${pid})`);
     }, noFakeCli);
 
@@ -373,29 +381,26 @@ export async function runContractSuite({ pluginDir, providerId = null }) {
     // --- 9 readHistory tolerance -----------------------------------------------------
     // §5 puts readHistory on the RUNNER object (createRunner().readHistory),
     // not on the registered impl — history is read through the same
-    // providerConfig wiring a turn used.
-    const historySkip = (impl.capabilities?.history === false) ? 'impl declares capabilities.history=false'
-      : (profile.history === false) ? 'profile declares history=false (stub reader)'
+    // providerConfig wiring a turn used. Skipping this group is a SUITE-side
+    // declaration ONLY (profile.history === 'deferred' in profiles.js): a
+    // plugin opting out via capabilities.history, a missing runner method, or
+    // a "not implemented" throw are all contract FAILURES, not skips.
+    const historySkip = (profile.history === 'deferred')
+      ? 'profile declares history deferred (real reader pending — test/contract/profiles.js)'
       : null;
     await group('history', 'readHistory: missing/corrupt/huge are tolerant', async (g) => {
       const read = async (runner, pc, sid) => {
         try { return { value: await runner.readHistory(pc, sid) }; } catch (err) { return { err }; }
       };
-      const notImplemented = (err) => /not implemented/i.test(String(err?.message ?? err));
-      const historyRunnerOf = (e) => {
-        const runner = makeRunner(argsFor(e, 'ok'));
-        if (typeof runner.readHistory !== 'function') {
-          throw { skipGroup: 'runner has no readHistory (§5: createRunner().readHistory)' };
-        }
-        return runner;
-      };
+      const historyRunnerOf = (e) => makeRunner(argsFor(e, 'ok'));
 
-      // missing file — doubles as the probe for a not-implemented reader
+      // missing file — doubles as the probe for a runner without §5's method
       const eMiss = genv('hist-miss');
-      const miss = await read(historyRunnerOf(eMiss), argsFor(eMiss, 'ok'), 'no-such-session');
-      if (miss.err && notImplemented(miss.err)) {
-        throw { skipGroup: `readHistory not implemented (${miss.err.message})` };
-      }
+      const missRunner = historyRunnerOf(eMiss);
+      g.check(typeof missRunner.readHistory === 'function',
+        'runner.readHistory is a function (§5: createRunner().readHistory — declare profile history:"deferred" in test/contract/profiles.js if genuinely pending)');
+      if (typeof missRunner.readHistory !== 'function') return; // later cases would only repeat this failure
+      const miss = await read(missRunner, argsFor(eMiss, 'ok'), 'no-such-session');
       g.check(!miss.err, `missing file must not throw (threw ${miss.err?.message})`);
       g.check(Array.isArray(miss.value?.turns) && miss.value.turns.length === 0,
         `missing → turns=[] (got ${JSON.stringify(miss.value?.turns)})`);
@@ -414,6 +419,14 @@ export async function runContractSuite({ pluginDir, providerId = null }) {
       g.check(!cor.err, `corrupt file must not throw (threw ${cor.err?.message})`);
       g.check(Array.isArray(cor.value?.warnings) && cor.value.warnings.length >= 1,
         `corrupt → ≥1 warning (got ${JSON.stringify(cor.value?.warnings)})`);
+      // defaultProfile GUESSES the dsh sessions/<id>.zst layout; a provider
+      // with a different layout never reads the fixture above and answers
+      // with missing-file semantics — identical warnings expose exactly that,
+      // so fail loudly instead of letting the corrupt case pass by accident.
+      if (profile.assumedHistoryPath) {
+        g.check(JSON.stringify(cor.value?.warnings) !== JSON.stringify(miss.value?.warnings),
+          'corrupt-file warnings differ from missing-file warnings (identical warnings mean our corrupt fixture was never read — the default profile assumes the dsh sessions/<id>.zst layout; declare a profile with the real historyPath)');
+      }
 
       // huge file — needs the provider's REAL on-disk format, so the writer
       // is a profile hook (see profiles.js); absent hook → SKIP this case only
@@ -453,9 +466,13 @@ export async function runContractSuite({ pluginDir, providerId = null }) {
       const after = resourceSnapshot();
       const delta = Object.fromEntries(RESOURCE_KINDS.map((k) => [k, after[k] - resourcesBefore[k]]));
       g.check(delta.ChildProcess === 0, `no ChildProcess handle remains (delta ${delta.ChildProcess})`);
-      const handleNoise = RESOURCE_KINDS.filter((k) => k !== 'ChildProcess')
-        .reduce((sum, k) => sum + delta[k], 0);
-      g.check(handleNoise <= 1, `timer/immediate/socket noise ≤ +1 (deltas ${JSON.stringify(delta)})`);
+      // Non-child handles must return to the pre-suite baseline EXACTLY. If
+      // suite-side noise is ever proven here, exclude that handle by NAME
+      // below with the evidence — never widen the tolerance back.
+      const SUITE_NOISE_HANDLES = []; // named, evidenced suite-side leaks (none today)
+      const noiseKinds = RESOURCE_KINDS.filter((k) => k !== 'ChildProcess' && !SUITE_NOISE_HANDLES.includes(k));
+      const handleNoise = noiseKinds.reduce((sum, k) => sum + delta[k], 0);
+      g.check(handleNoise === 0, `no timer/immediate/socket handle remains (deltas ${JSON.stringify(delta)})`);
     });
 
     return { ...summarize(), portId, profileNote: profile.note, logLines };

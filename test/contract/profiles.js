@@ -21,7 +21,10 @@ export const PROFILES = {
     expect: { okFinalText: (prompt) => `template echo: ${prompt}` },
     fakeCli: false, // cannot run the fake-dsh binary → groups 4-8 and argv/prompt probes skipped
     events: false, // emits no unified events → thinking/tool/timing event checks skipped
-    history: false, // readHistory is a stub returning empty — dsh-format fixtures would be a lie
+    // 'deferred' is the ONLY way the history group skips — a suite-side
+    // declaration that the real reader is still pending (the demo stub would
+    // lie about dsh-format fixtures). Plugin-side opt-outs do not exist.
+    history: 'deferred',
     makeRunnerArgs: ({ cwd }) => ({ cwd }), // the template validates cwd only
   },
 
@@ -51,13 +54,21 @@ export const PROFILES = {
 };
 
 // Unknown port → assume the full contract. A provider that cannot satisfy a
-// group declares so here (or via impl.capabilities), not by the suite guessing.
+// group declares so in ITS profile entry here — never plugin-side (no
+// capabilities flag, missing method, or "not implemented" throw buys a skip).
 export const defaultProfile = (portId) => ({
   note: `no profile entry for port '${portId}' — running the FULL contract (declare one in test/contract/profiles.js if a group is genuinely out of scope)`,
   expect: {},
   fakeCli: true,
   events: true,
   history: true,
+  // LOUD ASSUMPTION: without a profile we can only GUESS the dsh history
+  // layout (<cwd>/sessions/<sessionId>.zst). A non-dsh provider with a
+  // different layout never reads the suite's corrupt fixture and would
+  // answer with missing-file semantics — the suite pairs this flag with a
+  // corrupt≠missing warnings check so such providers FAIL loudly instead of
+  // accidentally passing. Declare a profile with the real historyPath.
+  assumedHistoryPath: true,
   historyPath: (cwd, sessionId) => join(cwd, 'sessions', `${sessionId}.zst`),
   hugeHistory: null,
   makeRunnerArgs: PROFILES.dsh.makeRunnerArgs,
