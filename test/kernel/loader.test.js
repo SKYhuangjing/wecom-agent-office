@@ -16,7 +16,7 @@ import { createServices } from '../../src/kernel/services.js';
 import { createHttpShell } from '../../src/kernel/http.js';
 import { createLifecycle } from '../../src/kernel/lifecycle.js';
 import {
-  KERNEL_API, PORT_VERSIONS, activateAll, importPlugin, orderPlugins, satisfies, validateManifest,
+  KERNEL_API, PORT_VERSIONS, activateAll, esmHint, importPlugin, orderPlugins, satisfies, validateManifest,
 } from '../../src/kernel/loader.js';
 
 // Collecting fake logger mirroring the real child() shape: attribution is
@@ -39,7 +39,14 @@ const setup = () => {
   return { errors, warns, log, lifecycle, services };
 };
 
-const writePlugin = (dir, code) => { mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'plugin.js'), code); };
+const writePlugin = (dir, code) => {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'plugin.js'), code);
+  // DESIGN §2.3: a plugin dir carries its own package.json; it also keeps
+  // these fixtures honest on the Node 20 engines floor, where a bare .js
+  // outside a type:module scope parses as CommonJS.
+  writeFileSync(join(dir, 'package.json'), '{"type":"module"}\n');
+};
 // Mini plugin generator (brief's pattern): activate is always async so sync
 // throws surface as rejections exactly like real-world module code can.
 const pluginJs = (manifestSrc, activateSrc = '') =>
@@ -281,6 +288,67 @@ test('activateAll: hung activate fails after activateTimeoutMs; the rest of the 
   assert.deepEqual(res.active.map((a) => a.id), ['z-fine']);
   assert.ok(s.services.get('svc-fine'));
   assert.deepEqual(s.lifecycle.debugState().active, ['z-fine']); // timed-out half-activation rolled back
+});
+
+test('activateAll: rejection landing after the loader timeout is watched and attributed, not swallowed', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'wao-loader-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const late = join(root, 'late'); // rejects at t=100ms — its "own" timeout vs our 50ms one
+  writePlugin(late, pluginJs(
+    "{ id: 'late', type: 'core', version: '1.0.0' }",
+    "await new Promise((resolve, reject) => setTimeout(() => reject(new Error('own network timeout')), 100));",
+  ));
+  const s = setup();
+  const res = await activateAll({ dirs: [late], lifecycle: s.lifecycle, log: s.log, activateTimeoutMs: 50 });
+  assert.deepEqual(res.failed, [{ id: 'late', error: 'late: activate timeout' }]);
+  assert.deepEqual(res.active, []);
+  await new Promise((r) => setTimeout(r, 150)); // let the losing promise settle at t=100ms
+  assert.equal(s.warns.length, 1); // late outcome observed and logged, carrying the plugin's own error
+  assert.match(String(s.warns[0]), /late/);
+  assert.match(String(s.warns[0]), /failed after timeout/);
+  assert.match(String(s.warns[0]), /own network timeout/);
+  // No unhandledRejection fired: this test process surviving to this line IS
+  // that assertion (Node ≥15 default crashes the process on one).
+});
+
+test('activateAll: valid manifest but no callable activate → loud failure, not silent inertness', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'wao-loader-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const quiet = join(root, 'quiet');
+  writePlugin(quiet, "export default { manifest: { id: 'quiet', type: 'core', version: '1.0.0' } };");
+  const s = setup();
+  const res = await activateAll({ dirs: [quiet], lifecycle: s.lifecycle, log: s.log });
+  assert.deepEqual(res.active, []);
+  assert.deepEqual(res.failed, [{ id: 'quiet', error: 'quiet: activate is not a function' }]);
+});
+
+test('activateAll: log defaults to console — omitting it must not throw', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'wao-loader-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = join(root, 'p');
+  writePlugin(dir, pluginJs("{ id: 'p', type: 'core', version: '1.0.0' }"));
+  const { log } = fakeLog();
+  const lifecycle = createLifecycle({ events: createEventBus({ log }), services: createServices(), log, http: createHttpShell({ log }) });
+  const res = await activateAll({ dirs: [dir], lifecycle }); // no log passed
+  assert.deepEqual(res.active.map((a) => a.id), ['p']);
+});
+
+test('esmHint: appended only on Node <22.7 for a dir without type:module package.json', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'wao-loader-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const bare = join(root, 'bare'); // no package.json at all
+  mkdirSync(bare, { recursive: true });
+  const withPkg = join(root, 'with-pkg');
+  mkdirSync(withPkg, { recursive: true });
+  writeFileSync(join(withPkg, 'package.json'), '{"type":"module"}');
+  const msg = "Unexpected token 'export'";
+  const hint = ' (plugin dir needs package.json {"type":"module"} on Node <22.7)';
+  assert.equal(esmHint(bare, new Error(msg), '20.10.0'), msg + hint); // floor node, bare dir → diagnose
+  assert.equal(esmHint(withPkg, new Error(msg), '20.10.0'), msg); // dir opted into ESM → no noise
+  assert.equal(esmHint(bare, new Error(msg), '22.6.0'), msg + hint); // detection still off at 22.6
+  assert.equal(esmHint(bare, new Error(msg), '22.7.0'), msg); // detection on at 22.7
+  assert.equal(esmHint(bare, new Error(msg), '24.2.0'), msg);
+  assert.equal(esmHint(bare, 'thrown non-error', '20.10.0'), 'thrown non-error' + hint); // robust to non-Errors
 });
 
 test('activateAll: module without a manifest → validation failure, id falls back to dir basename', async (t) => {

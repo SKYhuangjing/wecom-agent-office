@@ -9,7 +9,7 @@
 // is recorded in `failed` with an id-prefixed message and the batch continues.
 // The loader never imports any plugin directory statically — dirs arrive as
 // data and are only ever dynamic-imported through importPlugin().
-import { statSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -60,8 +60,11 @@ export function satisfies(range, actual) {
 // pass should surface ALL of a manifest's problems so an operator fixes
 // everything at once, and activateAll treats a non-empty list as
 // skip-and-record rather than an abort.
-export function validateManifest(m, { ids = [], kernelApi = KERNEL_API, portVersions = PORT_VERSIONS } = {}) {
+export function validateManifest(m, { ids = [], kernelApi = KERNEL_API, portVersions } = {}) {
   if (m == null || typeof m !== 'object' || Array.isArray(m)) return ['manifest must be a plain object'];
+  // Destructuring defaults do not cover an explicit null — normalize once
+  // instead of defending each use site below.
+  const portContract = portVersions ?? PORT_VERSIONS;
   const errors = [];
   const known = ids instanceof Set ? ids : new Set(ids ?? []);
 
@@ -86,10 +89,10 @@ export function validateManifest(m, { ids = [], kernelApi = KERNEL_API, portVers
       errors.push('requires.ports must be an object of port type → semver range');
     } else {
       for (const [port, range] of Object.entries(ports)) {
-        if (!(port in (portVersions ?? {}))) {
-          errors.push(`requires unknown port '${port}' (known ports: ${Object.keys(portVersions).join(', ')})`);
-        } else if (!satisfies(range, portVersions[port])) {
-          errors.push(`requires port ${port} ${range} but port version is ${portVersions[port]}`);
+        if (!(port in portContract)) {
+          errors.push(`requires unknown port '${port}' (known ports: ${Object.keys(portContract).join(', ')})`);
+        } else if (!satisfies(range, portContract[port])) {
+          errors.push(`requires port ${port} ${range} but port version is ${portContract[port]}`);
         }
       }
     }
@@ -162,12 +165,36 @@ export function orderPlugins(list) {
 // real reloads are orders of magnitude slower, tests bump mtime explicitly.
 // A missing plugin.js throws here (ENOENT from statSync) — i.e. it surfaces
 // as an import failure, which is what it is.
+//
+// Best-effort diagnosis for the Node 20 engines floor: below 22.7 a bare .js
+// file outside any type:module scope parses as CommonJS, so every ESM plugin
+// dir without its own package.json "fails to import" with a baffling syntax
+// error. DESIGN §2.3 mandates a per-plugin package.json; when the dir has
+// none we say so instead of leaving the operator to reverse-engineer V8's
+// CJS parser message. One cheap guarded read; never throws.
+export function esmHint(dir, err, nodeVersion = process.versions.node) {
+  const msg = err?.message ?? String(err);
+  const [major, minor] = String(nodeVersion).split('.').map(Number);
+  if (major > 22 || (major === 22 && minor >= 7)) return msg; // module syntax detection is on by default
+  try {
+    const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+    if (pkg?.type === 'module') return msg; // dir already opts into ESM: the hint would be noise
+  } catch { /* no or unreadable package.json → hint below */ }
+  return `${msg} (plugin dir needs package.json {"type":"module"} on Node <22.7)`;
+}
+
 export async function importPlugin(dir) {
   const file = join(dir, 'plugin.js');
   const url = pathToFileURL(file);
   url.search = `t=${statSync(file).mtimeMs}`;
-  const mod = await import(url.href);
-  return { mod, manifest: mod.default?.manifest, dir };
+  try {
+    const mod = await import(url.href);
+    return { mod, manifest: mod.default?.manifest, dir };
+  } catch (err) {
+    // Re-throw enriched (cause chained) so every caller of importPlugin gets
+    // the diagnosis, not just activateAll's formatting.
+    throw new Error(esmHint(dir, err), { cause: err });
+  }
 }
 
 // --- batch activation ------------------------------------------------------
@@ -180,7 +207,7 @@ export async function activateAll({
   dirs,
   lifecycle,
   pluginConfig = {},
-  log,
+  log = console, // zero-config callers still get readable output; console covers info/debug/warn/error
   kernelApi = KERNEL_API,
   portVersions = PORT_VERSIONS,
   portRegistry = null, // optional; lifecycle.portRegistry is the source of truth
@@ -211,6 +238,13 @@ export async function activateAll({
       failed.push({ id, error: `${id}: ${errors.join('; ')}` });
       continue;
     }
+    // lifecycle.activate silently no-ops on a plugin without a callable
+    // activate — "loaded but permanently inert" is the worst possible state,
+    // so the loader rejects it loudly at the validation stage instead.
+    if (typeof rec.mod.default?.activate !== 'function') {
+      failed.push({ id, error: `${id}: activate is not a function` });
+      continue;
+    }
     ids.add(id);
     loaded.push(rec);
   }
@@ -234,12 +268,15 @@ export async function activateAll({
     const rec = byId.get(manifest.id);
     // lifecycle's plugin record expects the default export as `mod` (it calls
     // plugin.mod.activate), not the raw module namespace — activate() lives
-    // one level down, at mod.default.activate. default is guaranteed here:
-    // a manifest-less module already failed validation above.
+    // one level down, at mod.default.activate. default + callable activate
+    // are guaranteed here: both were checked at the validation stage above.
     const plugin = { dir: rec.dir, manifest, mod: rec.mod.default, status: 'enabled', config: pluginConfig[manifest.id] ?? {} };
+    // Hoisted out of the try: on the timeout path the catch must still reach
+    // the losing promise to watch (and log) its eventual late outcome.
+    let activation = null;
     let timedOut = false;
     try {
-      const activation = lifecycle.activate(plugin); // async fn: sync throws arrive as rejections
+      activation = lifecycle.activate(plugin); // async fn: sync throws arrive as rejections
       // Bounded waiting. Honest limit: this can only bound *awaiting* — a
       // plugin hanging synchronously (loop before its first await) blocks
       // the event loop and cannot be cancelled from inside the same thread;
@@ -255,14 +292,6 @@ export async function activateAll({
       } finally {
         clearTimeout(timer); // the losing branch's timer must not linger
       }
-      if (timedOut) {
-        // The hung activation cannot be cancelled; its eventual outcome must
-        // not vanish either — it may still register state post-mortem.
-        activation.then(
-          () => log.warn(`loader: ${manifest.id} activate settled after timeout`),
-          (err) => log.warn(`loader: ${manifest.id} activate failed after timeout`, err),
-        );
-      }
       plugin.status = 'active';
       activeIds.add(manifest.id);
       active.push({ id: manifest.id, type: manifest.type, version: manifest.version, status: 'active' });
@@ -271,6 +300,16 @@ export async function activateAll({
         id: manifest.id,
         error: timedOut ? `${manifest.id}: activate timeout` : `${manifest.id}: activate failed: ${err?.message ?? err}`,
       });
+      if (timedOut && activation != null) {
+        // The race lost, but the activation is still running and will settle
+        // someday (a plugin's own 30s network timeout vs our 10s, say). That
+        // late outcome must not be swallowed silently — attach watchers now
+        // so whichever way it settles is attributed in the log.
+        activation.then(
+          () => log.warn(`loader: ${manifest.id} activate settled after timeout`),
+          (late) => log.warn(`loader: ${manifest.id} activate failed after timeout`, late),
+        );
+      }
       // lifecycle.activate registers the plugin BEFORE invoking mod.activate,
       // so a failure leaves a half-activated record behind. Roll it back so
       // ports, routes and subscriptions never outlive the failed plugin
