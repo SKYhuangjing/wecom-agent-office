@@ -120,3 +120,14 @@ test('empty timeline returns [] (SSE first poll / fresh boot)', () => {
   assert.deepEqual(new Timeline().get(), []);
   assert.deepEqual(new Timeline().get({ botId: 'nobody' }), []);
 });
+
+test('get() validates its filters — bad windowMs/botId are rejected, not silent', () => {
+  const tl = new Timeline();
+  // a non-numeric windowMs must not silently become NaN (match-everything)
+  assert.throws(() => tl.get({ windowMs: '30min' }), /windowMs/);
+  assert.throws(() => tl.get({ windowMs: NaN }), /windowMs/);
+  assert.throws(() => tl.get({ windowMs: -1 }), /windowMs/); // future cutoff is config error
+  // a non-string botId must not silently filter everything out
+  assert.throws(() => tl.get({ botId: 42 }), /botId/);
+  assert.throws(() => tl.get({ botId: '' }), /botId/);
+});

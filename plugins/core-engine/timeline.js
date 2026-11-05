@@ -58,6 +58,15 @@ export class Timeline {
   // windowMs given here overrides the constructor default for THIS read
   // only; the instance default is never mutated.
   get({ botId, windowMs } = {}) {
+    // Same reject-over-silent discipline as the constructor: a non-numeric
+    // windowMs would make the cutoff NaN (filter silently matches everything)
+    // and a non-string botId would silently filter every row out.
+    if (botId !== undefined && (typeof botId !== 'string' || botId === '')) {
+      throw new Error(`botId must be a non-empty string when given, got ${JSON.stringify(botId)}`);
+    }
+    if (windowMs !== undefined && (typeof windowMs !== 'number' || !Number.isFinite(windowMs) || windowMs < 0)) {
+      throw new Error(`windowMs must be a non-negative finite number when given, got ${JSON.stringify(windowMs)}`);
+    }
     const cutoff = Date.now() - (windowMs ?? this._windowMs);
     const rows = [];
     for (let i = 0; i < this._len; i++) {

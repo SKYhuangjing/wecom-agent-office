@@ -70,6 +70,29 @@ test('same complete sentence again → deduped (同句不重推)', () => {
   assert.equal(p.compose({ type: 'thinking', text: '我来汇总结论。然后补充细节' }), null);
 });
 
+test('thinking line caps at the last 60 chars even for complete sentences (§6.1)', () => {
+  const p = createProgressor();
+  const long = '前'.repeat(70) + '后'.repeat(10) + '。'; // 81-char sentence
+  const clipped = '前'.repeat(49) + '后'.repeat(10) + '。'; // last 60 chars
+  assert.equal(p.compose({ type: 'thinking', text: long }), `💭 ${clipped}`);
+  // the cached-sentence fallback path clips too
+  assert.equal(p.compose({ type: 'tool', name: 'x', brief: 'y' }), '🔧 x: y');
+  assert.equal(p.compose({ type: 'thinking', text: '接下来继续没有句读' }), `💭 ${clipped}`);
+});
+
+test('ASCII dot inside version/decimal numbers is not a sentence boundary', () => {
+  const p = createProgressor();
+  assert.equal(p.compose({ type: 'thinking', text: '查看v1.2的配置。' }), '💭 查看v1.2的配置。');
+  assert.equal(p.compose({ type: 'thinking', text: 'The value is 3.14 here.' }), '💭 The value is 3.14 here.');
+});
+
+test('pure verbal-tic thinking yields no line instead of a bare 💭', () => {
+  const p = createProgressor();
+  assert.equal(p.compose({ type: 'thinking', text: '好的。' }), null);
+  // all-filler tail (no sentence, no cache) is empty after stripping → no line
+  assert.equal(p.compose({ type: 'thinking', text: '接下来' }), null);
+});
+
 // --- text / step / null-out rules ---------------------------------------------
 
 test('text preview caps at the first 40 chars and dedupes while unchanged', () => {
@@ -133,15 +156,28 @@ test('compose rejects malformed events loudly (no silent undefined lines)', () =
 
 // --- maskOutbound (DESIGN §6.2 built-in onOutbound) ----------------------------
 
-test('maskOutbound: sk-/pk-/Bearer tokens are replaced with ***', () => {
+test('maskOutbound: sk-/pk_/Bearer tokens are replaced with ***', () => {
   assert.equal(maskOutbound('我的密钥是 sk-abc123def456ghi789 请删除'), '我的密钥是 *** 请删除');
   assert.equal(maskOutbound('key pk_live_0123456789abcd end'), 'key *** end');
   assert.equal(maskOutbound('Bearer-ghp_abcdefgh01234567 done'), '*** done');
 });
 
-test('maskOutbound: separator is optional and prefix match is case-insensitive', () => {
-  assert.equal(maskOutbound('token sk0123456789abcdef here'), 'token *** here');
+test('maskOutbound: Bearer + space (HTTP wire format) is masked', () => {
+  assert.equal(maskOutbound('Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9'), '***');
+  assert.equal(maskOutbound('bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9 ok'), '*** ok');
+});
+
+test('maskOutbound: mid-word sk/pk identifiers are not masked (word boundary)', () => {
+  assert.equal(maskOutbound('ran task-0123456789abcdef ok'), 'ran task-0123456789abcdef ok');
+  assert.equal(maskOutbound('skip_the_long_paragraph'), 'skip_the_long_paragraph');
+});
+
+test('maskOutbound: case-insensitive prefix; sk/pk separator is mandatory', () => {
   assert.equal(maskOutbound('SK-ABCDEF0123456789'), '***');
+  // accepted trade-off (hardened pattern): a 16+ body with NO separator is
+  // left as-is — the mandatory separator is what kills mid-word matches
+  // like 'task-…'; real provider tokens (sk-/pk-/Bearer) always carry one.
+  assert.equal(maskOutbound('skABCDEFGHIJKLMNOP'), 'skABCDEFGHIJKLMNOP');
 });
 
 test('maskOutbound: short tokens and normal text are untouched', () => {
