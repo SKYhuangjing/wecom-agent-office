@@ -101,7 +101,14 @@ export function validateBot(bot, { channels, providers } = {}) {
     }
     const list = Array.isArray(providerErrors) ? providerErrors : [providerErrors];
     for (const e of list) {
-      if (typeof e === 'string' && e !== '' && !errors.includes(e)) errors.push(e);
+      if (typeof e !== 'string' || e === '' || errors.includes(e)) continue;
+      // Providers routinely restate a required-field fact their own configSchema
+      // already flagged, minus the record prefix ('cwd is required' vs the
+      // schema pass's 'providerConfig.cwd is required'). The prefixed schema
+      // message names the block AND the field — the more specific copy wins,
+      // the bare restatement collapses.
+      if (errors.some((x) => x.endsWith(`.${e}`))) continue;
+      errors.push(e);
     }
   }
   return errors;

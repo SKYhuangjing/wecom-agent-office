@@ -58,6 +58,11 @@ export default {
         { key: 'cwd', label: 'Working directory', type: 'string', required: true },
         { key: 'mode', label: 'Mode', type: 'enum', options: ['a', 'b'], required: false },
       ],
+      // Restates the schema's required-cwd fact WITHOUT the record prefix —
+      // deliberately the duplication shape validateBot must collapse.
+      validate(providerConfig) {
+        return (typeof providerConfig?.cwd === 'string' && providerConfig.cwd !== '') ? [] : ['cwd is required'];
+      },
       materializeConfig(bot) {
         globalThis.__waoFakeMaterialize = (globalThis.__waoFakeMaterialize ?? 0) + 1;
         (globalThis.__waoFakeMaterializeLog ??= []).push({ id: bot.id, cwd: bot.providerConfig?.cwd, mode: bot.providerConfig?.mode });
@@ -75,6 +80,14 @@ export default {
           async run({ prompt, sessionId, signal, onEvent }) {
             if (signal?.aborted) {
               return { ok: false, code: 'aborted', finalText: '', aborted: true, sessionId: sessionId ?? null, reason: 'aborted before start', detail: {} };
+            }
+            if (bot.providerConfig?.cwd === '/err') {
+              return {
+                ok: false, code: 'error', finalText: '', aborted: false,
+                sessionId: 'session-err-' + bot.id,
+                reason: { kind: 'exit', error: { message: 'kaboom' } },
+                detail: { exitCode: 3, stderrTail: 'E'.repeat(600) },
+              };
             }
             if (onEvent) onEvent({ type: 'text', text: '好的：' + prompt });
             return { ok: true, code: 'completed', finalText: 'fake 完成：' + prompt, aborted: false, sessionId: sessionId || 'session-fake-' + bot.id, reason: null, detail: { exitCode: 0 } };
@@ -217,6 +230,25 @@ test('POST /api/bots/:id/test runs the provider runner engine-independently; led
   assert.deepEqual(ledger, []);
 });
 
+test('POST /api/bots/:id/test failure answers WHY inline: reason, truncated detail, provider errorText', async () => {
+  assert.equal((await post('/api/bots', { ...BOT_B1, id: 'errbot', providerConfig: { cwd: '/err', mode: 'a' } })).status, 200);
+  const resp = await post('/api/bots/errbot/test');
+  assert.equal(resp.status, 200);
+  const body = await resp.json();
+  assert.equal(body.code, 'error');
+  assert.deepEqual(body.reason, { kind: 'exit', error: { message: 'kaboom' } });
+  assert.equal(body.detail.exitCode, 3);
+  assert.equal(body.detail.stderrTail.length, 500, 'stderrTail truncated to 500 chars (600 sent)');
+  assert.equal(body.errorText, 'fake error: error', 'human line via providerPort.describeError(result)');
+  // completed responses stay lean: no diagnostics keys on the success path
+  const okBody = await (await post('/api/bots/b1/test')).json();
+  assert.equal(okBody.reason, undefined);
+  assert.equal(okBody.detail, undefined);
+  assert.equal(okBody.errorText, undefined);
+  // cleanup: later tests assert the exact bots.json registry contents
+  assert.equal((await fetch(url('/api/bots/errbot'), { method: 'DELETE' })).status, 200);
+});
+
 test('DELETE /api/bots/:id detaches, removeConfig cleans materialized files, persists; failure is non-fatal', async () => {
   assert.equal((await post('/api/bots', { ...BOT_B1, id: 'bye', providerConfig: { cwd: '/tmp/bye', mode: 'a' } })).status, 200);
   assert.equal((await post('/api/bots', { ...BOT_B1, id: 'boom', providerConfig: { cwd: '/rm-fail', mode: 'a' } })).status, 200);
@@ -248,6 +280,14 @@ test('invalid bot records → 400 with field-level errors', async () => {
     const body = await resp.json();
     assert.ok(Array.isArray(body.errors) && body.errors.some((e) => pattern.test(e)), `${bot.id}: ${JSON.stringify(body.errors)}`);
   }
+  // Deduped copy (P2 review): schema ('providerConfig.cwd is required') and the
+  // provider validate restatement ('cwd is required') collapse to ONE message,
+  // and `error` is exactly the joined errors — no secondhand prefixing.
+  const resp = await post('/api/bots', { ...BOT_B1, id: 'b3', providerConfig: { mode: 'a' } });
+  const body = await resp.json();
+  assert.equal(body.errors.filter((e) => /cwd/.test(e)).length, 1, `exactly one cwd message: ${JSON.stringify(body.errors)}`);
+  assert.deepEqual(body.errors, ['providerConfig.cwd is required'], 'the prefixed (more specific) copy wins');
+  assert.equal(body.error, body.errors.join('; '));
   assert.deepEqual(loadBots(join(dataDir, 'bots.json')).bots.map((b) => b.id), ['b1'], 'nothing invalid persisted');
 });
 
@@ -396,6 +436,17 @@ test('bots.js unit: load tolerance, schema validation, revalidateAll split', () 
     0,
   );
   assert.ok(validateBot({ id: 'b', name: 'B', channel: 'zz', provider: 'p' }, liveReg).includes('unknown channel: "zz"'));
+
+  // provider validate restating a schema-flagged field minus the record prefix
+  // → collapse: the prefixed (more specific) schema message is kept alone
+  const providersV = new Map([['pv', {
+    configSchema: [{ key: 'cwd', type: 'string', required: true }],
+    validate: (pc) => (typeof pc?.cwd === 'string' && pc.cwd !== '' ? [] : ['cwd is required']),
+  }]]);
+  assert.deepEqual(
+    validateBot({ id: 'b', name: 'B', channel: 'c', account: { endpoint: 'e' }, provider: 'pv', providerConfig: {} }, { channels, providers: providersV }),
+    ['providerConfig.cwd is required'],
+  );
 
   const bots = [
     { id: 'ok', name: 'O', channel: 'c', account: { endpoint: 'e' }, provider: 'p', providerConfig: { cwd: '/' } },

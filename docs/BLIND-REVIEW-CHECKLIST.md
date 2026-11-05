@@ -107,7 +107,7 @@
     kill -0 $(cat "$D/server.pid") 2>/dev/null && echo "还在"   # 应已退出
     ls "$D/data/.lock" 2>/dev/null                               # 应不存在（锁已释放）
     curl -s --max-time 2 localhost:18793/healthz                 # 应连接失败（端口已空）
-    tail -5 "$D/server.log"                                      # 四阶段停机日志
+    tail -6 "$D/server.log"   # 停机阶段日志: wao: stopping (four-phase) / drain done / plugins deactivated / stopped (lock released)
     ```
 
 可选加分项（如时间允许）：`node src/index.js doctor --data-dir "$D/data2"` 后手动

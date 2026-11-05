@@ -31,7 +31,8 @@
 - 消息流：企微回调 → channel-wecom adapter → engine 串行链（抢占/队列合并/出站预算）
   → provider runner（`dsh --json -` 子进程，NDJSON → 统一事件）→ 流式回传企微。
 - 会话延续：chatKey → sessionId 缓存（`data/sessions/`），下一条消息带 `--session-id` 续跑。
-- 停机 = SIGINT/SIGTERM 触发四阶段（drain 补终帧 → 逆序拆插件 → 关监听 → 释放锁），不是裸 kill。
+- 停机 = SIGINT/SIGTERM 触发四阶段（drain 补终帧 → 逆序拆插件 → 关监听 → 释放锁），不是裸 kill；
+  每阶段在日志留一行（`wao: stopping (four-phase)` … `wao: stopped (lock released)`），见 `data/logs/wao.log`。
 
 ## 2. 快速开始
 
@@ -75,6 +76,9 @@ curl -X POST localhost:8792/api/plugins/<id>/disable|enable   # 禁/启用某插
 ```
 
 响应**永不回显 secret**（API 层递归清洗）。
+
+> dsh bot 的 profile 物化是**即时**的：创建/修改 dsh bot 就把 profile 写到
+> `~/.dsh/profiles/<profile>/`（即使 bot 停用）；`DELETE /api/bots/<id>` 会清理该目录。
 
 ## 4. 开发（写插件）
 

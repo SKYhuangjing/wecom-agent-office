@@ -48,6 +48,20 @@ const start = async (dataDir, pluginsDirs) => {
   kernels.push(k);
   return k;
 };
+// Collecting logger double (createKernel accepts `log`): phase narration is
+// assertable without touching stderr — same shape discipline as lifecycle's.
+const captureLog = () => {
+  const lines = [];
+  const make = (prefix) => ({
+    debug() {},
+    info: (...a) => lines.push((prefix ? `[${prefix}] ` : '') + a.join(' ')),
+    warn: (...a) => lines.push((prefix ? `[${prefix}] ` : '') + a.join(' ')),
+    error: (...a) => lines.push((prefix ? `[${prefix}] ` : '') + a.join(' ')),
+    child: make,
+  });
+  return { lines, log: make(null) };
+};
+const hasLine = (lines, expected) => lines.some((l) => l.includes(expected));
 const base = (k) => (path) => `http://127.0.0.1:${k.http.port}${path}`;
 
 test('boot: healthz 200, /api/state ok:true with empty plugin list', async () => {
@@ -169,6 +183,45 @@ test('stop() resolves (never throws) with no engine service and is idempotent', 
   const k = await start(dataDirWith(null), [emptyPluginsDir()]);
   await assert.doesNotReject(k.stop());
   await assert.doesNotReject(k.stop()); // CLI may deliver SIGINT then SIGTERM
+});
+
+test('stop() narrates its phases into the log (graceful shutdown is observable)', async () => {
+  const { lines, log } = captureLog();
+  const k = await createKernel({ port: 0, dataDir: dataDirWith(null), pluginsDirs: [emptyPluginsDir()], log });
+  kernels.push(k);
+  await k.stop();
+  const expected = [
+    'wao: stopping (four-phase)', 'wao: drain done', 'wao: plugins deactivated', 'wao: stopped (lock released)',
+  ];
+  for (const line of expected) {
+    assert.ok(hasLine(lines, line), `stop log must include '${line}' (got: ${JSON.stringify(lines)})`);
+  }
+});
+
+test('reload() narrates the four phases into the log', async () => {
+  const { lines, log } = captureLog();
+  const k = await createKernel({ port: 0, dataDir: dataDirWith(null), pluginsDirs: [emptyPluginsDir()], log });
+  kernels.push(k);
+  await k.reload();
+  const expected = [
+    'wao: reload: phase 1 drain', 'wao: reload: phase 2 deactivate',
+    'wao: reload: phase 3 load (0 active)', 'wao: reload: phase 4 afterAll',
+  ];
+  for (const line of expected) {
+    assert.ok(hasLine(lines, line), `reload log must include '${line}' (got: ${JSON.stringify(lines)})`);
+  }
+});
+
+test('failed plugin entries read the id once: /api/plugins error drops the redundant id prefix', async () => {
+  const pluginsDir = emptyPluginsDir();
+  mkdirSync(join(pluginsDir, 'stray'), { recursive: true }); // no plugin.js → import failure
+  const k = await start(dataDirWith(null), [pluginsDir]);
+  const list = (await (await fetch(base(k)('/api/plugins'))).json()).plugins;
+  const stray = list.find((p) => p.id === 'stray');
+  assert.ok(stray, 'stray dir surfaces as a failed entry (loud over silent skip)');
+  assert.equal(stray.status, 'failed');
+  assert.match(stray.error, /import failed/);
+  assert.ok(!stray.error.startsWith('stray:'), `error must not repeat the id prefix (got '${stray.error}')`);
 });
 
 test('EADDRINUSE boot rejects with the second-instance message and releases its lock', async () => {

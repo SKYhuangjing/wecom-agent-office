@@ -204,7 +204,9 @@ export async function runContractSuite({ pluginDir, providerId = null }) {
         try {
           await fn(g);
         } catch (err) {
-          fails.push(`threw: ${err?.stack ?? err?.message ?? err}`);
+          // First line of the message only: a full stack in the FAIL summary
+          // line buries the pass/fail table under frames.
+          fails.push(`threw: ${String(err?.message ?? err).split('\n', 1)[0]}`);
         } finally {
           for (const home of groupHomes) killLeftover(home);
         }

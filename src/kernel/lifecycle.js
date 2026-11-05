@@ -220,10 +220,16 @@ export function createLifecycle({ events, services, log, http, portRegistry = cr
     if (timedOut) log.warn(`lifecycle: engine drain did not settle within ${timeoutMs}ms, proceeding`);
   };
 
+  // Phase narration is part of the contract, not decoration: ops decides
+  // "graceful or wedged?" from the log tail, so every phase leaves a line.
   const fourPhase = async ({ reloadFn, drainTimeoutMs = 5000 }) => {
+    log.info('wao: reload: phase 1 drain');
     await drainEngine(drainTimeoutMs); // ① drain (bounded)
+    log.info('wao: reload: phase 2 deactivate');
     await deactivateAll(); // ② reverse teardown
-    await reloadFn(); // ③ caller rescans + activates; its errors are the caller's to handle
+    const res = await reloadFn(); // ③ caller rescans + activates; its errors are the caller's to handle
+    log.info(`wao: reload: phase 3 load (${Array.isArray(res?.active) ? res.active.length : '?'} active)`);
+    log.info('wao: reload: phase 4 afterAll');
     await runAfterAllActivated(); // ④ rebuild bot runtimes on the fresh port set
   };
 

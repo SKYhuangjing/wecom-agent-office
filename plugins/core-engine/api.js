@@ -72,7 +72,9 @@ const findBot = (state, id) => state.doc.bots.find((b) => isObject(b) && b.id ==
 const validateOrThrow = (bot, ports) => {
   const errors = validateBot(bot, { channels: ports?.channel, providers: ports?.provider });
   if (errors.length > 0) {
-    const err = httpError(400, `invalid bot: ${errors.join('; ')}`);
+    // `errors` is the authoritative field-level list; `error` is exactly its
+    // joined copy — one source of copy, no secondhand prefixing on top.
+    const err = httpError(400, errors.join('; '));
     err.errors = errors;
     throw err;
   }
@@ -211,12 +213,29 @@ async function testBotHandler({ res, m, state }) {
     timeoutMs: TEST_TIMEOUT_MS,
     onEvent: () => { events++; },
   });
-  sendJson(res, 200, {
+  const body = {
     code: result?.code ?? 'error',
     finalText: result?.finalText ?? '',
     sessionId: result?.sessionId ?? null,
     events,
-  });
+  };
+  // A failed probe answers "why?" inline (P2 review): machine-readable
+  // reason/detail (stderrTail truncated — a full dump belongs in the log, not
+  // a JSON response) plus the provider's human sentence via describeError.
+  if (body.code !== 'completed') {
+    body.reason = result?.reason ?? null;
+    const d = result?.detail;
+    body.detail = d == null || typeof d !== 'object' ? null : {
+      exitCode: d.exitCode ?? null,
+      stderrTail: typeof d.stderrTail === 'string' ? d.stderrTail.slice(0, 500) : (d.stderrTail ?? null),
+    };
+    try {
+      body.errorText = typeof port.describeError === 'function'
+        ? String(port.describeError(result))
+        : String(result?.error ?? 'run failed');
+    } catch { body.errorText = String(result?.error ?? 'run failed'); }
+  }
+  sendJson(res, 200, body);
 }
 
 async function ledgerHandler({ res, searchParams, state }) {

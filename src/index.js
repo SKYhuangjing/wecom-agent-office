@@ -70,7 +70,13 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
   // rather than omitted — the UI must be able to show what to re-enable.
   const pluginList = () => [
     ...lastLoad.active.map(({ id, type, version }) => ({ id, type, version, status: 'active' })),
-    ...lastLoad.failed.map(({ id, error }) => ({ id, status: 'failed', error })),
+    // The loader's error copy attributes with an id prefix; the entry carries
+    // `id` right beside it, so the prefix is stripped here — "stray: failed —
+    // stray: import failed" reads the id twice; once is enough.
+    ...lastLoad.failed.map(({ id, error }) => ({
+      id, status: 'failed',
+      error: typeof error === 'string' && error.startsWith(`${id}: `) ? error.slice(id.length + 2) : error,
+    })),
     ...lastDisabled.map((d) => ({ ...d, status: 'disabled' })),
   ];
 
@@ -196,9 +202,13 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
     // Phase-1-only stop semantics: drain while channels are still up, then
     // reverse-deactivate, close the listener, release the data-dir lock. Each
     // step is individually guarded — stop must never throw, and one step's
-    // failure must not skip the others.
+    // failure must not skip the others. Success is narrated into the log so
+    // ops can tell a graceful stop from a wedged one from the log tail alone.
+    logger.info('wao: stopping (four-phase)');
     try { await lifecycle.drainEngine(5000); } catch (err) { logger.error('stop: engine drain failed', err); }
+    logger.info('wao: drain done');
     try { await lifecycle.deactivateAll(); } catch (err) { logger.error('stop: deactivate failed', err); }
+    logger.info('wao: plugins deactivated');
     // http.close() waits out non-idle connections: a client wedged mid-request
     // would hold stop() — and with it the lock release — hostage forever.
     // Bounded wait; on timeout destroy the remaining connections by force.
@@ -214,6 +224,7 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
       }
     } catch (err) { logger.error('stop: http close failed', err); }
     lock.release();
+    logger.info('wao: stopped (lock released)');
   };
 
   const status = () => ({
@@ -239,7 +250,7 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
 
   logger.info(`wao up: ${lastLoad.active.length} plugins on http://${host}:${http.port} (data: ${dir})`);
   return {
-    events, services, http, lifecycle, loader, portRegistry, status, reload, stop,
+    events, services, http, lifecycle, loader, portRegistry, status, reload, stop, log: logger,
     // Not part of the library API surface: escape hatch for the CLI's
     // second-signal force exit, so a wedged teardown cannot cost the
     // operator the lock too (a released-then-leaked lock is adoptable on
@@ -287,7 +298,10 @@ const cmdStart = async (flags) => {
     dataDir: flags['data-dir'],
   });
   const st = kernel.status();
-  console.log(`wao v${pkgVersion()} listening on http://${flags.host ?? '127.0.0.1'}:${st.port} (pid ${process.pid}, data ${st.dataDir})`);
+  // Through the logger (timestamped, level info, file+stderr): the boot banner
+  // belongs in data/logs/wao.log like every other lifecycle fact, not on bare
+  // stdout where the log tail would miss it.
+  kernel.log.info(`wao v${pkgVersion()} listening on http://${flags.host ?? '127.0.0.1'}:${st.port} (pid ${process.pid}, data ${st.dataDir})`);
   // Graceful stop (§1): SIGINT/SIGTERM run the four-phase teardown, then exit.
   let signalled = false;
   const shutdown = () => {
