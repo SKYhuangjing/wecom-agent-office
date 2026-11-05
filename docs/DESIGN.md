@@ -320,8 +320,9 @@ claude（会话文件挂 cwd 哈希目录）必失效 → 视为切换走交接�
 **实测基线（2026-11-05 本机探针，`test/probe.sh` 固化）**：dsh 事件流形状/`--session-id` 纯 resume 语义/
 两次推理探针无 thinking 事件（CoT 源缺失降级）；claude system-init/assistant-blocks/result、本机已路由
 magpie；codex thread.started/item.completed(reasoning 文本✅)/turn.completed(reasoning_output_tokens)。
-**probe.sh 待补两条**：kill-then-resume（超时杀掉后 session 文件状态+resume 行为，三家）；
-codex `exec resume` + stdin 哨兵。
+**probe.sh 两条专项已固化（2026-11-06，`test/probe-baselines/` 提交）**：dsh kill-then-resume（SIGKILL 后
+`--session-id` resume **可用**，同一 sessionId 回显、上下文存活）；codex `exec resume <tid> -` 的
+stdin 哨兵**可用**（新 prompt 经 stdin 生效、thread_id 回显）。基线漂移检测：`bash test/probe.sh --check`。
 
 ---
 
