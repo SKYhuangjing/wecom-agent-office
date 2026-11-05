@@ -94,6 +94,7 @@ export class SessionCache {
   // silent healing here would hide real durability bugs.
   recompute(ledger) {
     if (ledger) this._ledger = ledger;
+    if (!this._ledger) throw new Error('recompute requires a ledger (pass one to the constructor or to recompute)');
     let changed = false;
     for (const [chatKey, rec] of Object.entries(this._data)) {
       for (const [provider, entry] of Object.entries(rec.cache ?? {})) {

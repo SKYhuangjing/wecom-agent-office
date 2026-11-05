@@ -158,6 +158,21 @@ test('Ledger recovers the counter by scanning max(seq), not the last line', () =
   assert.deepEqual(L.turns().map(r => r.seq), [3, 1, 7, 8]); // torn line skipped
 });
 
+test('Ledger seals a torn tail without trailing newline so the next row survives', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wao-ledger-torn-'));
+  const file = join(dir, 'ledger.jsonl');
+  // crash mid-append: a valid row followed by a fragment with NO trailing newline
+  writeFileSync(file, '{"seq":3}\n{"seq":');
+  const L = new Ledger({ file, log: mkLog() });
+  assert.equal(L.nextSeq(), 4);
+  L.recordTurn(turn({ seq: 4 }));
+  // the new row must be independently parseable — never glued onto the fragment
+  assert.deepEqual(L.turns().map(r => r.seq), [3, 4]);
+  assert.equal(L.maxSeq({}), 4);
+  // and a fresh instance recovers the sealed file to the same state
+  assert.equal(new Ledger({ file, log: mkLog() }).nextSeq(), 5);
+});
+
 // --- session cache persistence ------------------------------------------------
 
 test('upsert persists atomically: no tmp residue, full roundtrip, rule-1 fields', () => {
@@ -273,4 +288,11 @@ test('recompute with no drift changes nothing and stays quiet', () => {
   assert.equal(C.recompute(L), false);
   assert.equal(C.get(K).cache.dsh.consumedSeq, 3);
   assert.deepEqual(log.calls.warn, []);
+});
+
+test('recompute without any ledger raises an actionable error', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wao-ledger-rc-'));
+  // no ledger injected anywhere — must fail loudly, not with a bare TypeError
+  const C = new SessionCache({ file: join(dir, 'sessions.json'), log: mkLog() });
+  assert.throws(() => C.recompute(), /ledger/);
 });

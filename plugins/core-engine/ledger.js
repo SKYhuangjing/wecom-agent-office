@@ -34,7 +34,16 @@ export class Ledger {
     this._seq = 0; // highest seq ever handed out; nextSeq() pre-increments
     mkdirSync(dirname(file), { recursive: true }); // first boot: data/ledger/ may not exist
     if (existsSync(file)) {
-      for (const row of parseLines(readFileSync(file, 'utf8'), log)) {
+      const text = readFileSync(file, 'utf8');
+      // A crash mid-append can leave a partial line WITHOUT a trailing
+      // newline; tolerating it in the scan is not enough — the next append
+      // would concatenate onto the fragment and silently lose the first
+      // post-crash row. Seal the fragment now, before any future append.
+      if (text.length > 0 && !text.endsWith('\n')) {
+        appendFileSync(file, '\n');
+        this.log?.debug?.('ledger: sealed torn tail line');
+      }
+      for (const row of parseLines(text, log)) {
         if (Number.isInteger(row.seq) && row.seq > this._seq) this._seq = row.seq;
       }
     }
