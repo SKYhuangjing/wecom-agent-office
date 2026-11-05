@@ -19,8 +19,8 @@
 //                  ledger rows continue.
 //   5 credentials  subscribe errcode 40001 → /api/agents offline with 鉴权失败
 //                  reason, adapter stopped, no reconnect storm (≤3 attempts).
-//   6 secret scan  none of the JSON bodies captured during the whole run ever
-//                  contains the account secret.
+//   6 secret scan  none of the JSON bodies OR outbound ws frames captured
+//                  during the whole run ever contains the account secret.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -182,11 +182,13 @@ const spawnCount = (home) => {
 const lastPrompt = (home) => {
   try { return readFileSync(join(home, 'last-prompt'), 'utf8'); } catch { return null; }
 };
-// settle = the engine reports the bot idle again (no registered run)
-const settle = (botId) => waitFor(
-  async () => (await agentOf(botId))?.running === 0,
-  `${botId} to settle`,
-);
+
+// Outbound (user-visible) WeCom frame commands — the exact surface maskOutbound
+// guards and scenario 6 scans for secrets. aibot_subscribe is deliberately
+// NOT here: it is the one frame the protocol REQUIRES to carry the credential
+// (bot_id+secret body), and it never reaches a user.
+const OUTBOUND_CMDS = new Set(['aibot_respond_msg', 'aibot_respond_welcome_msg', 'aibot_respond_update_msg', 'aibot_send_msg']);
+const outboundFrames = (st) => st.frames.filter((f) => OUTBOUND_CMDS.has(f.cmd));
 
 before(async () => {
   dataDir = mkdtempSync(join(tmpdir(), 'wao-e2e-data-'));
@@ -296,8 +298,13 @@ test('3. reload four-phase: in-run 维护 final, re-attach, new message complete
   const reload = await post('/api/service/reload');
   assert.equal(reload.status, 200);
 
-  const maint = framesFor(server1, 'e2e-r3a').find((f) => f.body?.stream?.finish === true);
-  assert.ok(maint, 'in-run user got a finish=true frame at drain time');
+  // waitFor (not a sync find): the drain aborts the run asynchronously, and
+  // across a reload's fresh adapter/connection the frame can land a beat
+  // after the POST resolves.
+  const maint = await waitFor(
+    () => framesFor(server1, 'e2e-r3a').find((f) => f.body?.stream?.finish === true),
+    'in-run maintenance final frame at drain time',
+  );
   assert.match(maint.body.stream.content, /维护/);
 
   const rows = await waitFor(async () => {
@@ -349,18 +356,31 @@ test('5. credentials fail: subscribe 40001 → agents offline + 鉴权失败 rea
   assert.match(agent.reason ?? '', /40001/);
   assert.equal(agent.channelState.state, 'stopped');
 
-  // 凭证快速失败 (§4): single retry capped at 5min — a storm would be dozens
-  // of connections inside seconds; the capped client stays at the boot attempt
-  // (+1 per reload). 3s is plenty to expose a tight loop.
+  // 凭证快速失败 (§4): single retry capped at 5min. 10s window matches the
+  // contract-level storm check — a 1s→1.7x backoff loop would be at 5+
+  // attempts by then; the capped client stays at the boot attempt (+1 per
+  // reload), so ≤3 remains a strict bound.
   const conns = server2.connections;
-  await sleep(3000);
+  await sleep(10000);
   assert.ok(server2.connections <= conns + 1 && server2.connections <= 3,
-    `no reconnect storm: ${server2.connections} connection attempts in 3s (cap 3)`);
+    `no reconnect storm: ${server2.connections} connection attempts in 10s (cap 3)`);
 });
 
-test('6. the account secret never appears in any JSON response body', async () => {
+test('6. the account secret never appears in any JSON response body or outbound ws frame', async () => {
   assert.ok(bodies.length >= 10, `captured ${bodies.length} response bodies during the suite`);
-  for (const body of bodies) {
-    assert.equal(body.includes(SECRET), false, `secret leaked in: ${body.slice(0, 200)}`);
+  // The wire is the other leak surface: every frame the adapter ever SENT
+  // (progress/final/welcome/maintenance/decline/push, across reconnects) gets
+  // the same scan as the API bodies — this is exactly what maskOutbound
+  // guards. Subscribe frames are excluded by contract (see OUTBOUND_CMDS).
+  const s1out = outboundFrames(server1);
+  const s2out = outboundFrames(server2);
+  assert.ok(s1out.length >= 10, `frame scan is not vacuous: ${s1out.length} outbound frames on server1`);
+  const surfaces = [
+    ...bodies.map((body, i) => [`api response #${i + 1}`, body]),
+    ['server1 outbound frames', JSON.stringify(s1out)],
+    ['server2 outbound frames', JSON.stringify(s2out)],
+  ];
+  for (const [where, text] of surfaces) {
+    assert.equal(text.includes(SECRET), false, `secret leaked in ${where}: ${text.slice(0, 200)}`);
   }
 });
