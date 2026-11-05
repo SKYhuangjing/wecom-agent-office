@@ -52,6 +52,11 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
   const http = createHttpShell({ log: logger });
   const lifecycle = createLifecycle({ events, services, log: logger, http });
   const portRegistry = lifecycle.portRegistry;
+  // Kernel-assembly facts for plugins (core-engine reads both at activate):
+  // the shared port registry and the data dir are kernel-level state — reached
+  // through the service container instead of a new ctx surface.
+  services.register('ports', portRegistry);
+  services.register('paths', { dataDir: dir });
 
   const startedAt = Date.now();
   const uptimeSec = () => Math.round((Date.now() - startedAt) / 1000);
@@ -135,6 +140,8 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
   // afterAllActivated. loadPlugins re-reads plugins.json inside phase ③.
   const doReload = async ({ drainTimeoutMs = 5000 } = {}) => {
     await lifecycle.fourPhase({ drainTimeoutMs, reloadFn: loadPlugins });
+    // The port set changed (§2.5): notify subscribers (core-engine reconcile).
+    events.emit('plugin/lifecycle', { ids: lastLoad.active.map((a) => a.id) });
     return { active: [...lastLoad.active], failed: [...lastLoad.failed] };
   };
   // Reloads are serialized through a chain: fourPhase is not reentrant, and
