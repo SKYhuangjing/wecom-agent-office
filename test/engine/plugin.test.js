@@ -81,6 +81,14 @@ export default {
             if (signal?.aborted) {
               return { ok: false, code: 'aborted', finalText: '', aborted: true, sessionId: sessionId ?? null, reason: 'aborted before start', detail: {} };
             }
+            if (bot.providerConfig?.cwd === '/hang') {
+              // Park mid-run until aborted — mirrors a real provider whose
+              // subprocess settles on abort (what drainBot relies on).
+              await new Promise((resolve) => {
+                signal?.addEventListener('abort', () => resolve(), { once: true });
+              });
+              return { ok: false, code: 'aborted', finalText: '', aborted: true, sessionId: sessionId ?? null, reason: 'aborted (hang)', detail: {} };
+            }
             if (bot.providerConfig?.cwd === '/err') {
               return {
                 ok: false, code: 'error', finalText: '', aborted: false,
@@ -109,6 +117,7 @@ const writePluginDir = (dir, src) => {
 let kernel;
 let dataDir;
 let fakesDir;
+let logLines = [];
 const url = (p) => `http://127.0.0.1:${kernel.http.port}${p}`;
 const post = (p, body) => fetch(url(p), {
   method: 'POST',
@@ -133,7 +142,16 @@ before(async () => {
   fakesDir = mkdtempSync(join(tmpdir(), 'wao-plugin-fakes-'));
   writePluginDir(join(fakesDir, 'channel-fake'), FAKE_CHANNEL);
   writePluginDir(join(fakesDir, 'provider-fake'), FAKE_PROVIDER);
-  kernel = await createKernel({ port: 0, dataDir, pluginsDirs: [fakesDir, join(repoRoot, 'plugins')] });
+  // Capturing logger double (createKernel accepts `log`): lets the
+  // allowedUsers attach-warn test assert the copy without stderr scraping.
+  const capture = (prefix) => ({
+    debug() {},
+    info: (...a) => logLines.push((prefix ? `[${prefix}] ` : '') + a.join(' ')),
+    warn: (...a) => logLines.push((prefix ? `[${prefix}] ` : '') + a.join(' ')),
+    error: (...a) => logLines.push((prefix ? `[${prefix}] ` : '') + a.join(' ')),
+    child: capture,
+  });
+  kernel = await createKernel({ port: 0, dataDir, pluginsDirs: [fakesDir, join(repoRoot, 'plugins')], log: capture(null) });
 });
 
 after(async () => {
@@ -457,4 +475,77 @@ test('bots.js unit: load tolerance, schema validation, revalidateAll split', () 
   assert.equal(r.bad.length, 1);
   assert.equal(r.bad[0].bot.id, 'bad');
   assert.ok(r.bad[0].errors.some((e) => e.includes('unknown channel')));
+});
+
+// --- allowedUsers (DESIGN §6 step 1, M3 gate) — through the real assembly -----
+
+test('allowedUsers: non-empty admit-list drops strangers silently; empty list allows all (warned at attach)', async () => {
+  // Empty list = allow-all, and attach says so once per bot (operator visibility).
+  assert.ok(
+    logLines.some((l) => l.includes('accepts messages from ANY user')),
+    `attach warns for allow-all bots: ${JSON.stringify(logLines.slice(-20))}`,
+  );
+
+  assert.equal((await post('/api/bots', { ...BOT_B1, id: 'allowbot', allowedUsers: ['u1'] })).status, 200);
+  await waitFor(() => globalThis.__waoFakeAdapters.get('allowbot') != null, 'allowbot attached');
+  const svc = kernel.services.get('engine');
+  const bot = loadBots(join(dataDir, 'bots.json')).bots.find((b) => b.id === 'allowbot');
+
+  // Stranger: silently dropped (a reply would confirm the bot exists) — no
+  // ledger row, no runner work, engine stays idle.
+  svc.onMessage(bot, { reqId: 'au-stranger', chatKey: 'fake:single:u2', chatKind: 'single', chatid: 'u2', userid: 'u2', text: '陌生人', raw: {} });
+  await new Promise((r) => setTimeout(r, 150));
+  assert.deepEqual(await (await get('/api/ledger?bot=allowbot')).json(), [], 'stranger message never ran');
+  assert.equal(svc.status('allowbot').status, 'idle');
+  assert.ok(logLines.some((l) => l.includes('reject message from non-allowed user') && l.includes('u2')));
+
+  // Member: full turn through the chain.
+  svc.onMessage(bot, { reqId: 'au-member', chatKey: 'fake:single:u1', chatKind: 'single', chatid: 'u1', userid: 'u1', text: '自己人', raw: {} });
+  await waitFor(async () => (await (await get('/api/ledger?bot=allowbot')).json()).length === 1, 'member turn recorded');
+  const rows = await (await get('/api/ledger?bot=allowbot')).json();
+  assert.equal(rows[0].user, '自己人');
+  assert.equal(rows[0].reason, 'completed');
+
+  assert.equal((await fetch(url('/api/bots/allowbot'), { method: 'DELETE' })).status, 200);
+});
+
+// --- per-bot drain on the CRUD surface (DESIGN §8 校验→materialize→串行链 drain→重连)
+
+test('mid-run PATCH: the in-flight turn settles with its final frame BEFORE the adapter swap; ledger row intact', async () => {
+  assert.equal((await post('/api/bots', { ...BOT_B1, id: 'hangbot', providerConfig: { cwd: '/hang', mode: 'a' } })).status, 200);
+  await waitFor(() => globalThis.__waoFakeAdapters.get('hangbot') != null, 'hangbot attached');
+  const svc = kernel.services.get('engine');
+  const bot = loadBots(join(dataDir, 'bots.json')).bots.find((b) => b.id === 'hangbot');
+
+  // Observe the outbound surface and the adapter's death in one ordered log.
+  const marks = [];
+  const adapter = globalThis.__waoFakeAdapters.get('hangbot');
+  const origProgress = adapter.progress.bind(adapter);
+  adapter.progress = (reqId, streamId, text, finish) => {
+    marks.push(finish ? `final:${text}` : `progress:${text}`);
+    return origProgress(reqId, streamId, text, finish);
+  };
+  const origStop = adapter.stop.bind(adapter);
+  adapter.stop = () => { marks.push('adapter-stop'); return origStop(); };
+
+  svc.onMessage(bot, { reqId: 'hp-1', chatKey: 'fake:group:G1', chatKind: 'group', chatid: 'G1', userid: 'u1', text: '长任务', raw: {} });
+  await waitFor(() => svc.status('hangbot').status === 'working', 'turn running (parked in /hang)');
+
+  const resp = await patch('/api/bots/hangbot', { providerConfig: { cwd: '/tmp', mode: 'b' } });
+  assert.equal(resp.status, 200, await resp.text());
+
+  // The abort landed as MAINTENANCE copy (per-bot drain), not the
+  // "interrupted by a new message" banner — and it went out before the swap.
+  const finalIdx = marks.findIndex((m) => m.startsWith('final:'));
+  assert.ok(finalIdx !== -1, `an aborted final frame was delivered: ${JSON.stringify(marks)}`);
+  assert.ok(marks[finalIdx].includes('服务维护'), `maintenance copy on a per-bot drain: ${marks[finalIdx]}`);
+  assert.ok(marks.indexOf('adapter-stop') > finalIdx, `adapter swapped only after the final frame: ${JSON.stringify(marks)}`);
+
+  const rows = await (await get('/api/ledger?bot=hangbot')).json();
+  assert.equal(rows.length, 1, 'the interrupted turn is booked');
+  assert.equal(rows[0].user, '长任务');
+  assert.equal(rows[0].reason, 'interrupted');
+  assert.equal(svc.status('hangbot').status, 'idle');
+
+  assert.equal((await fetch(url('/api/bots/hangbot'), { method: 'DELETE' })).status, 200);
 });

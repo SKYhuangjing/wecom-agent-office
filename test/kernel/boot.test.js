@@ -9,10 +9,11 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import net from 'node:net';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createKernel } from '../../src/index.js';
+import { writeJson } from '../../src/kernel/config.js';
 
 // T6 convention (DESIGN §2.3): a plugin dir carries its own package.json
 // {"type":"module"} so it parses as ESM on the Node 20 engines floor too.
@@ -253,6 +254,29 @@ test('stop() resolves within the close timeout when a client is wedged mid-reque
     new Promise((r) => setTimeout(() => r(false), 1000)),
   ]);
   assert.equal(closed, true, 'the wedged connection is destroyed once the timeout fires');
+});
+
+test('data/ is owner-only: boot creates 0700 / tightens a looser dir; files are born 0600', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'wao-boot-perm-'));
+  chmodSync(dataDir, 0o755); // simulate a pre-existing looser data dir
+  dirs.push(dataDir);
+  const k = await start(dataDir, [emptyPluginsDir()]);
+  assert.equal(statSync(dataDir).mode & 0o777, 0o700, 'boot tightens a looser existing dir to 0700');
+  assert.equal(statSync(join(dataDir, 'logs', 'wao.log')).mode & 0o777, 0o600, 'the log file is 0600');
+  // atomicWrite is the funnel for bots.json/plugins.json/sessions: a file it
+  // writes is born 0600 and stays 0600 across rewrites (fresh tmp + rename).
+  const f = join(dataDir, 'probe.json');
+  writeJson(f, { a: 1 });
+  assert.equal(statSync(f).mode & 0o777, 0o600, 'atomicWrite file born 0600');
+  writeJson(f, { a: 2 });
+  assert.equal(statSync(f).mode & 0o777, 0o600, 'still 0600 after a rewrite');
+});
+
+test('boot into a fresh data dir creates it 0700 from the start', async () => {
+  const dataDir = join(mkdtempSync(join(tmpdir(), 'wao-boot-perm2-')), 'nested-data');
+  dirs.push(dirname(dataDir));
+  await start(dataDir, [emptyPluginsDir()]);
+  assert.equal(statSync(dataDir).mode & 0o777, 0o700, 'newly created data dir is 0700');
 });
 
 test('concurrent reloads serialize: each wave activates every plugin exactly once, none falsely failed', async () => {

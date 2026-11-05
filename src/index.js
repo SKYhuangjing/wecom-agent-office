@@ -8,7 +8,7 @@
 // fails the boot before anything serves traffic.
 import process from 'node:process';
 import net from 'node:net';
-import { accessSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, chmodSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLogger } from './kernel/log.js';
@@ -40,6 +40,14 @@ const json = (res, code, obj, extra = {}) => {
 // only the CLI additionally maps SIGINT/SIGTERM onto it.
 export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, pluginsDirs, log } = {}) {
   const dir = dataDir ?? defaultDataDir();
+  // data/ is owner-only (DESIGN §3/§13): bots.json/ledger/sessions carry
+  // secrets and conversation content. Create the dir 0700, and tighten an
+  // existing dir whose perms are looser — best-effort, a chmod failure (odd
+  // mount, read-only FS) must not fail boot over a permission ambition.
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try {
+    if ((statSync(dir).mode & 0o777) !== 0o700) chmodSync(dir, 0o700);
+  } catch { /* best-effort by design */ }
   const lock = lockDataDir(dir); // throws "data dir locked by pid N" for a live second instance
   const logger = log ?? createLogger({
     file: join(dir, 'logs', 'wao.log'),

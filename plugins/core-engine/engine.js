@@ -125,6 +125,12 @@ export async function defaultRunTurn(bot, msg, ac) {
   const maxSeqAtBuild = ledger.maxSeq({ chatKey });
   let sessionId = null;
   let prefix = '';
+  // Switch-back resolution stages its persistence here and commits it in
+  // bookkeep (post-run), mirroring the new-session upsert path: persisting
+  // consumedSeq/current BEFORE the run would advance past rows only the
+  // runner can deliver — a turn aborted in the ack window must leave the
+  // delta unconsumed so the replacement replays it (rule 4).
+  let pendingSwitchBack = null;
   if (nativeOk) {
     sessionId = pe.sessionId; // native resume: no prefix, the session has it all
   } else if (entry && pe && pe.bornCwd === bornCwd && pe.dirty !== true) {
@@ -133,8 +139,7 @@ export async function defaultRunTurn(bot, msg, ac) {
     const { rows, consumedUpTo } = cache.handoffReplay(chatKey, provider);
     if (rows.length > 0) prefix = HANDOFF_HEADER + '\n\n' + rows.map(formatTurnBlock).join('\n\n');
     sessionId = pe.sessionId;
-    cache.setConsumed(chatKey, provider, consumedUpTo); // only what was delivered
-    cache.setCurrent(chatKey, provider); // the delta is in THIS session now
+    pendingSwitchBack = consumedUpTo;
   } else {
     // New provider, dirty session (self-handoff) or bornCwd drift: fresh
     // session carrying the ledger prefix. Switching away does NOT dirty the
@@ -312,7 +317,20 @@ export async function defaultRunTurn(bot, msg, ac) {
       sessionId: result?.sessionId || sessionId || '',
       ok: reason === 'completed', reason, tokens: null, cost: null,
     });
-    cache.setConsumed(chatKey, provider, seq); // rule 2: every row advances
+    if (pendingSwitchBack != null && result != null) {
+      // The runner really consumed the replayed delta: advance to exactly
+      // what was delivered and flip `current` — rule 2's advance below then
+      // moves past this turn's own row as usual.
+      cache.setConsumed(chatKey, provider, pendingSwitchBack);
+      cache.setCurrent(chatKey, provider); // the delta is in THIS session now
+    }
+    if (pendingSwitchBack == null || result != null) {
+      cache.setConsumed(chatKey, provider, seq); // rule 2: every row advances
+    }
+    // else: a switch-back turn aborted BEFORE the runner ran — the delta (and
+    // this interrupted row) never reached the resumed session, so both stay
+    // unconsumed and replay on the next switch-back. Advancing here would
+    // mark rows delivered that nobody delivered.
     engine.timeline?.push({
       botId: bot.id, chatKey, kind: 'turn',
       text: `${msg.text} → ${(result?.finalText || '').slice(0, 60)}`,
@@ -387,8 +405,10 @@ export async function defaultRunTurn(bot, msg, ac) {
       }
       case 'aborted': {
         const base = result.finalText ? outboundText(result.finalText) : '';
-        // During drain the abort cause is maintenance, not a newer message.
-        const text = engine.draining
+        // During a drain (global lifecycle, or THIS bot's reconnect/delete
+        // swap) the abort cause is maintenance, not a newer message.
+        const maintenance = engine.draining || engine._botDrains?.has(bot.id) === true;
+        const text = maintenance
           ? (base ? `${base}\n\n${DRAIN_INFLIGHT_TEXT}` : DRAIN_INFLIGHT_TEXT)
           : (base ? `${base}\n\n${ABORT_BANNER}` : CANCEL_TEXT);
         await deliverFinal(text);
@@ -468,6 +488,7 @@ export class Engine {
     this._running = 0;          // turns occupying a gate slot right now
     this._waiters = [];         // FIFO of slot resolve callbacks (fairness across bots)
     this.draining = false;
+    this._botDrains = new Set(); // botIds mid per-bot drain (reconnect/delete swap)
     this.drainRefusals = [];    // { bot, msg, reason } — Task 13/14 send refusal copy
     this._drainSeq = Promise.resolve(); // serializes drains (same pattern as reload)
     this._drainBusy = 0;        // drains queued+running; refusals reset only at 0
@@ -488,12 +509,31 @@ export class Engine {
       this.log.warn?.(`engine: dropping message without chatKey from bot ${bot.id}`);
       return;
     }
+    // allowedUsers (DESIGN §6 step 1): a non-empty list is an allow-list —
+    // anyone else is dropped. Checked with input validation, BEFORE the drain
+    // branches: a stranger's message would never have run, so it must not
+    // enter drainRefusals. Silent drop + warn, matching the predecessor
+    // bridge's semantics: a courtesy reply would confirm the bot's existence
+    // to a stranger, so the copy stays in the log only.
+    if (Array.isArray(bot.allowedUsers) && bot.allowedUsers.length > 0
+      && !bot.allowedUsers.includes(msg.userid)) {
+      this.log.warn?.(`engine: reject message from non-allowed user ${JSON.stringify(msg.userid)} (bot ${bot.id}, chat ${msg.chatKey})`);
+      return;
+    }
     if (this.draining) {
       // Drain is short-lived (lifecycle reload / bot CRUD): refuse loudly and
       // keep the message for the refusal copy rather than queueing work the
       // drain just promised to finish.
       this.drainRefusals.push({ bot, msg, reason: 'draining' });
       this.log.warn?.(`engine draining: refused message for ${msg.chatKey}`);
+      return;
+    }
+    if (this._botDrains.has(bot.id)) {
+      // Per-bot drain (PATCH/toggle/DELETE, DESIGN §8 串行链 drain): THIS bot
+      // is mid-swap; every other bot keeps running. Refused like a global
+      // drain so the message still gets its maintenance answer copy.
+      this.drainRefusals.push({ bot, msg, reason: 'draining' });
+      this.log.warn?.(`engine: bot ${bot.id} draining (reconnect/delete), refused message for ${msg.chatKey}`);
       return;
     }
     const key = msg.chatKey;
@@ -644,6 +684,52 @@ export class Engine {
     } finally {
       if (this._drainBusy === 1) this.draining = false;
     }
+  }
+
+  // Per-bot drain (DESIGN §8 校验→materialize→串行链 drain→重连): abort the
+  // bot's in-flight turns, clear its queued messages (recorded as refusals,
+  // same copy as a global drain) and await its chains — WITHOUT latching the
+  // global draining flag, so other bots' traffic is untouched. A per-bot
+  // latch refuses messages arriving mid-swap for THIS bot only, and the abort
+  // copy stays the maintenance line. The pending sweep and aborts run
+  // synchronously at call time (same-tick determinism as drain's latch).
+  // Bounded like drain(): a run ignoring its abort cannot wedge the swap.
+  // Returns true when the bot's chains settled in time, false on timeout.
+  drainBot(botId, timeoutMs = DRAIN_DEFAULT_TIMEOUT_MS) {
+    if (typeof botId !== 'string' || botId === '') {
+      throw new Error(`drainBot requires a non-empty bot id, got ${JSON.stringify(botId)}`);
+    }
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+      throw new Error(`drainBot requires a non-negative timeoutMs, got ${JSON.stringify(timeoutMs)}`);
+    }
+    this._botDrains.add(botId); // synchronous: same-tick messages for this bot are refused
+    const run = (async () => {
+      try {
+        for (const [key, entry] of [...this.pending]) {
+          if (entry.bot?.id !== botId) continue;
+          this.drainRefusals.push({ bot: entry.bot, msg: entry.msg, reason: 'draining' });
+          this.pending.delete(key);
+        }
+        // _runs is keyed by chatKey with the owning botId: it covers every
+        // chat this bot has live (registered) work in, including turns still
+        // waiting for a gate slot.
+        const keys = [...this._runs].filter(([, r]) => r.botId === botId).map(([key]) => key);
+        for (const key of keys) this.inFlight.get(key)?.abort();
+        // The chain tail covers the whole link (current run + any pickups);
+        // pending is already swept, so a settling chain finds nothing queued.
+        const tails = keys.map((key) => this.chains.get(key)).filter(Boolean);
+        const allSettled = tails.length === 0
+          ? Promise.resolve([])
+          : Promise.allSettled(tails);
+        return await new Promise((resolve) => {
+          const timer = setTimeout(() => resolve(false), timeoutMs);
+          allSettled.then(() => { clearTimeout(timer); resolve(true); });
+        });
+      } finally {
+        this._botDrains.delete(botId);
+      }
+    })();
+    return run;
   }
 
   // Task 13: answer every message a drain refused (T12 parked them here).

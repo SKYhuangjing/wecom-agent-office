@@ -6,7 +6,9 @@ const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 };
 
 export function createLogger({ file = null, level = 'info', maxBytes = 10 * 1024 * 1024, keep = 5 } = {}) {
   let fd = null;
-  if (file) { mkdirSync(dirname(file), { recursive: true }); fd = openSync(file, 'a'); }
+  // mode applies at file CREATION only: the log carries secrets/turn content,
+  // so it is born 0600 (DESIGN §3); rotated names inherit it via rename.
+  if (file) { mkdirSync(dirname(file), { recursive: true }); fd = openSync(file, 'a', 0o600); }
   const rotate = () => {
     if (fd == null) return;
     try { closeSync(fd); } catch {}
@@ -15,7 +17,7 @@ export function createLogger({ file = null, level = 'info', maxBytes = 10 * 1024
       if (existsSync(from)) try { renameSync(from, to); } catch {}
     }
     if (existsSync(file)) try { renameSync(file, `${file}.1`); } catch {}
-    fd = openSync(file, 'a');
+    fd = openSync(file, 'a', 0o600);
   };
   const fmt = (a) => (typeof a === 'string' ? a : (() => { try { return JSON.stringify(a); } catch { return String(a); } })());
   const write = (lvl, args) => {

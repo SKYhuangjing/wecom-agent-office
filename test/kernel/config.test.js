@@ -6,7 +6,7 @@ import { writeJson } from '../../src/kernel/config.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { atomicWrite, lockDataDir, readJson } from '../../src/kernel/config.js';
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os'; import { join } from 'node:path';
 
 test('atomicWrite leaves no tmp file and content intact', () => {
@@ -14,6 +14,14 @@ test('atomicWrite leaves no tmp file and content intact', () => {
   atomicWrite(f, '{"x":1}');
   assert.equal(readFileSync(f, 'utf8'), '{"x":1}');
   assert.equal(existsSync(join(dir, 'a.json.tmp.' + process.pid)), false);
+});
+test('atomicWrite files are owner-only (0600), and stay so across rewrites', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wao-mode-')); const f = join(dir, 'm.json');
+  atomicWrite(f, 'x');
+  assert.equal(statSync(f).mode & 0o777, 0o600, 'born 0600 (tmp carries the mode, rename keeps it)');
+  atomicWrite(f, 'yy'); // rewrite via a fresh tmp replaces the file wholesale
+  assert.equal(readFileSync(f, 'utf8'), 'yy');
+  assert.equal(statSync(f).mode & 0o777, 0o600, 'still 0600 after the rewrite');
 });
 test('lockDataDir rejects second holder, adopts dead pid', () => {
   const dir = mkdtempSync(join(tmpdir(), 'wao-lock-'));

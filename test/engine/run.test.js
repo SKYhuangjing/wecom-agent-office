@@ -446,6 +446,58 @@ test('switch back: resumes INTO the cached session with only the delta replayed 
   assert.equal(h.cache.get(K).current, 'dsh');
 });
 
+// Review wave pin (switch-back × preemption window): the switch-back cache
+// persistence must be POST-run (bookkeep). Persisting consumedSeq/current
+// before the runner spawns meant a double-send during the ack window left
+// consumedSeq advanced past rows nobody delivered — the replacement turn
+// native-resumed WITHOUT the delta and the rows were never replayed again.
+test('switch-back preempted during ack: the delta stays unconsumed and the replacement replays it (rule 4)', async () => {
+  const claudeBot = mkBot({ provider: 'claude' });
+  const dshBot = mkBot({ provider: 'dsh', id: 'bot1' });
+  const h = makeHarness({
+    bot: claudeBot,
+    steps: [
+      COMPLETE({ finalText: 'claude的回答' }),
+      { code: 'completed', finalText: 'dsh切回后的回答' }, // returns args.sessionId: the resumed id
+    ],
+  });
+  seedRow(h.ledger, { user: 'q1', assistant: 'a1' });   // seq 1 (dsh)
+  seedRow(h.ledger, { user: 'q2', assistant: 'a2' });   // seq 2 (dsh)
+  h.cache.upsert(K, 'dsh', { sessionId: 's-dsh', bornCwd: CWD }, 1); // consumed through seq 1
+
+  await h.send('claude轮', claudeBot); // seq 3 on claude, current=claude
+
+  // Preempt the switch-back turn INSIDE the ack window (double-send).
+  let openAck;
+  const ackGate = new Promise((r) => { openAck = r; });
+  const origAck = h.adapter.ack.bind(h.adapter);
+  h.adapter.ack = async (...a) => { await ackGate; await origAck(...a); };
+  h.engine.onMessage(dshBot, mkMsg('切回dsh'));
+  await tick(); // the switch-back turn is parked inside the ack await
+  h.engine.onMessage(dshBot, mkMsg('再问')); // abort + merge
+  openAck();
+  await h.engine.chains.get(K);
+  await tick();
+
+  assert.equal(h.runner.calls.length, 2, 'the preempted switch-back never reached the runner');
+  const call = h.runner.calls[1];
+  assert.equal(call.sessionId, 's-dsh', 'the replacement takes the switch-back path again (current never flipped)');
+  assert.ok(call.prompt.includes('q2') && call.prompt.includes('a2'),
+    `the undelivered delta is replayed, not lost to the preemption window: ${call.prompt}`);
+  assert.ok(call.prompt.includes('claude的回答'), 'cross-provider history still carried');
+  assert.ok(call.prompt.endsWith('再问'));
+
+  // The interrupted switch-back row is real history and rides the same replay
+  // window; the completed replacement then advances consumed past everything.
+  const rows = h.ledger.turns({ chatKey: K });
+  assert.equal(rows.length, 5);
+  assert.equal(rows[3].user, '切回dsh');
+  assert.equal(rows[3].reason, 'interrupted');
+  const dshEntry = h.cache.get(K).cache.dsh;
+  assert.ok(dshEntry.consumedSeq >= 4, `consumed advanced past the replayed window (${dshEntry.consumedSeq})`);
+  assert.equal(h.cache.get(K).current, 'dsh');
+});
+
 // --- 9: bornCwd drift ---------------------------------------------------------
 
 test('bornCwd mismatch: treated as a new-session handoff (prefix, sessionId null)', async () => {

@@ -99,7 +99,7 @@ curl -X POST localhost:8792/api/plugins/<id>/disable|enable   # 禁/启用某插
 
 | 命令 | 内容 | 时长 |
 |---|---|---|
-| `npm test` | 239 用例：内核/loader/engine/ledger/provider 剖析 + e2e 六场景（fake ws + fake-dsh 全链路） | ~30s |
+| `npm test` | 254 用例：内核/loader/engine/ledger/provider 剖析 + e2e 六场景（fake ws + fake-dsh 全链路） | ~30s |
 | `npm run contract -- --plugin plugins/provider-dsh --port dsh` | provider 端口契约 11/11（真子进程语义） | 秒级 |
 | `npm run contract` | _template 参考实现（4 pass + 7 skip，skip=需真 CLI 的组） | 秒级 |
 | `bash test/smoke-dsh.sh` | **真 dsh**：两轮对话记忆（同 sessionId 续跑记暗号）+ 真 session 文件解码 | ~10s+ |

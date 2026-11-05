@@ -9,7 +9,7 @@ export function atomicWrite(file, data) {
   mkdirSync(dirname(file), { recursive: true });
   // pid suffix keeps two writers of the same file from clobbering each other's stage.
   const tmp = `${file}.tmp.${process.pid}`;
-  writeFileSync(tmp, data);
+  writeFileSync(tmp, data, { mode: 0o600 }); // owner-only (DESIGN §3); the rename carries it onto the final path
   renameSync(tmp, file); // atomic on POSIX: readers see old or new content, never partial
 }
 

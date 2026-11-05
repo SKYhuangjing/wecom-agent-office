@@ -308,6 +308,21 @@ test('fourPhase without an engine service skips phase 0; a throwing drain is log
   assert.match(String(s2.errors[0]), /drain boom/);
 });
 
+test('fourPhase: a rejecting reloadFn still runs phase 4 (afterAll), and the rejection propagates', async () => {
+  const s = setup();
+  const seq = [];
+  await s.lifecycle.activate(plugin('a', (c) => c.effect(() => seq.push('deact:a'))));
+  const reloadFn = async () => {
+    seq.push('reload');
+    // A plugin activated before the rescan blew up still queued its callback —
+    // phase 4 must drain the batch anyway or every bot stays offline.
+    await s.lifecycle.activate(plugin('c', (c) => c.afterAllActivated(() => seq.push('after-c'))));
+    throw new Error('rescan boom');
+  };
+  await assert.rejects(s.lifecycle.fourPhase({ reloadFn, drainTimeoutMs: 10 }), /rescan boom/);
+  assert.deepEqual(seq, ['deact:a', 'reload', 'after-c'], 'phase 4 ran despite the failed phase 3');
+});
+
 test('runAfterAllActivated: async throw is attributed and does not block later callbacks; queue consumed once', async () => {
   const s = setup();
   const ran = [];

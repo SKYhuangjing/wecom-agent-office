@@ -141,7 +141,9 @@ plugins/<id>/
 
 ### 2.5 生命周期与运行时管理
 
-**排序规则（一句话定死）**：类型分层（core→其余）→ 拓扑序（requires.plugins）→ `order` → id 字典序。
+**排序规则（一句话定死）**：硬依赖拓扑序（requires.plugins——被依赖者严格在前。**勘误 2026-11-06：以 loader
+实现为准——硬依赖 > 类型分层 > `order` > id，原文把前两项次序写反**）→ 类型分层（core→其余，同拓扑层内）→
+`order` → id 字典序。
 循环依赖：Kahn 检出，环上全部成员 error+文案。**依赖目标非 active（disabled/error/缺失同权）→ 依赖方
 error+原因**；disable 生效时级联重算。
 

@@ -9,10 +9,15 @@
 
 - **内核六件套** `src/kernel/`：config（flock 数据目录锁 + 原子写）/ log / events / services /
   http 壳（最长前缀路由 + SSE + 405/404 语义）/ lifecycle+loader（四阶段 reload、cache-busting、
-  依赖图、失败隔离分级、四层版本协商）。
+  依赖图、失败隔离分级、四层版本协商）；**data/ 目录 0700、落盘文件 0600**（原子写/日志/台账
+  创建时落位，boot 对既有目录 best-effort 收紧——终审修复补齐 DESIGN §3/§13 声明）。
 - **core-engine**：串行链（抢占立即让位、队列合并、出站预算 ≤28/min）、两阶段流式、
-  ledger（consumedSeq 四规约 + 反例回归）、会话缓存、timeline、语义进度（dsh 降级链）、
-  secret 掩码中间件；bots.json 归它所有；业务 `/api/*`（agents/bots/CRUD/test/ledger/
+  ledger（consumedSeq 四规约 + 反例回归）、会话缓存（切回增量回放的持久化在 run 后落位——
+  终审修复：抢占窗口不再丢 delta）、timeline、语义进度（dsh 降级链）、
+  secret 掩码中间件；**allowedUsers 准入执行**（非空=白名单，越权静默 drop+warn，与前身
+  bridge 一致；空=全员，attach 时 warn 一次——终审修复补齐 DESIGN §6 步骤1）；
+  **per-bot drain**（PATCH/toggle/DELETE 换适配器前先等该 bot 串行链收尾——终审修复补齐
+  DESIGN §8）；bots.json 归它所有；业务 `/api/*`（agents/bots/CRUD/test/ledger/
   session/export/timeline/send）。
 - **channel-wecom**：企微长连接客户端（单 bot 单连接、指数退避、凭证错误快速失败）、
   流式回复（finish:true 收尾）、主动推送、enter_chat 默认欢迎语（A4 契约）。
@@ -29,7 +34,7 @@
 
 | 项 | 结果 |
 |---|---|
-| `npm test` | **239/239 pass, 0 fail**（含 e2e 六场景：happy/抢占/reload/换 provider 交接/凭证失败/secret 永不回显） |
+| `npm test` | **254/254 pass, 0 fail**（含 e2e 六场景：happy/抢占/reload/换 provider 交接/凭证失败/secret 永不回显；2026-11-06 M1 终审修复 +11 用例：allowedUsers 执行/切回抢占丢 delta/drainBot/0600·0700/phase④ 韧性） |
 | `npm run contract -- --plugin plugins/provider-dsh --port dsh` | **11 passed, 0 failed, 0 skipped** |
 | `npm run contract`（_template 参考实现） | 4 passed, 7 skipped（skip=需真进程组/真 CLI 的组，预期） |
 | `bash test/smoke-dsh.sh`（真 dsh） | **PASS**：round1 暗号"菠萝"记住、round2 **同一 sessionId** `session-d3ede8e2…` 续跑答对、真 session 文件解码 2 turns / 0 warnings |
@@ -60,7 +65,8 @@ accept-m1: PASS (real dsh probe ×2 completed, profile materialized+removed, SIG
 
 注：`/api/bots/:id/test` 按契约每次传 `sessionId:null`（试跑独立于引擎链），两轮各自新会话属预期；
 **跨轮续跑（resume）证据以 smoke-dsh.sh 为准**（同 sessionId + 记住暗号）。
-内核预算：`wc -l src/kernel/*.js` = **834 行 > 800 预算，超 34 行**——按"诚实申报优先"未为凑数重构；
+内核预算：`wc -l src/kernel/*.js` = **849 行 > 800 预算，超 49 行**（840 基础上 +9：0600 权限与
+phase④ 韧性终审修复）——按"诚实申报优先"未为凑数重构；
 如需回预算内，候选是 lifecycle/loader 的注释压缩，动它必须全量重跑内核测试。
 
 ## 2. 未验证项（显式申报）
@@ -71,6 +77,12 @@ accept-m1: PASS (real dsh probe ×2 completed, profile materialized+removed, SIG
 3. **Web UI**：M3（Shell + window.WAO SDK + ui-workbench + ui-office3d v2 + harness 截图流）。
 4. **launchd 托管 / 冷启动自愈演练**：M3（模板 + KeepAlive + 24h 内演练，DESIGN §12.4）。
 5. accept-m1 / smoke / probe 均为**本机**证据（magpie 网关路由）；换机换模型后 probe 基线漂移属预期流程。
+
+> M1 终审修复（2026-11-06，全分支评审 SHIP 附 4 项 Important）：评审点名的两条「设计已声明、
+> 实现未落地」缺口——**allowedUsers 执行**（DESIGN §6 步骤1）与 **data/ 0600**（DESIGN §3/§13）
+> ——已在本波修复并各带回归用例（见 §1 交付清单与 task-20-report §9），不再是未实现项；
+> 同波修掉：切回增量回放在抢占窗口丢 delta、per-bot drain 缺失、fourPhase phase④ 韧性、
+> DESIGN §2.5 排序措辞勘误。未验证项 1-5 不变。
 
 ## 3. M2 / M3 入口
 
@@ -85,7 +97,7 @@ accept-m1: PASS (real dsh probe ×2 completed, profile materialized+removed, SIG
 
 | # | 来源 | 内容 | 影响 |
 |---|---|---|---|
-| 1 | T5 | fourPhase 的 reloadFn 拒绝时跳过 phase④（afterAllActivated） | reload 半途失败时 bots 不重挂，表现为全 offline；重启可恢复。触发条件罕见（reload 本身抛错） |
+| 1 | T5 | fourPhase 的 reloadFn 拒绝时跳过 phase④（afterAllActivated）——**已修（2026-11-06 终审修复：try/finally，phase④ 必跑且拒绝照常上抛，lifecycle.test 回归）** | reload 半途失败时 bots 不重挂，表现为全 offline；重启可恢复。触发条件罕见（reload 本身抛错） |
 | 2 | T7 | disabled 插件的模块**顶层仍被求值**（discover 阶段 import） | 一个带挂起顶层 await 的禁用插件可阻塞 boot/reload；代码已诚实注释，M2 可考虑把 manifest 读取与激活 import 分离 |
 | 3 | T1 | log writeSync/轮转 openSync 未包 try（ENOSPC 抛） | 磁盘满时日志写入可能抛进调用方；上线前（M3）建议包 try |
 | 4 | T2 | 锁 adopt 竞态窗口裸抛 EEXIST（非规范文案）；pid>int32 视为死锁不 adopt | 双实例同毫秒抢锁才触发（第二个实例报错退出，无害方向）；pid 回绕在 macOS 上不现实 |
@@ -113,7 +125,7 @@ profile 成功并随 DELETE 清理。完整 minors 总账见 progress.md 各任�
 ## 6. 交接检查单
 
 ```sh
-npm test          # 239/239
+npm test          # 254/254
 npm run contract -- --plugin plugins/provider-dsh --port dsh   # 11/11
 bash test/smoke-dsh.sh      # 真 dsh PASS
 bash test/accept-m1.sh      # 真 dsh 验收 PASS

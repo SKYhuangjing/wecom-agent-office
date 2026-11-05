@@ -160,6 +160,12 @@ export default {
         runners.set(bot.id, runner);
         engine.attachBot(bot, { adapter, runner });
         offlineReasons.delete(bot.id);
+        // Empty/absent allowedUsers = allow-all: say it once per attach so an
+        // operator who opens a bot to everyone does so deliberately (the
+        // engine enforces the non-empty case; this is the visibility half).
+        if (!(Array.isArray(bot.allowedUsers) && bot.allowedUsers.length > 0)) {
+          log.warn?.(`core-engine: bot ${bot.id} accepts messages from ANY user (allowedUsers is empty)`);
+        }
         if (typeof adapter.start === 'function') adapter.start(); // inbound opens only after registration
         return { ok: true };
       } catch (err) {

@@ -93,6 +93,17 @@ async function materialize(state, bot) {
   }
 }
 
+// DESIGN §8 校验→materialize→串行链 drain→重连: the bot's in-flight turn gets
+// its final frame and its ledger row lands BEFORE the adapter is torn down —
+// a swap that kills the chain mid-run would strand an unbooked turn.
+const drainBotOf = async (state, botId) => {
+  try {
+    await state.engine.drainBot(botId);
+  } catch (err) {
+    state.log?.warn?.(`core-engine: drainBot(${botId}) before swap failed: ${err?.message ?? err}`);
+  }
+};
+
 // —— route handlers ({ req, res, m, searchParams, state }) ——————————————————
 
 async function agentsHandler({ res, state }) {
@@ -151,6 +162,7 @@ async function patchBotHandler({ req, res, m, state }) {
     } catch (err) {
       // Last-good semantics: nothing is persisted, the previous config stays
       // on disk, and the bot goes offline carrying the materialize reason.
+      await drainBotOf(state, bot.id); // in-flight turns settle before their runtime dies
       state.detach(bot.id, err.message);
       throw err;
     }
@@ -158,6 +170,7 @@ async function patchBotHandler({ req, res, m, state }) {
   Object.assign(bot, patchBody, { id: bot.id });
   saveBots(state.botsFile, state.doc);
   if (bot.enabled !== false) { // any accepted change reconnects the runtime
+    await drainBotOf(state, bot.id); // §8: the bot's serial chain settles (final frames out) before the adapter swap
     state.detach(bot.id, 're-attach after update');
     state.attach(bot);
   }
@@ -167,6 +180,7 @@ async function patchBotHandler({ req, res, m, state }) {
 async function deleteBotHandler({ res, m, state }) {
   const bot = findBot(state, idOf(m));
   if (bot == null) throw httpError(404, 'bot not found');
+  await drainBotOf(state, bot.id); // §8: settle the bot's chain before the record (and adapter) go
   state.detach(bot.id, 'deleted');
   // materializeConfig's counterpart: if the provider port implements
   // removeConfig, the bot's materialized files (dsh profile) go with the
@@ -191,7 +205,10 @@ async function toggleBotHandler({ res, m, state }) {
   bot.enabled = bot.enabled === false; // absent = true (DESIGN §3 record shape)
   saveBots(state.botsFile, state.doc);
   if (bot.enabled) state.attach(bot);
-  else state.detach(bot.id, 'bot disabled');
+  else {
+    await drainBotOf(state, bot.id); // a disabled runtime waits out its chain first
+    state.detach(bot.id, 'bot disabled');
+  }
   sendJson(res, 200, { bot });
 }
 

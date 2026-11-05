@@ -8,7 +8,7 @@
 //    straddle an await, so a crash can lose at most the row, never order.
 //  - boot recovery scans max(seq) over ALL lines — never the last line —
 //    because a torn/reordered file must not resurrect already-used seqs.
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 const REASONS = new Set(['completed', 'interrupted', 'timeout', 'error']);
@@ -33,6 +33,7 @@ export class Ledger {
     this.log = log;
     this._seq = 0; // highest seq ever handed out; nextSeq() pre-increments
     mkdirSync(dirname(file), { recursive: true }); // first boot: data/ledger/ may not exist
+    if (!existsSync(file)) writeFileSync(file, '', { mode: 0o600 }); // born owner-only (DESIGN §3); appends keep the mode
     if (existsSync(file)) {
       const text = readFileSync(file, 'utf8');
       // A crash mid-append can leave a partial line WITHOUT a trailing

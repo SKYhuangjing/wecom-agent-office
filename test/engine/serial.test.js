@@ -5,6 +5,8 @@
 //   - inFlight compare-and-delete (predecessor bug regression),
 //   - the global concurrency gate (FIFO across bots),
 //   - drain (abort + refuse + bounded settle),
+//   - allowedUsers enforcement (DESIGN §6 step 1) and per-bot drain
+//     (drainBot: one bot's chains settle without touching other bots),
 //   - attach/detach offline handling.
 // The turn body is an injected runTurnImpl (the Task 13 hook) driving a fake
 // runner whose run() settles only when the test resolves its gate — so every
@@ -404,4 +406,86 @@ test('onMessage validates input: missing chatKey / unknown bot dropped with warn
   assert.equal(h.runner.spawns.length, 0);
   assert.equal(h.engine.chains.size, 0);
   assert.equal(h.log.lines.warn.length, 3);
+});
+
+// --- allowedUsers (DESIGN §6 step 1, M3 gate) ----------------------------------
+
+test('allowedUsers: non-empty list admits members, silently drops strangers (warn, no spawn)', async () => {
+  const allowBot = { id: 'ab1', provider: 'codex', allowedUsers: ['u1', 'u2'] };
+  const h = makeHarness({ attach: [allowBot] });
+  h.engine.onMessage(allowBot, msg('hi', KEY)); // msg() userid = 'u1' → member
+  await tick();
+  assert.deepEqual(h.runner.spawns.map((s) => s.prompt), ['hi']);
+  h.runner.gates.get('hi').resolve();
+  await h.engine.chains.get(KEY);
+
+  h.engine.onMessage(allowBot, { ...msg('nope', 'wecom:group:k9'), userid: 'stranger' });
+  await tick();
+  assert.equal(h.runner.spawns.length, 1, 'a non-allowed user never spawns a run');
+  assert.equal(h.engine.chains.size, 0, 'no chain left behind');
+  assert.equal(h.engine.pending.size, 0);
+  const line = h.log.lines.warn.find((l) => String(l).includes('reject message from non-allowed user'));
+  assert.ok(line && String(line).includes('stranger'), `warn names the user: ${JSON.stringify(h.log.lines.warn)}`);
+});
+
+test('allowedUsers: empty or missing list allows everyone', async () => {
+  for (const record of [{ ...bot }, { ...bot, allowedUsers: [] }]) {
+    const h = makeHarness({ attach: [record] });
+    h.engine.onMessage(record, { ...msg('m1', KEY), userid: 'stranger' });
+    await tick();
+    assert.equal(h.runner.spawns.length, 1, 'allow-all accepts any userid');
+    h.runner.gates.get(h.runner.spawns[0].prompt).resolve();
+    await h.engine.chains.get(KEY);
+    assert.deepEqual(h.log.lines.warn.filter((l) => /non-allowed/.test(String(l))), []);
+  }
+});
+
+// --- per-bot drain (DESIGN §8: bot CRUD settles the bot's chains first) --------
+
+test('drainBot: aborts only that bot, sweeps its pending, settles its chains; other bots untouched', async () => {
+  const h = makeHarness({ abortSettles: true, attach: [bot, bot2] });
+  h.engine.onMessage(bot, msg('mine', KEY));
+  h.engine.onMessage(bot2, msg('theirs', KEY2));
+  await tick();
+  assert.equal(h.runner.spawns.length, 2);
+
+  // One synchronous block (the queue-then-drain race discipline of the drain
+  // tests above): 'queued' merges into pending, drainBot sweeps it before the
+  // chain wakes, 'late' hits the per-bot latch and is refused.
+  h.engine.onMessage(bot, msg('queued', KEY)); // abort mine, pending = queued
+  const drained = h.engine.drainBot('bot1', 2000);
+  h.engine.onMessage(bot, msg('late', KEY)); // arrives mid-swap for THIS bot
+  assert.equal(await drained, true, 'the bot\'s chains settled in time');
+
+  assert.deepEqual(h.engine.drainRefusals.map((r) => r.msg.text).sort(), ['late', 'queued'],
+    'swept pending + mid-swap arrivals are recorded as refusals');
+  assert.equal(h.acs.get('mine').signal.aborted, true, 'the bot\'s in-flight run was aborted');
+  assert.equal(h.acs.get('theirs').signal.aborted, false, 'the OTHER bot\'s run is untouched');
+  assert.equal(h.engine._botDrains.size, 0, 'latch released after the drain');
+
+  h.runner.gates.get('theirs').resolve();
+  await h.engine.chains.get(KEY2);
+  assert.deepEqual(h.runner.spawns.map((s) => s.prompt), ['mine', 'theirs'],
+    'neither the swept pending nor the refused message ever spawns');
+
+  h.engine.onMessage(bot, msg('after', 'wecom:group:k5')); // latch released: accepted again
+  await tick();
+  assert.deepEqual(h.runner.spawns.map((s) => s.prompt).slice(-1), ['after']);
+  h.runner.gates.get('after').resolve();
+  await h.engine.chains.get('wecom:group:k5');
+});
+
+test('drainBot: bounded — a run ignoring its abort returns false; bad args throw', async () => {
+  const h = makeHarness(); // abortSettles=false: the run parks on its gate
+  assert.throws(() => h.engine.drainBot('bot1', -1), /timeoutMs/);
+  assert.throws(() => h.engine.drainBot('', 10), /bot id/);
+  h.engine.onMessage(bot, msg('stuck', KEY));
+  await tick();
+  assert.equal(await h.engine.drainBot('bot1', 40), false, 'bounded by timeoutMs');
+  assert.equal(h.engine._botDrains.size, 0, 'timeout still releases the latch');
+  assert.equal(h.acs.get('stuck').signal.aborted, true, 'the abort was still delivered');
+
+  h.runner.gates.get('stuck').resolve();
+  await h.engine.chains.get(KEY);
+  assert.equal(h.engine.inFlight.size, 0);
 });

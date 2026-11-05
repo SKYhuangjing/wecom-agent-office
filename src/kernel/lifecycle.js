@@ -227,10 +227,17 @@ export function createLifecycle({ events, services, log, http, portRegistry = cr
     await drainEngine(drainTimeoutMs); // ① drain (bounded)
     log.info('wao: reload: phase 2 deactivate');
     await deactivateAll(); // ② reverse teardown
-    const res = await reloadFn(); // ③ caller rescans + activates; its errors are the caller's to handle
-    log.info(`wao: reload: phase 3 load (${Array.isArray(res?.active) ? res.active.length : '?'} active)`);
-    log.info('wao: reload: phase 4 afterAll');
-    await runAfterAllActivated(); // ④ rebuild bot runtimes on the fresh port set
+    try {
+      const res = await reloadFn(); // ③ caller rescans + activates; its errors are the caller's to handle
+      log.info(`wao: reload: phase 3 load (${Array.isArray(res?.active) ? res.active.length : '?'} active)`);
+    } finally {
+      // Phase ④ runs even when ③ rejects (the rejection still propagates):
+      // a failed rescan must not also strand every bot offline — afterAll
+      // rebuilds whatever runtime the surviving (possibly partial) new world
+      // can support. Fixes the T5 deferred minor.
+      log.info('wao: reload: phase 4 afterAll');
+      await runAfterAllActivated(); // ④ rebuild bot runtimes on the fresh port set
+    }
   };
 
   const debugState = () => ({
