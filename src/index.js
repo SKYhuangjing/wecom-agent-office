@@ -19,6 +19,7 @@ import { createServices } from './kernel/services.js';
 import { createHttpShell, sendFile, fileUnder } from './kernel/http.js';
 import { createLifecycle } from './kernel/lifecycle.js';
 import * as loader from './kernel/loader.js';
+import { runTUI } from './tui.js';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const defaultDataDir = () => process.env.WAO_HOME || join(process.cwd(), 'data');
@@ -408,7 +409,7 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
 
 // --- CLI (thin on purpose: parse, delegate, exit) ---------------------------
 
-const USAGE = 'usage: wao [start [--port N] [--host H] [--data-dir DIR] | doctor [--port N] [--host H] [--data-dir DIR] | version]';
+const USAGE = 'usage: wao [start [--port N] [--host H] [--data-dir DIR] | tui [--port N] [--host H] [--data-dir DIR] | doctor [--port N] [--host H] [--data-dir DIR] | version]';
 const pkgVersion = () => JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 // Strict parsing (reject beats silent correction): an unknown flag or a flag
@@ -467,6 +468,17 @@ const cmdStart = async (flags) => {
   process.on('SIGTERM', shutdown);
   return 0; // the listener keeps the process alive from here
 };
+
+// `wao tui` (W2): the ops dashboard is a CLIENT of an already-running service
+// — it never boots a kernel. runTUI probes /api/state first so a missing
+// service is a friendly one-liner, not a red-bar screensaver. exit:true: the
+// tui loop ends on quit, and a resumed raw stdin must not keep the process
+// alive the way start's listener does.
+const cmdTui = (flags) => runTUI({
+  port: portOf(flags, 8792),
+  host: flags.host ?? '127.0.0.1',
+  dataDir: flags['data-dir'],
+});
 
 // Someone answering a TCP connect = a listener is already bound; refused or
 // silent = free to try (a filtered port cannot be probed — "no answer" is the
@@ -616,13 +628,14 @@ if (invokedAsScript) {
     if (error) return { code: 2, err: error };
     if (cmd === 'version') { console.log(pkgVersion()); return { code: 0 }; }
     if (cmd === 'start') return { code: await cmdStart(flags) };
+    if (cmd === 'tui') return { code: await cmdTui(flags), exit: true };
     if (cmd === 'doctor') return { code: await cmdDoctor(flags) };
     return { code: 2, err: `unknown command: ${cmd}` };
   };
   run().then(
-    ({ code, err }) => {
+    ({ code, err, exit }) => {
       if (err) { console.error(err); console.error(USAGE); }
-      if (code !== 0) process.exit(code); // code 0 for start: the server keeps the process alive
+      if (code !== 0 || exit) process.exit(code); // start: code 0 stays alive on the listener
     },
     (err) => { console.error(`wao: ${err?.message ?? err}`); process.exit(1); },
   );
