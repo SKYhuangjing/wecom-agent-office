@@ -99,14 +99,15 @@ curl -X POST localhost:8792/api/plugins/<id>/disable|enable   # 禁/启用某插
 
 | 命令 | 内容 | 时长 |
 |---|---|---|
-| `npm test` | 255 用例：内核/loader/engine/ledger/provider 剖析 + e2e 六场景（fake ws + fake-dsh 全链路） | ~30s |
+| `npm test` | 319 用例：内核/loader/engine/ledger/provider（dsh/claude/codex 剖析）+ e2e 六场景（fake ws + fake-dsh 全链路） | ~30s |
 | `npm run contract -- --plugin plugins/provider-dsh --port dsh` | provider 端口契约 11/11（真子进程语义） | 秒级 |
 | `npm run contract` | _template 参考实现（4 pass + 7 skip，skip=需真 CLI 的组） | 秒级 |
 | `bash test/smoke-dsh.sh` | **真 dsh**：两轮对话记忆（同 sessionId 续跑记暗号）+ 真 session 文件解码 | ~10s+ |
+| `npm run test:matrix` | **真 dsh+claude+codex 三家切换矩阵**（M2）：同 provider 换模型原生续 / 跨 provider 交接（含功能性召回）/ 切回 delta-only 重放 + API 级 `/test` sessionId 透传冒烟；文件名 `.realtest.js` 不进 `npm test` glob | ~2-4min |
 | `bash test/accept-m1.sh` | **真 dsh 验收**：真内核起服 → API 建 bot → /test 两轮 completed → profile 物化/删除 → SIGINT 锁释放 | ~15s |
 | `bash test/probe.sh` / `--check` | 三 CLI 事件序列基线固化/漂移检测（kill-resume、codex resume 专项） | 每 CLI ≤150s |
 
-真 CLI 套件不在 `npm test` 内（依赖本机 dsh/凭证）；dsh 缺失时 smoke/accept 明确 skip。
+真 CLI 套件不在 `npm test` 内（依赖本机 dsh/claude/codex/凭证）；CLI 缺失时 matrix/smoke/accept 明确 skip。
 
 ## 6. 已知边界（诚实申报）
 
@@ -130,7 +131,7 @@ curl -X POST localhost:8792/api/plugins/<id>/disable|enable   # 禁/启用某插
 | `plugins/provider-dsh/` | dsh 驱动（runner.js 子进程+事件映射 / profiles.js per-bot profile 物化 / history.js 会话史读取） |
 | `plugins/_template/` | channel / provider / page 三套脚手架（`_` 前缀=内核不扫描） |
 | `data/`（WAO_HOME） | bots.json / plugins.json(启用表) / ledger/*.jsonl / sessions/*.json / logs/wao.log / .lock |
-| `test/` | kernel·engine·ledger·provider 单测 / contract 契约套件 / e2e 六场景 / fake-bin 假 CLI / probe-baselines 基线 / probe.sh·smoke-dsh.sh·accept-m1.sh |
+| `test/` | kernel·engine·ledger·provider 单测 / contract 契约套件 / e2e 六场景 + switch-matrix.realtest 三家切换矩阵（真 CLI，npm run test:matrix） / fake-bin 假 CLI / probe-baselines 基线 / probe.sh·smoke-dsh.sh·accept-m1.sh |
 | `docs/` | DESIGN.md（权威设计）· PLUGIN-DEV.md（插件开发契约） |
 
 > 交接 Do：改插件后跑对应测试+契约；动内核先读 DESIGN §2；升级 CLI 先 `probe.sh --check`。

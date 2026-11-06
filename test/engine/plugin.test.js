@@ -267,6 +267,25 @@ test('POST /api/bots/:id/test failure answers WHY inline: reason, truncated deta
   assert.equal((await fetch(url('/api/bots/errbot'), { method: 'DELETE' })).status, 200);
 });
 
+test('POST /api/bots/:id/test optional body.sessionId resumes that session; junk shapes 400', async () => {
+  // The fake runner echoes the sessionId it received — the response proves the
+  // passthrough without a real CLI (the real-CLI leg is switch-matrix.realtest).
+  const resp = await post('/api/bots/b1/test', { sessionId: 'probe-resume-sid' });
+  assert.equal(resp.status, 200);
+  const body = JSON.parse(await resp.text());
+  assert.equal(body.code, 'completed');
+  assert.equal(body.sessionId, 'probe-resume-sid', 'the probe resumed the caller-supplied session');
+  // absent / null body.sessionId keeps the fresh-probe contract (a NEW session)
+  const fresh = await (await post('/api/bots/b1/test', {})).json();
+  assert.equal(fresh.sessionId, 'session-fake-b1');
+  const nullSid = await (await post('/api/bots/b1/test', { sessionId: null })).json();
+  assert.equal(nullSid.sessionId, 'session-fake-b1');
+  // untrusted-input shapes are rejected, never silently coerced
+  assert.equal((await post('/api/bots/b1/test', { sessionId: '' })).status, 400);
+  assert.equal((await post('/api/bots/b1/test', { sessionId: 42 })).status, 400);
+  assert.equal((await post('/api/bots/b1/test', { sessionId: ['x'] })).status, 400);
+});
+
 test('DELETE /api/bots/:id detaches, removeConfig cleans materialized files, persists; failure is non-fatal', async () => {
   assert.equal((await post('/api/bots', { ...BOT_B1, id: 'bye', providerConfig: { cwd: '/tmp/bye', mode: 'a' } })).status, 200);
   assert.equal((await post('/api/bots', { ...BOT_B1, id: 'boom', providerConfig: { cwd: '/rm-fail', mode: 'a' } })).status, 200);

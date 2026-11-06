@@ -1,4 +1,4 @@
 { "name": "wecom-agent-office", "version": "0.1.0", "private": true, "type": "module",
   "bin": { "wao": "./src/index.js" },
-  "scripts": { "test": "node --test 'test/**/*.test.js'", "contract": "node test/contract/run.js", "probe": "bash test/probe.sh" },
+  "scripts": { "test": "node --test 'test/**/*.test.js'", "test:matrix": "node --test test/e2e/switch-matrix.realtest.js", "contract": "node test/contract/run.js", "probe": "bash test/probe.sh" },
   "engines": { "node": ">=20.10" }, "dependencies": { "ws": "^8.18.0" } }

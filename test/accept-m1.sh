@@ -13,11 +13,11 @@
 #
 #   usage: bash test/accept-m1.sh
 #
-# Session/resume note: the /api/bots/:id/test endpoint passes sessionId:null
-# on every call by contract (a probe run is engine-independent), so round 2
-# mints a NEW session — the script prints both sessionIds and this behavior.
-# Cross-round resume evidence lives in test/smoke-dsh.sh (round 2 resumes
-# round 1's sessionId and must remember the code word).
+# Session/resume note: this script calls /api/bots/:id/test WITHOUT a body,
+# so every probe mints a NEW session (sessionId:null contract; the endpoint
+# also accepts an optional body {sessionId} since M2 Task 6 for probe-resume —
+# cross-round resume evidence lives in test/smoke-dsh.sh and the M2 switch
+# matrix, test/e2e/switch-matrix.realtest.js).
 set -u
 cd "$(dirname "$0")/.."
 

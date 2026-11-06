@@ -239,18 +239,32 @@ async function toggleBotHandler({ res, m, state }) {
 
 // Probe run: the provider runner DIRECTLY — no channel, no engine chain, no
 // ledger row. Answers "does this bot's provider still work?" in isolation.
-async function testBotHandler({ res, m, state }) {
+// An optional JSON body { sessionId } resumes THAT session instead of minting
+// a fresh one (M2 Task 6: the probe doubles as the real-CLI resume check —
+// the response's sessionId tells the caller what the CLI echoed/kept). A body
+// is not required; absent/empty sessionId keeps the historical fresh-probe
+// contract (accept-m1.sh relies on it).
+async function testBotHandler({ req, res, m, state }) {
   const bot = findBot(state, idOf(m));
   if (bot == null) throw httpError(404, 'bot not found');
   const port = state.ports?.getProvider?.(bot.provider);
   if (port == null || typeof port.createRunner !== 'function') {
     throw httpError(400, `provider ${bot.provider} unavailable`);
   }
+  const reqBody = await readBody(req);
+  if (!isObject(reqBody)) throw httpError(400, 'test body must be a JSON object');
+  let sessionId = null;
+  if (reqBody.sessionId !== undefined && reqBody.sessionId !== null) {
+    if (typeof reqBody.sessionId !== 'string' || reqBody.sessionId === '') {
+      throw httpError(400, 'sessionId must be a non-empty string when present');
+    }
+    sessionId = reqBody.sessionId;
+  }
   const runner = port.createRunner({ bot, providerConfig: bot.providerConfig, log: state.log });
   let events = 0;
   const result = await runner.run({
     prompt: TEST_PROMPT,
-    sessionId: null,
+    sessionId,
     signal: new AbortController().signal,
     timeoutMs: TEST_TIMEOUT_MS,
     onEvent: () => { events++; },
