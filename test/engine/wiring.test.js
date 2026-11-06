@@ -70,6 +70,7 @@ export default {
       configSchema: [
         { key: 'cwd', label: 'Working directory', type: 'string', required: true },
         { key: 'mode', label: 'Mode', type: 'string' },
+        { key: 'progressStyle', label: '工作汇报风格', type: 'enum', options: ['polite', 'cot'], default: 'polite' },
         { key: 'progressCoT', label: '进度行展示思维链摘要', type: 'bool', default: true },
       ],
       validate(providerConfig) {
@@ -162,9 +163,11 @@ test('A1: channel facade onMessage is single-object and closes over the bot', as
 });
 
 // A2 — progressCoT:false kills the 💭 line only.
+// 2026-11-06 默认翻转（拟人播报 polite）：本用例钉的是旧「详细汇报」语义，
+// fixtures 显式 progressStyle:'cot'（诚实迁移——断言一字不改）。
 test('A2: progressCoT=false → no 💭 line; default keeps it; tool/text still progress', async () => {
-  await post('/api/bots', BOT('w2cot', { cwd: '/tmp', progressCoT: false }));
-  await post('/api/bots', BOT('w2on', { cwd: '/tmp', progressCoT: true }));
+  await post('/api/bots', BOT('w2cot', { cwd: '/tmp', progressStyle: 'cot', progressCoT: false }));
+  await post('/api/bots', BOT('w2on', { cwd: '/tmp', progressStyle: 'cot', progressCoT: true }));
   await waitFor(() => adapterOf('w2cot') != null && adapterOf('w2on') != null, 'adapters attached');
 
   adapterOf('w2cot').emitMessage({ chatKey: 'wire:group:COT', text: '问题一', reqId: 'r-cot' });
@@ -179,6 +182,30 @@ test('A2: progressCoT=false → no 💭 line; default keeps it; tool/text still 
   const on = adapterOf('w2on').progresses;
   assert.ok(on.some((p) => p.text.startsWith('💭 ')), 'thinking line shows by default');
   assert.ok(on.some((p) => p.text.startsWith('🔧 ')), 'tool line still progresses');
+});
+
+// A2b — 2026-11-06 default flip (owner decision): a bot WITHOUT progressStyle
+// (including legacy progressCoT:false/true) broadcasts the polite copy only —
+// no 💭/🔧 content reaches the wire through the real kernel assembly.
+test('A2b: no progressStyle → polite broadcast (no 💭/🔧 on the wire), legacy progressCoT included', async () => {
+  await post('/api/bots', BOT('w2d', { cwd: '/tmp' }));
+  await post('/api/bots', BOT('w2legacy', { cwd: '/tmp', progressCoT: false }));
+  await waitFor(() => adapterOf('w2d') != null && adapterOf('w2legacy') != null, 'adapters attached');
+
+  for (const [id, req, chat] of [['w2d', 'r-p2d', 'wire:group:P1'], ['w2legacy', 'r-p2l', 'wire:group:P2']]) {
+    adapterOf(id).emitMessage({ chatKey: chat, text: '问题', reqId: req });
+    await settle(id);
+    const frames = adapterOf(id).progresses;
+    const beats = frames.filter((p) => !p.finish);
+    assert.ok(beats.length >= 1, `${id}: broadcast frames exist`);
+    for (const p of beats) {
+      assert.ok(!p.text.includes('💭') && !p.text.includes('🔧'),
+        `${id}: no CoT/tool content on the wire: ${p.text}`);
+    }
+    assert.ok(beats.some((p) => /接线测试 思考中\.+ 请稍等（已 \d+ 秒）/.test(p.text)),
+      `${id}: default broadcast copy (${JSON.stringify(beats.map((p) => p.text))})`);
+    assert.ok(frames.some((p) => p.finish === true && p.text === '答案文本'), `${id}: final still delivered`);
+  }
 });
 
 // A3 — provider validate() merged into the API 400s.

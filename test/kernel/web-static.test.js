@@ -198,7 +198,9 @@ test('full chain: fake provider run emits agent/progress that reaches the SSE cl
     const created = await fetch(`http://127.0.0.1:${k.http.port}/api/bots`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ id: 'b1', name: 'B1', channel: 'fakec', provider: 'fakep', account: {}, providerConfig: { cwd: '/tmp' } }),
+      // 2026-11-06 默认翻转（拟人播报）：本用例钉 ✍️ 预览上行 SSE=旧「详细汇
+      // 报」语义，显式 progressStyle:'cot'（诚实迁移——断言一字不改）。
+      body: JSON.stringify({ id: 'b1', name: 'B1', channel: 'fakec', provider: 'fakep', account: {}, providerConfig: { cwd: '/tmp', progressStyle: 'cot' } }),
     });
     assert.equal(created.status, 200, await created.text());
     const fired = await fetch(`http://127.0.0.1:${k.http.port}/api/fake/fire`, { method: 'POST' });

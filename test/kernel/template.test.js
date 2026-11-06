@@ -52,8 +52,12 @@ test('provider port: template runner echoes, validates cwd, resumes sessionId', 
   const k = await start(null);
   const provider = k.portRegistry.getProvider('template');
   assert.ok(provider, "port id is 'template' (not the manifest id)");
+  // 2026-11-06 拟人播报: every provider schema carries the two broadcast knobs
+  // (progressStyle default polite / progressText template) — the template too.
   assert.deepEqual(provider.configSchema, [
     { key: 'cwd', label: 'Working directory', type: 'string', required: true },
+    { key: 'progressStyle', label: '工作汇报风格（拟人播报=polite：只播报「思考中…请稍等」，企微不露思维链；详细汇报=cot：进度行展示思维链/工具摘要）', type: 'enum', options: ['polite', 'cot'], default: 'polite' },
+    { key: 'progressText', label: '播报文案（拟人播报模板；占位符 {bot}=名字 {dots}=呼吸点 {elapsed}=已用时 {step}=步数；≤120 字）', type: 'string', default: '{bot} 思考中{dots} 请稍等（已 {elapsed}）' },
   ]);
   assert.deepEqual(provider.validate({}), ['cwd is required']);
   assert.deepEqual(provider.validate({ cwd: '/tmp' }), []);

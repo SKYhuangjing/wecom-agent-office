@@ -50,6 +50,7 @@ export default {
       configSchema: [
         { key: 'cwd', label: 'Working directory', type: 'string', required: true },
         { key: 'dshBin', label: 'CLI binary', type: 'string' },
+        { key: 'progressStyle', label: '工作汇报风格', type: 'enum', options: ['polite', 'cot'], default: 'polite' },
         { key: 'progressCoT', label: 'CoT progress', type: 'bool', default: true },
       ],
       validate(pc) { return pc?.mode === 'suspicious' ? ['fake ${portId} validate: mode "suspicious" rejected'] : []; },
@@ -215,7 +216,9 @@ after(async () => {
 
 // ---------------------------------------------------------------------------
 test('1. happy path: @-message → ack → 🔧 progress → final; ledger/timeline/agents; enter_chat welcome', async () => {
-  const resp = await post('/api/bots', botRecord('e2e-b1', 'e2e 一号', { botId: 'B1', secret: SECRET, wsUrl: server1.url }, 'fakeprov', { cwd: dataDir, dshBin: b1.bin }));
+  // 2026-11-06 默认翻转（拟人播报）：本场景钉 🔧 进度帧=旧「详细汇报」语义，
+  // 显式 progressStyle:'cot'（诚实迁移——断言一字不改）。
+  const resp = await post('/api/bots', botRecord('e2e-b1', 'e2e 一号', { botId: 'B1', secret: SECRET, wsUrl: server1.url }, 'fakeprov', { cwd: dataDir, dshBin: b1.bin, progressStyle: 'cot' }));
   assert.equal(resp.status, 200, await resp.text());
   await waitFor(async () => (await agentOf('e2e-b1'))?.channelState?.state === 'online', 'b1 adapter online');
 

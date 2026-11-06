@@ -31,10 +31,15 @@ export default {
         { key: 'allowedTools', label: '允许的工具（列表，逗号拼接传 --allowedTools）', type: 'list' },
         { key: 'env', label: '注入子进程的环境变量（值必须是字符串）', type: 'object' },
         { key: 'prompt', label: '人设（多行，--append-system-prompt）', type: 'string' },
-        // progressCoT is consumed by the core-engine progressor wiring (T19)
-        // per DESIGN §6.1 (providerConfig.progressCoT 默认 on) — do not remove;
-        // same row as dsh so the M3 UI renders the switch uniformly.
-        { key: 'progressCoT', label: '进度行展示思维链摘要', type: 'bool', default: true },
+        // progressStyle/progressText (2026-11-06 拟人播报)：进度行风格与播报
+        // 文案，core-engine 出站面消费（polite=企微只播报一句「思考中…请稍
+        // 等」，不露思维链/工具内容；cot=旧 §6.1 详细汇报）。
+        { key: 'progressStyle', label: '工作汇报风格（拟人播报=polite：只播报「思考中…请稍等」，企微不露思维链；详细汇报=cot：进度行展示思维链/工具摘要）', type: 'enum', options: ['polite', 'cot'], default: 'polite' },
+        { key: 'progressText', label: '播报文案（拟人播报模板；占位符 {bot}=名字 {dots}=呼吸点 {elapsed}=已用时 {step}=步数；≤120 字）', type: 'string', default: '{bot} 思考中{dots} 请稍等（已 {elapsed}）' },
+        // progressCoT 已废弃（2026-11-06，被 progressStyle 取代，保留兼容）：
+        // 仅在 cot 风格内抑制 💭 行，不再能把进度行变回详细汇报——默认已
+        // 翻转为 polite（owner 决策）。same row as dsh so the M3 UI renders uniformly.
+        { key: 'progressCoT', label: '进度行展示思维链摘要（已废弃，改用工作汇报风格）', type: 'bool', default: true },
         { key: 'claudeBin', label: 'claude 可执行文件（PATH 或绝对路径）', type: 'string', default: 'claude' },
         { key: 'claudeConfigDir', label: 'claude 配置目录（默认 ~/.claude，会话历史所在；重定向时注入子进程 $CLAUDE_CONFIG_DIR——readHistory 同源）', type: 'string' },
       ],
@@ -68,6 +73,10 @@ export default {
         }
         if (pc.allowedTools != null && !Array.isArray(pc.allowedTools)) {
           errors.push('providerConfig.allowedTools must be a list');
+        }
+        // 播报文案模板上限（超长即 400，拒绝优于静默截断）
+        if (typeof pc.progressText === 'string' && pc.progressText.length > 120) {
+          errors.push(`providerConfig.progressText 播报文案最长 120 字（当前 ${pc.progressText.length}）`);
         }
         return errors;
       },

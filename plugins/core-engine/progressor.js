@@ -157,3 +157,63 @@ function stripFillers(sentence) {
   }
   return s.trim();
 }
+
+// —— polite broadcast (拟人播报, 2026-11-06 owner decision) —————————————————————
+//
+// The WeCom progress line no longer carries ANY chain-of-thought / tool-arg
+// content by default (progressStyle:'polite'); it broadcasts one configurable
+// sentence instead — e.g. 「Sky 分身 思考中… 请稍等（已 45 秒）」— whose elapsed
+// time and breathing dots change every frame, so the line still reads alive.
+// The full thinking/tool event stream keeps landing in the LOCAL timeline;
+// only the channel-facing surface is narrowed. progressStyle:'cot' keeps the
+// legacy composed lines above (§6.1).
+
+// Shipped default copy (also the fallback for invalid templates). Placeholders:
+//   {bot}=bot.name  {dots}=breathing dots  {elapsed}=run time  {step}=step no.
+export const POLITE_TEMPLATE_DEFAULT = '{bot} 思考中{dots} 请稍等（已 {elapsed}）';
+
+const POLITE_DOTS = ['.', '..', '...']; // cycle by outbound frame order
+const POLITE_TEMPLATE_MAX = 120; // provider validate() 400s beyond this; the
+// pure function degrades to the default so a bypassed write still broadcasts
+// something sane instead of a wall of text.
+
+const validPoliteTemplate = (t) => (typeof t === 'string' && t !== '' && t.length <= POLITE_TEMPLATE_MAX
+  ? t : POLITE_TEMPLATE_DEFAULT);
+
+// PURE: one frame's broadcast copy. `frame` drives the dots cycle (0→'.',
+// 1→'..', 2→'...', wrap). Unknown placeholders pass through verbatim. A
+// template containing {step} with no step number yet replaces the placeholder
+// with '' and collapses the doubled spaces the removal leaves behind.
+export function politeLine({ template, botName = '', elapsed = '', step, frame = 0 } = {}) {
+  const tpl = validPoliteTemplate(template);
+  const dots = POLITE_DOTS[Math.abs(Math.trunc(frame) || 0) % POLITE_DOTS.length];
+  let out = tpl
+    .replaceAll('{bot}', String(botName ?? ''))
+    .replaceAll('{dots}', dots)
+    .replaceAll('{elapsed}', String(elapsed ?? ''));
+  if (out.includes('{step}')) {
+    const hasStep = step != null && step !== '';
+    out = hasStep ? out.replaceAll('{step}', String(step)) : tidyGap(out.replaceAll('{step}', ''));
+  }
+  return out;
+}
+
+// Remove the spaces orphaned by a dropped {step}: collapse runs of spaces to
+// one and trim the edges — 「{bot} {step} 思考中」 → 「A 思考中」, not 「A  思考中」.
+const tidyGap = (s) => s.replace(/ {2,}/g, ' ').trim();
+
+// Stateful convenience over the pure fill: the frame counter advances per
+// line() so consecutive broadcasts breathe (. → .. → ...). reset() restarts
+// the cycle; the engine holds one instance per turn, so each turn re-opens
+// at '.'.
+export function createPoliteProgress() {
+  let frame = 0;
+  return {
+    line(args = {}) {
+      return politeLine({ ...args, frame: frame++ });
+    },
+    reset() {
+      frame = 0;
+    },
+  };
+}

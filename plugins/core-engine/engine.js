@@ -25,6 +25,7 @@
 import { randomUUID } from 'node:crypto';
 import { maskOutbound } from './middleware.js';
 import { formatTurnBlock } from './ledger.js';
+import { createPoliteProgress, POLITE_TEMPLATE_DEFAULT } from './progressor.js';
 
 // Channel-capability defaults (DESIGN §4/§6). minIntervalMs/maxContentChars/
 // streamDeadlineMs etc. are consumed by the outbound path (defaultRunTurn) and
@@ -228,16 +229,55 @@ export async function defaultRunTurn(bot, msg, ac) {
 
   // §5 contract: onEvent is ordered and synchronous — outbound inside it is
   // fire-and-forget so a slow adapter call can never stall the provider.
-  // §6.1 progressCoT (default on): a bot that opted out never sees a 💭 line;
-  // the filter sits BEFORE compose (progressor untouched), and the raw text
-  // still lands in the local timeline below.
-  const progressCoT = bot.providerConfig?.progressCoT !== false;
+  //
+  // Progress style (2026-11-06 owner decision — DEFAULT FLIPPED to polite):
+  // unless progressStyle === 'cot', the channel-facing progress line is ONE
+  // templated broadcast sentence (拟人播报) — NO 💭 thinking / 🔧 tool / ✍️
+  // answer-preview content reaches WeCom; elapsed time + breathing dots keep
+  // the line visibly alive, and the raw events still land in the LOCAL
+  // timeline below. Legacy bots that stored progressCoT:true are flipped
+  // along with everyone else (owner call); progressCoT is a DEPRECATED alias
+  // that only survives INSIDE cot style, where explicit false still suppresses
+  // the 💭 line (the A2 semantics).
+  const pc = bot.providerConfig ?? {};
+  const politeStyle = pc.progressStyle !== 'cot';
+  const progressCoT = pc.progressCoT !== false;
+  const politeProgress = createPoliteProgress();
+  const politeTemplate = typeof pc.progressText === 'string' && pc.progressText !== ''
+    ? pc.progressText : POLITE_TEMPLATE_DEFAULT;
+  let politeStep = null; // last step number seen; feeds {step} once steps exist
+  const elapsedText = () => {
+    const secs = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+    return `${secs} 秒`;
+  };
+  const politeCopy = () => politeProgress.line({
+    template: politeTemplate,
+    botName: bot.name ?? bot.id ?? '',
+    elapsed: elapsedText(),
+    step: politeStep,
+  });
+
   let answer = '';
   const onEvent = (ev) => {
     try {
       if (ev?.type === 'text' && typeof ev.text === 'string') answer = ev.text; // cumulative
-      const composeIt = engine.progressor != null && !(ev?.type === 'thinking' && !progressCoT);
-      const line = composeIt ? engine.progressor.compose(ev, { answer }) : null;
+      if (politeStyle && ev?.type === 'step' && Number.isFinite(ev.n)) politeStep = ev.n;
+      let line = null;
+      if (politeStyle) {
+        // 拟人播报: every run-progress event (thinking/tool/text/step) refreshes
+        // the SAME broadcast sentence — elapsed + dots make each frame move;
+        // session/error/final keep no progress meaning. The ✍️ answer preview
+        // is suppressed too: the body only appears in the final frame.
+        if (ev?.type === 'thinking' || ev?.type === 'tool' || ev?.type === 'text' || ev?.type === 'step') {
+          line = politeCopy();
+        }
+      } else {
+        // cot (详细汇报, legacy §6.1): composed lines via the progressor; a
+        // progressCoT:false bot never sees a 💭 line — the filter sits BEFORE
+        // compose (progressor untouched).
+        const composeIt = engine.progressor != null && !(ev?.type === 'thinking' && !progressCoT);
+        line = composeIt ? engine.progressor.compose(ev, { answer }) : null;
+      }
       if (line != null) {
         offerProgress(line);
         engine.setProgress(bot.id, line, ev.type);
@@ -245,7 +285,7 @@ export async function defaultRunTurn(bot, msg, ac) {
       const kind = EV_TO_KIND[ev?.type];
       if (kind !== undefined && engine.timeline) {
         // Raw text (full CoT, tool brief) lives in the local timeline only —
-        // the channel only ever saw the composed line (§6.1).
+        // the channel only ever saw the composed/broadcast line (§6.1).
         const raw = typeof ev?.text === 'string' ? ev.text : (ev?.brief ?? '');
         engine.timeline.push({ botId: bot.id, chatKey, kind, text: raw || line || '' });
       }
@@ -266,7 +306,10 @@ export async function defaultRunTurn(bot, msg, ac) {
         }
         if (lastFrameAt !== 0 && now - lastFrameAt < minIntervalMs) return; // a frame just went out
         const secs = Math.max(1, Math.round((now - startedAt) / 1000));
-        void sendProgress(outboundText(`⏳ 已运行 ${secs} 秒`));
+        // Polite style: the heartbeat IS a broadcast frame (elapsed grows +
+        // dots advance = the visible animation); cot keeps the ⏳ copy.
+        const hbText = politeStyle ? politeCopy() : `⏳ 已运行 ${secs} 秒`;
+        void sendProgress(outboundText(hbText));
       }, heartbeatMs)
     : null;
 

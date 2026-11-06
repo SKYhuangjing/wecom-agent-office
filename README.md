@@ -216,6 +216,8 @@ launchctl print gui/$(id -u)/com.wecom-agent-office | head -30   # launchd 视�
 | 岗前测试 | 试跑（POST /api/bots/:id/test） |
 | 工单 | 一轮对话（ledger turn） |
 | 工作汇报 | 进度行（progress.line） |
+| 工作汇报风格（拟人播报 / 详细汇报） | progressStyle（polite / cot；2026-11-06 起默认 polite——企微进度行不露思维链/工具内容，只播报一句「思考中…请稍等」） |
+| 播报文案 | progressText（拟人播报模板；占位符 {bot}=名字 {dots}=呼吸点 {elapsed}=已用时 {step}=步数，≤120 字） |
 | 工作日志 | 时间线（/api/timeline） |
 | 工作档案 / 原生档案 | 台账 ledger / provider 原生会话 |
 | 广播站 / 播音员 | 服务端主动推送 / 发送者 bot |

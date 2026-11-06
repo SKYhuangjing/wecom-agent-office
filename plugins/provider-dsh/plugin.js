@@ -34,9 +34,15 @@ export default {
         { key: 'prompt', label: '人设（多行，写入 profile system-prompt personaPrefix）', type: 'string' },
         { key: 'writableDirs', label: '沙箱额外可写目录（绝对路径列表）', type: 'list' },
         { key: 'compaction', label: '自动压缩 {enabled?, thresholdRatio?, headroomTokens?, retainRatio?}', type: 'object' },
-        // progressCoT is consumed by the core-engine progressor wiring (T19)
-        // per DESIGN §6.1 (providerConfig.progressCoT 默认 on) — do not remove.
-        { key: 'progressCoT', label: '进度行展示思维链摘要', type: 'bool', default: true },
+        // progressStyle/progressText (2026-11-06 拟人播报)：进度行风格与播报
+        // 文案，core-engine 出站面消费（polite=企微只播报一句「思考中…请稍
+        // 等」，不露思维链/工具内容；cot=旧 §6.1 详细汇报）。
+        { key: 'progressStyle', label: '工作汇报风格（拟人播报=polite：只播报「思考中…请稍等」，企微不露思维链；详细汇报=cot：进度行展示思维链/工具摘要）', type: 'enum', options: ['polite', 'cot'], default: 'polite' },
+        { key: 'progressText', label: '播报文案（拟人播报模板；占位符 {bot}=名字 {dots}=呼吸点 {elapsed}=已用时 {step}=步数；≤120 字）', type: 'string', default: '{bot} 思考中{dots} 请稍等（已 {elapsed}）' },
+        // progressCoT 已废弃（2026-11-06，被 progressStyle 取代，保留兼容）：
+        // 仅在 cot 风格内抑制 💭 行，不再能把进度行变回详细汇报——默认已
+        // 翻转为 polite（owner 决策）。consumed by the core-engine wiring.
+        { key: 'progressCoT', label: '进度行展示思维链摘要（已废弃，改用工作汇报风格）', type: 'bool', default: true },
         { key: 'dshBin', label: 'dsh 可执行文件（PATH 或绝对路径）', type: 'string', default: 'dsh' },
         { key: 'nodeBin', label: 'node 可执行文件（profile 引导 PATH 用）', type: 'string' },
       ],
@@ -60,6 +66,10 @@ export default {
           if (m.baseURL && !(Number(m.contextWindow) > 0)) {
             errors.push('自定义模型需提供 contextWindow > 0（前身教训：缺省时 compaction 报 no context capacity 并静默跳过）');
           }
+        }
+        // 播报文案模板上限（超长即 400，拒绝优于静默截断）
+        if (typeof pc.progressText === 'string' && pc.progressText.length > 120) {
+          errors.push(`providerConfig.progressText 播报文案最长 120 字（当前 ${pc.progressText.length}）`);
         }
         return errors;
       },

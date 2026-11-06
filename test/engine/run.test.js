@@ -47,8 +47,8 @@ const MS_LIMITS = {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const tick = () => new Promise((r) => setImmediate(r));
 
-function mkBot({ id = 'bot1', provider = 'codex', cwd = CWD } = {}) {
-  return { id, provider, channel: 'wecom', providerConfig: { cwd } };
+function mkBot({ id = 'bot1', name, provider = 'codex', cwd = CWD, providerConfig } = {}) {
+  return { id, name, provider, channel: 'wecom', providerConfig: { cwd, ...providerConfig } };
 }
 const mkMsg = (text, chatKey = K) => ({
   chatKey, chatKind: 'group', chatid: chatKey.split(':')[2], userid: 'u1',
@@ -153,6 +153,9 @@ const seedRow = (ledger, o = {}) => ledger.recordTurn({
 
 test('happy path: ack → throttled progress → final; ledger/cache/timeline/progressor effects', async () => {
   const h = makeHarness({
+    // 2026-11-06 默认翻转（拟人播报 polite）：本用例钉的是旧「详细汇报」语义，
+    // fixture 显式 progressStyle:'cot'（诚实迁移——断言一字不改）。
+    bot: mkBot({ providerConfig: { progressStyle: 'cot' } }),
     steps: [{
       emit: [
         { type: 'tool', name: 'read', brief: '读取配置' },
@@ -209,6 +212,8 @@ test('happy path: ack → throttled progress → final; ledger/cache/timeline/pr
 
 test('outbound budget + throttle: progress drops over budget, heartbeat survives, final never dropped', async () => {
   const h = makeHarness({
+    // 同 happy path：钉旧「详细汇报」行为（🔧/已运行 心跳），显式 cot。
+    bot: mkBot({ providerConfig: { progressStyle: 'cot' } }),
     limits: { minIntervalMs: 10, heartbeatMs: 60, outboundBudgetPerMin: 2 },
     steps: [{
       emitOver: Array.from({ length: 40 }, (_, i) => ({ type: 'tool', name: 't', brief: `b${i}`, gapMs: 8 })),
@@ -620,6 +625,8 @@ test('drain: in-flight turn gets the maintenance final, pending refusal answered
 
 test('null middleware still masks secrets on every outbound frame (builtin default)', async () => {
   const h = makeHarness({
+    // 同 happy path：思维链上屏脱敏是旧「详细汇报」行为面，显式 cot。
+    bot: mkBot({ providerConfig: { progressStyle: 'cot' } }),
     middleware: null,
     steps: [{ emit: [{ type: 'thinking', text: '用 sk-abcdefghijklmnop1234 调用。' }], code: 'completed', finalText: '结果 sk-abcdefghijklmnop1234 泄漏', returnsSessionId: 's1' }],
   });
@@ -656,4 +663,122 @@ test('long final is truncated with the 会话页 marker', async () => {
   assert.ok(final.text.includes('…（完整内容见会话页）'));
   // the ledger keeps the FULL text — truncation is presentation-only
   assert.equal(h.ledger.turns({ chatKey: K })[0].assistant.length, 300);
+});
+
+// --- 14: polite broadcast (拟人播报, 2026-11-06 default) --------------------------
+//
+// Owner decision 2026-11-06: the WeCom progress line no longer carries ANY
+// CoT/tool/answer-preview content unless progressStyle:'cot' says so. Default
+// bots broadcast one templated sentence whose elapsed time + breathing dots
+// move every frame; the local timeline keeps the full raw events.
+
+test('polite default: no progressStyle → broadcast only — no 💭/🔧/✍️ content on the wire, bot name + elapsed present, timeline keeps raw events', async () => {
+  const h = makeHarness({
+    bot: mkBot({ name: 'Sky 分身' }),
+    steps: [{
+      emit: [
+        { type: 'step', n: 1, phase: 'start' },
+        { type: 'thinking', text: '好的，我先把目录结构看一遍，这是思考内容。' },
+        { type: 'tool', name: 'Bash', brief: 'ls -la /secret/path' },
+        { type: 'text', text: '中途正文开始生成' },
+      ],
+      code: 'completed', finalText: '最终答案全文', returnsSessionId: 's1',
+    }],
+  });
+  await h.send('新问题');
+
+  const frames = h.adapter.frames;
+  const progress = frames.filter((f) => f.method === 'progress' && !f.finish);
+  assert.ok(progress.length >= 1, 'at least one broadcast frame');
+  for (const f of progress) {
+    assert.ok(!f.text.includes('💭') && !f.text.includes('🔧') && !f.text.includes('✍️'),
+      `no CoT/tool/preview line on the wire: ${f.text}`);
+    assert.ok(!f.text.includes('第 1 步'), `no step line either: ${f.text}`);
+    assert.ok(!f.text.includes('目录结构') && !f.text.includes('ls -la') && !f.text.includes('中途正文'),
+      `no thinking/tool/answer content leaks: ${f.text}`);
+  }
+  assert.ok(progress.some((f) => /^Sky 分身 思考中\.+ 请稍等（已 \d+ 秒）$/.test(f.text)),
+    `default broadcast copy (bot name + elapsed): ${JSON.stringify(progress.map((f) => f.text))}`);
+  const final = frames[frames.length - 1];
+  assert.equal(final.finish, true);
+  assert.ok(final.text.includes('最终答案全文'), 'final frame unchanged');
+
+  // the local work log (timeline) still receives the FULL raw events
+  const rows = h.timeline.get({ botId: h.bot.id });
+  assert.ok(rows.some((r) => r.kind === 'thinking' && r.text.includes('目录结构')),
+    'timeline keeps raw thinking');
+  assert.ok(rows.some((r) => r.kind === 'tool' && r.text.includes('ls -la')),
+    'timeline keeps raw tool brief');
+});
+
+test('polite: custom progressText template takes effect ({step} filled from step events)', async () => {
+  const h = makeHarness({
+    bot: mkBot({
+      name: '小助手',
+      providerConfig: { progressText: '{bot} 在第{step}步思考{dots}（已 {elapsed}）' },
+    }),
+    steps: [{
+      emit: [
+        { type: 'step', n: 2, phase: 'start' },
+        { type: 'thinking', text: '思考内容。' },
+      ],
+      code: 'completed', finalText: '答案', returnsSessionId: 's1',
+    }],
+  });
+  await h.send('问题');
+  const texts = h.adapter.frames.filter((f) => f.method === 'progress' && !f.finish).map((f) => f.text);
+  assert.ok(texts.length >= 2, `two broadcast frames (${JSON.stringify(texts)})`);
+  assert.match(texts[0], /^小助手 在第2步思考\.（已 \d+ 秒）$/, `step placeholder filled: ${texts[0]}`);
+  assert.match(texts[1], /^小助手 在第2步思考\.\.（已 \d+ 秒）$/, `dots advance: ${texts[1]}`);
+});
+
+test('polite: heartbeat frames use the broadcast template (no 已运行), dots breathe beat to beat', async () => {
+  const h = makeHarness({
+    bot: mkBot({ name: 'Sky 分身' }),
+    limits: { minIntervalMs: 0, heartbeatMs: 25 },
+    steps: [{ delayMs: 120, code: 'completed', finalText: '慢任务答案', returnsSessionId: 's1' }],
+  });
+  await h.send('慢任务');
+  const beats = h.adapter.frames.filter((f) => f.method === 'progress' && !f.finish).map((f) => f.text);
+  const hearts = beats.filter((t) => /^Sky 分身 思考中\.+ 请稍等（已 \d+ 秒）$/.test(t));
+  assert.ok(hearts.length >= 2, `heartbeat frames carry the broadcast copy (${JSON.stringify(beats)})`);
+  assert.ok(!beats.some((t) => t.includes('已运行')), 'the ⏳ 已运行 heartbeat copy is gone in polite mode');
+  const dotSeq = hearts.map((t) => t.match(/思考中(\.+)/)[1]);
+  for (let i = 1; i < dotSeq.length; i++) {
+    assert.notEqual(dotSeq[i], dotSeq[i - 1], `consecutive beats differ: ${dotSeq}`);
+  }
+});
+
+test('polite flip pin: legacy progressCoT:true without progressStyle → polite (2026-11-06 default inversion)', async () => {
+  const h = makeHarness({
+    bot: mkBot({ providerConfig: { progressCoT: true } }),
+    steps: [{
+      emit: [{ type: 'thinking', text: '思考句。' }, { type: 'tool', name: 't', brief: 'b' }],
+      code: 'completed', finalText: '答', returnsSessionId: 's1',
+    }],
+  });
+  await h.send('问题');
+  const texts = h.adapter.frames.filter((f) => f.method === 'progress' && !f.finish).map((f) => f.text);
+  assert.ok(texts.length >= 1, 'broadcast frames exist');
+  assert.ok(!texts.some((t) => t.includes('💭') || t.includes('🔧')),
+    `legacy progressCoT:true no longer forces CoT onto the wire: ${JSON.stringify(texts)}`);
+  assert.ok(texts.some((t) => t.includes('思考中')), 'the broadcast copy shows instead');
+});
+
+test('progressStyle explicit: "polite" → broadcast; "cot" → legacy 💭/🔧 mix', async () => {
+  const steps = [{
+    emit: [{ type: 'thinking', text: '思考句。' }, { type: 'tool', name: 't', brief: 'b' }],
+    code: 'completed', finalText: '答', returnsSessionId: 's1',
+  }];
+  const polite = makeHarness({ bot: mkBot({ providerConfig: { progressStyle: 'polite' } }), steps });
+  await polite.send('问题');
+  const politeTexts = polite.adapter.frames.filter((f) => f.method === 'progress' && !f.finish).map((f) => f.text);
+  assert.ok(politeTexts.some((t) => t.includes('思考中')), 'explicit polite broadcasts');
+  assert.ok(!politeTexts.some((t) => t.includes('💭') || t.includes('🔧')), 'explicit polite leaks nothing');
+
+  const cot = makeHarness({ bot: mkBot({ providerConfig: { progressStyle: 'cot' } }), steps });
+  await cot.send('问题');
+  const cotTexts = cot.adapter.frames.filter((f) => f.method === 'progress' && !f.finish).map((f) => f.text);
+  assert.ok(cotTexts.some((t) => t.includes('💭')), 'cot keeps the thinking line');
+  assert.ok(cotTexts.some((t) => t.includes('🔧')), 'cot keeps the tool line');
 });

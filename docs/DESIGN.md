@@ -370,8 +370,12 @@ recordTurn+缓存落盘）后才 spawn 新 run（每 chatKey 一条 promise 链�
 - 口头禅词表剥前缀；同句不重推；与节流天然配合
 - **正文预算**：进度行+正文合计 cap 按 capabilities（企微 3500），正文区预留 ~3300、给头部进度行留量，
   防截断边界抖动
-- `providerConfig.progressCoT`（默认 on）；思维链**原文只进本地 timeline/debug 日志**，企微只出末句摘要；
+- `providerConfig.progressCoT`（已废弃，2026-11-06 被 `progressStyle` 取代）；思维链**原文只进本地 timeline/debug 日志**，企微只出末句摘要；
   出站全过 §6.2 middleware
+- **拟人播报（2026-11-06 owner 决策，默认翻转）**：`progressStyle`（`polite` 默认 / `cot` 旧 §6.1 行为）
+  ——polite 下企微进度行不出现任何思维链/工具/正文内容，只按 `progressText` 模板播报一句
+  「{bot} 思考中… 请稍等（已 N 秒）」（占位符 {bot}/{dots}/{elapsed}/{step}，呼吸点按出帧序循环），
+  心跳帧同模板；timeline 照旧收全量事件。progressCoT 显式 false 仅在 cot 风格内抑制 💭（兼容别名）。
 
 ### 6.2 middleware 端口（onInbound / onOutbound 链）
 

@@ -6,7 +6,12 @@
 // onOutbound behavior every outbound message must pass through.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createProgressor } from '../../plugins/core-engine/progressor.js';
+import {
+  createProgressor,
+  createPoliteProgress,
+  politeLine,
+  POLITE_TEMPLATE_DEFAULT,
+} from '../../plugins/core-engine/progressor.js';
 import { maskOutbound } from '../../plugins/core-engine/middleware.js';
 
 // --- the full event-sequence walkthrough (DESIGN §6 pipeline order) ---------
@@ -152,6 +157,83 @@ test('compose rejects malformed events loudly (no silent undefined lines)', () =
   const p = createProgressor();
   assert.throws(() => p.compose(null), /event/);
   assert.throws(() => p.compose({}), /type/);
+});
+
+// --- polite broadcast (拟人播报, 2026-11-06 default) ----------------------------
+//
+// politeLine is a PURE template fill: one outbound frame's copy from
+// {template, botName, elapsed, step, frame}. The dots breathe by frame index
+// (. → .. → ... → back), unknown placeholders pass through untouched, and a
+// {step} with no step number yet drops the placeholder and cleans the gap.
+
+test('polite: default template + shipped copy constant', () => {
+  assert.equal(POLITE_TEMPLATE_DEFAULT, '{bot} 思考中{dots} 请稍等（已 {elapsed}）');
+  assert.equal(
+    politeLine({ botName: 'Sky 分身', elapsed: '45 秒', frame: 0 }),
+    'Sky 分身 思考中. 请稍等（已 45 秒）',
+  );
+});
+
+test('polite: dots cycle by frame — . → .. → ... → back to .', () => {
+  const dots = (frame) => politeLine({ botName: 'A', elapsed: '1 秒', frame }).match(/思考中(\.+)/)[1];
+  assert.equal(dots(0), '.');
+  assert.equal(dots(1), '..');
+  assert.equal(dots(2), '...');
+  assert.equal(dots(3), '.', 'cycle wraps');
+  assert.equal(dots(7), '..', 'large frame indexes mod 3');
+});
+
+test('polite: full placeholder set {bot}/{dots}/{elapsed}/{step} all filled', () => {
+  assert.equal(
+    politeLine({ template: '{bot} 第{step}步思考中{dots} 已 {elapsed}', botName: 'Sky', elapsed: '45 秒', step: 3, frame: 1 }),
+    'Sky 第3步思考中.. 已 45 秒',
+  );
+});
+
+test('polite: {step} with no step number — placeholder dropped, doubled spaces collapsed, edges trimmed', () => {
+  assert.equal(
+    politeLine({ template: '{bot} {step} 思考中{dots} 请稍等', botName: 'A', frame: 0 }),
+    'A 思考中. 请稍等',
+  );
+  assert.equal(
+    politeLine({ template: '{step}{bot} 思考中', botName: 'A', frame: 0 }),
+    'A 思考中',
+  );
+  // empty-string step counts as "no step yet" too
+  assert.equal(
+    politeLine({ template: '{bot} {step} 思考中', botName: 'A', step: '', frame: 0 }),
+    'A 思考中',
+  );
+});
+
+test('polite: unknown placeholders stay verbatim', () => {
+  assert.equal(
+    politeLine({ template: '{bot} {foo}{bar} {dots}', botName: 'A', frame: 2 }),
+    'A {foo}{bar} ...',
+  );
+});
+
+test('polite: invalid template (non-string / empty / >120 chars) falls back to the default', () => {
+  const expect = politeLine({ botName: 'A', elapsed: '3 秒', frame: 0 });
+  assert.equal(politeLine({ template: null, botName: 'A', elapsed: '3 秒', frame: 0 }), expect);
+  assert.equal(politeLine({ template: '', botName: 'A', elapsed: '3 秒', frame: 0 }), expect);
+  assert.equal(politeLine({ template: 'x'.repeat(121), botName: 'A', elapsed: '3 秒', frame: 0 }), expect);
+  // exactly 120 is still a valid template
+  assert.notEqual(
+    politeLine({ template: `${'x'.repeat(117)}{dots}`, botName: 'A', frame: 0 }),
+    expect,
+  );
+});
+
+test('polite: createPoliteProgress advances the frame per line and reset() restarts the cycle', () => {
+  const p = createPoliteProgress();
+  const dots = () => p.line({ botName: 'A', elapsed: '1 秒' }).match(/思考中(\.+)/)[1];
+  assert.equal(dots(), '.');
+  assert.equal(dots(), '..');
+  assert.equal(dots(), '...');
+  assert.equal(dots(), '.');
+  p.reset();
+  assert.equal(dots(), '.', 'reset restarts the breathing cycle');
 });
 
 // --- maskOutbound (DESIGN §6.2 built-in onOutbound) ----------------------------

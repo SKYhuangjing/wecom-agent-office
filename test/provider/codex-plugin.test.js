@@ -70,6 +70,26 @@ test('plugin: configSchema — cwd required, sandbox enum carries the three real
   assert.equal(byKey.sandbox.default, undefined, 'no sandbox default — omitting the flag keeps codex config.toml default');
 });
 
+// 2026-11-06 拟人播报: the two broadcast knobs every provider exposes (same
+// rows on dsh/claude/codex/_template so the M3 UI renders them uniformly).
+test('plugin: configSchema — progressStyle enum (default polite) + progressText template default', () => {
+  const byKey = Object.fromEntries(impl.configSchema.map((s) => [s.key, s]));
+  assert.deepEqual(byKey.progressStyle.options, ['polite', 'cot']);
+  assert.equal(byKey.progressStyle.default, 'polite', 'polite is the DEFAULT since 2026-11-06 (owner decision)');
+  assert.equal(byKey.progressStyle.label.includes('工作汇报风格'), true);
+  assert.equal(byKey.progressText.type, 'string');
+  assert.equal(byKey.progressText.default, '{bot} 思考中{dots} 请稍等（已 {elapsed}）');
+  assert.ok(byKey.progressText.label.includes('{bot}'), 'the label documents the placeholders');
+});
+
+test('plugin: validate — progressText over 120 chars rejected (400), exactly 120 passes', () => {
+  const bad = impl.validate({ cwd: '/w', progressText: 'x'.repeat(121) });
+  assert.equal(bad.length, 1, `exactly one error (got ${JSON.stringify(bad)})`);
+  assert.match(bad[0], /progressText.*120/);
+  assert.deepEqual(impl.validate({ cwd: '/w', progressText: '{bot} 思考中{dots} 请稍等（已 {elapsed}）' }), [], 'the default template is valid');
+  assert.deepEqual(impl.validate({ cwd: '/w', progressText: 'x'.repeat(120) }), [], 'exactly 120 chars passes');
+});
+
 test('plugin: validate — cwd presence (missing/empty/non-string)', () => {
   assert.ok(impl.validate({}).some((e) => /^providerConfig\.cwd is required/.test(e)), 'missing cwd');
   assert.ok(impl.validate({ cwd: '' }).some((e) => /cwd is required/.test(e)), 'empty cwd');
