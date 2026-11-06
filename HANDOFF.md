@@ -342,3 +342,14 @@ bash test/ui-shot.sh      # 21 张 UI 截图基线齐备 (M3)
 node src/index.js doctor  # 全 ✓
 # 生产切换：docs/CUTOVER.md（bash test/cutover.sh baseline|stage1-main|stage2-bot2|drill|rollback 逐步）
 ```
+
+---
+
+## M3 终笔：生产切换已执行（2026-11-06 10:40）
+
+- **现场**：切换前旧桥已死（8791 无响应无进程，旧系统无自愈）——两 bot 此前处于离线状态；切换无互踢风险，仍按 runbook 归档旧表
+- **执行**（docs/CUTOVER.md 全步骤）：launchd 安装（PATH 覆盖三 CLI bin；首次失败根因=模板占位符无尖括号 sed 未中，已修）→ 双 bot enabled:false 建档（凭据从旧表直读，响应零 secret）→ 旧 bots.json 归档（bots.json.cutover-backup-20261106，1916B）+写空表防复活 → main 接管（idle）→ **出站验证 ×3 全部 {"ok":true}**（main 单聊+群聊、bot2 单聊——切换通知已真实送达企微）→ bot2 接管（idle）
+- **冷启动演练**：launchctl kickstart -k → 自动复活重订阅 ✓；kill -9 → KeepAlive 自愈（15122→15155）双 bot 回线 ✓（日志「subscribed to WeCom bot OK」×2 实证）
+- **入站终验**：= 用户下次给任一 bot 发消息的第一条回复（企微断线不补发；订阅成功+协议层移植+e2e 全绿为现有证据）
+- **回滚**：launchctl unload ~/Library/LaunchAgents/com.wecom-agent-office.plist → 恢复 ../wecom-bridge/bots.json.cutover-backup-20261106 为 bots.json → DSH GUI 里 enable 旧 wecom-bots 插件（1.2s 自动拉起旧桥）
+- **日常**：curl 127.0.0.1:8792/healthz｜/api/agents｜日志 data/logs/wao.log（轮转 10MB×5）+ launchd.{out,err}.log｜升级=launchctl kickstart -k｜Web UI=http://127.0.0.1:8792
