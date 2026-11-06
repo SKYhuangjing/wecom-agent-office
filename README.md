@@ -148,6 +148,80 @@ launchctl print gui/$(id -u)/com.wecom-agent-office | head -30   # launchd 视�
 | `node src/index.js doctor` | 全量自检（含 launchd 三态：✓运行/!未装/✗装了没跑） | 任何 ✗ 行=需要动手 |
 | `launchctl list \| grep wecom-agent-office` | 首列 pid（`-`=没在跑） | `-` → kickstart -k 强拉 |
 
+### 3.2 MCP 接入（AI Agent 直连操作公司）
+
+`mcp-gateway` 插件（默认装载，可在 `data/plugins.json` 停用）把公司操作面以 MCP 最小子集暴露在
+`POST http://127.0.0.1:8792/mcp`，claude / codex / ZCode 等 Agent CLI 可直连做巡检、入职、
+调休、广播、部门启停（公司话词表见 §4.2；Agent 侧快捷 skill 见 `docs/skills/wao-company.md`）。
+协议是 streamable HTTP 传输的无 SSE 半边：JSON-RPC 2.0 单请求，方法仅
+`initialize` / `tools/list` / `tools/call` / `notifications/*`（含 `notifications/initialized`，
+一律 HTTP 202 空体）；GET `/mcp` 答 405（SSE 推送二期）；`DELETE /mcp` 显式终结会话（幂等 202）。
+
+- **会话生命周期**：`initialize` 响应头下发 `Mcp-Session-Id`（uuid）→ 之后每个请求必须带该头
+  （响应回显同值）；缺失/未知/已终结 → JSON-RPC `-32002`。会话不过期（单用户），只有
+  DELETE 与服务重启/部门重组（四阶段 reload 会重建全部插件路由）会让其失效——收到
+  `-32002` 重新 `initialize` 即恢复。
+- **错误分层**：协议错误＝HTTP 200 + JSON-RPC error（`-32700` 解析 / `-32600` 形状 /
+  `-32601` 方法未知 / `-32602` 工具名或参数形状 / `-32603` 内部 / `-32002` 会话）；传输错误＝
+  HTTP 状态码（405 / 415 非 JSON / 413 超 256KB）。**业务失败不是协议错误**：校验 400 /
+  查无 404 / 冲突 409 以 `result.isError:true` + 中文原因返回（Agent 可读可转述）。
+- **输出双形态**：每工具 `content[].text`（中文摘要）+ `structuredContent`（结构化数据）；
+  secret 永不回显（`__MASKED__` 语义同 §3）。当前回环无鉴权（§2 边界同样适用）。
+
+三家 CLI 配置样例（服务须先 `node src/index.js start`）：
+
+```jsonc
+// claude：存成 wao.mcp.json，工具名形如 mcp__wao-company__list_employees
+{ "mcpServers": { "wao-company": { "type": "http", "url": "http://127.0.0.1:8792/mcp" } } }
+```
+
+```sh
+claude --mcp-config wao.mcp.json "列出在岗员工并告诉我谁在休假"
+```
+
+```sh
+# codex：一条命令写入 ~/.codex/config.toml
+codex mcp add wao-company --url http://127.0.0.1:8792/mcp
+```
+
+```toml
+# ~/.codex/config.toml（与上行等价的手写形态）
+[mcp_servers.wao-company]
+url = "http://127.0.0.1:8792/mcp"
+```
+
+```jsonc
+// ZCode：工作区级 <repo>/.zcode/config.json（用户级 ~/.zcode/cli/config.json 同形）；
+// 会话启动自动连接，状态在「设置 → MCP」查看。schema 严格：多余键会被静默丢弃，
+// 模板变量 ${...} 不展开——写具体地址
+{ "mcp": { "servers": { "wao-company": { "type": "http", "url": "http://127.0.0.1:8792/mcp" } } } }
+```
+
+裸 curl 冒烟（先握手拿会话头，再列工具/调用）：
+
+```sh
+curl -si -X POST localhost:8792/mcp -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
+# → 200，响应头含 Mcp-Session-Id；随后带该头 POST tools/list、tools/call
+```
+
+13 个工具一览（细节与参数见 `plugins/mcp-gateway/README.md`；危险＝执行前须向用户复述后果确认）：
+
+| 工具 | 一句话 | 危险 |
+|---|---|---|
+| `list_employees` | 在岗名册（状态/离线原因/工作汇报/工单数） | |
+| `get_employee` | 单员工详情（配置摘要无 secret） | |
+| `hire` | 办入职（全字段档案） | |
+| `update_employee` | 档案更新（patch；密码留空＝保留） | |
+| `offboard` | 办离职（删除；台账与时间线历史保留） | ⚠️ |
+| `set_duty` | 调休 ↔ 返岗 | |
+| `probation_test` | 岗前测试（成功判据看 result.code，勿只看 isError） | |
+| `broadcast` | 广播（真实送达企微，无法撤回） | ⚠️ |
+| `list_departments` | 部门（插件）清单 | |
+| `department_toggle` | 部门启停（四阶段重组；重建 MCP 会话） | ⚠️ |
+| `work_log` | 工作档案（台账轮次） | |
+| `work_timeline` | 工作日志（时间线事件流） | |
+| `company_state` | 公司状态摘要 | |
 
 ## 4. 开发（写插件）
 

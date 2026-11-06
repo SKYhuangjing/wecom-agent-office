@@ -49,6 +49,9 @@ JSON-RPC 2.0 over HTTP 自研协议子集（计划见 docs/superpowers/plans/202
 每工具输出双形态：`content[].text`（中文人类可读摘要）+ `structuredContent`（结构化数据）。
 secret 红线：结果永不回显 secret（写路径入参可带，结果经 masked echo + sanitize 双保险剥离）。
 
+Agent 侧配套快捷 skill（触发词/意图配方/危险操作确认规范）在 `docs/skills/wao-company.md`；
+三家 CLI（claude/codex/ZCode）接入配置样例见仓库 README §3.2「MCP 接入」。
+
 实现复用规则：工具不 HTTP 自调用——员工/台账/推送走 core-engine api.js 的 `companyOps`
 服务（与 /api 路由同一函数），部门启停走 src/index.js 的 `kernelOps` 服务（与内核原生
 `/api/plugins/:id/enable|disable` 同一函数），均经 services 容器按次查找（reload 后即取新实例）。
