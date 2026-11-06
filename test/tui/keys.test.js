@@ -191,7 +191,7 @@ test('b 广播链：台账枚举会话→选会话→内容→真实发送确认
 
   const confirm = handleKey(typed.state, ENTER, DEPS);
   assert.equal(confirm.state.mode, 'confirm');
-  assert.ok(frameText(confirm.state).includes('将真实发送到企微，确认？(y/n)'));
+  assert.ok(frameText(confirm.state).includes('将真实发送到该员工的渠道会话，确认？(y/n)'));
 
   const sent = handleKey(confirm.state, ch('y'), DEPS);
   assert.deepEqual(sent.effects, [{
@@ -277,6 +277,7 @@ test('n 入职向导全流程：逐字段→摘要→y=POST /api/bots（enabled=
   assert.ok(text.includes('通道：wecom（机器人 ID wwbot42，Secret 已填）'));
   assert.ok(text.includes('工牌号：hr-test01（自动分配）'));
   assert.ok(text.includes('调休'));
+  assert.ok(text.includes('门禁：未配置=接受任何企微用户发消息'), '摘要页醒目警示空门禁');
   assert.ok(text.includes('办理入职？(y/n)'));
 
   const hired = handleKey(atSummary.state, ch('y'), DEPS);
@@ -293,6 +294,7 @@ test('n 入职向导全流程：逐字段→摘要→y=POST /api/bots（enabled=
     ok: true, data: { bot: { id: 'hr-test01', name: '张三' } },
   });
   assert.ok(done.notice.text.includes('已入职：张三（工牌号 hr-test01，调休态）'));
+  assert.ok(done.notice.text.includes('门禁：未配置=接受任何企微用户发消息'), '回执与摘要同步门禁警示');
   assert.ok(done.notice.text.includes('按空格返岗'));
 
   // API 校验失败（如缺字段）红字透传
@@ -437,4 +439,78 @@ test('genBadgeId：hr- 前缀 + 避让已占用', () => {
     assert.ok(!taken.has(id));
     taken.add(id);
   }
+});
+
+test('迟到回执不清用户模式：暂存 pendingNotice，回仪表盘才显示', () => {
+  // 用户正在看上一轮岗前测试的结果窗，一个在途 toggle 的回执迟到到达。
+  const submitted = drive(baseState([agent()]), [ch('t'), ENTER], DEPS);
+  const viewing = applyResult(submitted.state, submitted.effects[0], {
+    ok: true, data: { code: 'completed', finalText: '第一轮', events: 1 },
+  });
+  assert.equal(viewing.mode, 'result');
+
+  const late = applyResult(
+    viewing,
+    { type: 'toggle', botId: 'a1', name: '主号机器人', toEnabled: false },
+    { ok: true, data: { bot: { enabled: false } } },
+  );
+  assert.equal(late.mode, 'result', '迟到的回执不把用户拽回仪表盘');
+  assert.deepEqual(late.pendingNotice, { text: '🌴 已调休：主号机器人（在途工作收尾后下线）', kind: 'ok' });
+  assert.ok(!frameText(late).includes('已调休'), '非仪表盘模式不渲染通知');
+  assert.equal(late.result.finalText, '第一轮', '用户正在看的内容不被清掉');
+
+  // 关窗回仪表盘 → 暂存的通知露面、暂存清位。
+  const closed = handleKey(late, ESC, DEPS);
+  assert.equal(closed.state.mode, 'dashboard');
+  assert.ok(closed.state.notice.text.includes('已调休：主号机器人'));
+  assert.equal(closed.state.pendingNotice ?? null, null);
+
+  // 用户就在仪表盘时，回执仍然即时显示（原行为不变）。
+  const fresh = applyResult(closed.state, { type: 'toggle', botId: 'a1', name: '主号机器人' }, { ok: false, error: 'boom' });
+  assert.ok(fresh.notice.text.includes('调休/返岗失败：boom'));
+  assert.ok(frameText(fresh).includes('调休/返岗失败：boom'));
+});
+
+test('attachTUI：quit 后在途 dispatch 不再渲染（quitCalled 守卫）', async () => {
+  const stream = new EventEmitter();
+  stream.write = (s) => stream.__out.push(s);
+  stream.__out = [];
+  stream.isTTY = true; stream.columns = 100; stream.rows = 30;
+  const input = new EventEmitter();
+  input.setRawMode = () => {};
+  let release = null;
+  const agents = [agent()];
+  attachTUI({
+    stream, input, base: 'http://tui.test',
+    dataDir: '/nonexistent-wao-data',
+    fetchFn: async (url) => {
+      if (url.endsWith('/api/agents')) return { ok: true, json: async () => ({ agents }) };
+      if (url.includes('/toggle')) {
+        return new Promise((res) => {
+          release = () => res({ ok: true, json: async () => ({ bot: { id: 'a1', enabled: false } }) });
+        });
+      }
+      throw new Error(`unexpected url ${url}`);
+    },
+    now: () => NOW,
+    intervalMs: 10,
+  });
+  await new Promise((r) => setTimeout(r, 25));
+  input.emit('keypress', ' ', { name: 'space' });
+  await new Promise((r) => setTimeout(r, 5));
+  input.emit('keypress', 'y', { name: 'y' }); // toggle dispatch 挂起在 release
+  await new Promise((r) => setTimeout(r, 5));
+  input.emit('keypress', 'q', { name: 'q' }); // quit：终端已还原
+  await new Promise((r) => setTimeout(r, 5));
+  assert.ok(typeof release === 'function');
+  const writesAtQuit = stream.__out.length;
+  const outAtQuit = stream.__out.join('');
+  assert.ok(outAtQuit.includes('\x1b[?1049l'), '终端已还原');
+
+  release(); // 在途响应此刻才回来
+  await new Promise((r) => setTimeout(r, 25));
+  assert.equal(stream.__out.length, writesAtQuit, '还原终端后零写入——没有再画任何帧');
+  const out = stream.__out.join('');
+  assert.ok(!out.slice(out.indexOf('\x1b[?1049l')).includes('WAO 公司'), '还原序列之后不再出现仪表盘内容');
+  assert.ok(!out.slice(out.indexOf('\x1b[?1049l')).includes('已调休'), '迟到的回执不再上屏');
 });

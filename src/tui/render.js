@@ -19,6 +19,24 @@ const paint = (text, ...codes) =>
 // count 2, ANSI escapes count 0. Truncation and layout measure with this so
 // an 80-col terminal never wraps a frame line.
 const ANSI_RE = /\x1b\[[0-9;?]*[A-Za-z]/g;
+
+// 终端注入清洗（评审 W2 T3 #2）：一切数据源字符串（员工名/日志行/岗前
+// finalText/API error/chatKey）都是不可信输入——含 ESC 序列的文本进了帧就
+// 能劫持运维终端（OSC 52 可写剪贴板、CSI 可改色/清屏；聊天用户文本会进
+// wao.log 被日志窗 tail）。sanitizeTerminal 剥掉 OSC/CSI/其余 ESC 序列与
+// 除 \n 外的全部 C0/C1 控制符，只留可见字符与空格；渲染器自己的配色码由
+// paint() 在清洗之后包裹，不受影响。
+const OSC_RE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g; // OSC …（BEL | ST 结尾）
+const CSI_RE = /\x1b\[[0-9;:<=>?]*[ -/]*[@-~]/g; // CSI 参数*中间字节*终止字节
+const ESC_SEQ_RE = /\x1b[\x40-\x5f]/g; // 其余双字节 ESC 序列；散 ESC 由 C0 兜底
+const CTRL_RE = /[\x00-\x09\x0b-\x1f\x7f\x80-\x9f]/g; // C0/C1 全剥，唯独放行 \n
+export const sanitizeTerminal = (s) => String(s ?? '')
+  .replace(OSC_RE, '')
+  .replace(CSI_RE, '')
+  .replace(ESC_SEQ_RE, '')
+  .replace(CTRL_RE, '');
+// 帧行变体：帧的一行里不能嵌 \n（会把整帧顶出行数上限）→ 换成空格。
+const sanitizeLine = (s) => sanitizeTerminal(s).replace(/\n/g, ' ');
 const isWide = (cp) =>
   (cp >= 0x231a && cp <= 0x231b) || (cp >= 0x23e9 && cp <= 0x23ec) || cp === 0x23f0 || cp === 0x23f3
   || (cp >= 0x1100 && cp <= 0x115f)
@@ -45,7 +63,7 @@ const composeLine = (width, segs, extra = []) => {
   let left = width;
   for (const seg of segs) {
     if (left <= 0) break;
-    let text = seg.t;
+    let text = sanitizeLine(seg.t);
     if (dispWidth(text) > left) {
       let w = 0, cut = '';
       for (const ch of text) {
@@ -193,15 +211,17 @@ export function computeFrame(state = {}, opts = {}) {
 // 底部输入行：<加粗 prompt> <值（secret=＊遮蔽，长值保尾）>▌ [红字 err]
 const inputRow = (width, input) => {
   const raw = input.secret ? '*'.repeat(Math.min(String(input.value ?? '').length, 32)) : String(input.value ?? '');
-  const budget = Math.max(8, width - dispWidth(input.prompt ?? '') - 4);
+  const budget = Math.max(8, width - dispWidth(sanitizeLine(input.prompt ?? '')) - 4);
   let shown = raw;
   if (dispWidth(shown) > budget) {
+    // 长值保尾（光标总在末尾，看的永远是刚敲的字）：从尾到头吃满预算，
+    // … 打头。按码点倒序遍历（[...str].reverse()），代理对（emoji 等）整存整取。
     let w = 0;
     let cut = '';
-    for (const ch of shown) {
+    for (const ch of [...shown].reverse()) {
       const cw = isWide(ch.codePointAt(0)) ? 2 : 1;
-      if (w + cw > budget - 1) break;
-      cut = ch + cut; // keep the TAIL: the caret is always at the end
+      if (w + cw > budget) break;
+      cut = ch + cut; // 头插 = 保尾字符的正序
       w += cw;
     }
     shown = `…${cut}`;
@@ -285,7 +305,7 @@ const dashboardPane = (width, budget, { agents, selectedIdx, now, logTail, logZo
   } else if (tail.length === 0) {
     out.push(paint('日志暂无输出', CODE.dim));
   } else {
-    for (const l of tail) out.push(paint(l, CODE.dim));
+    for (const l of tail) out.push(paint(sanitizeLine(l), CODE.dim));
   }
   return out;
 };
@@ -297,7 +317,7 @@ const resultPane = (width, budget, result) => {
   out.push(paint('─'.repeat(width), CODE.dim));
   const pass = result.code === 'completed';
   const rows = [{ t: `code: ${result.code ?? '?'}${pass ? '  ✅ 通过' : '  ❌ 未通过'}`, c: [pass ? CODE.green : CODE.red, CODE.bold] }];
-  for (const l of wrapText(String(result.finalText ?? ''), Math.max(8, width - 4))) {
+  for (const l of wrapText(sanitizeLine(String(result.finalText ?? '')), Math.max(8, width - 4))) {
     rows.push({ t: `  ${l}`, c: [] });
   }
   rows.push({ t: `会话：${result.sessionId ?? '—'}`, c: [CODE.dim] });
@@ -374,7 +394,7 @@ const wizardPane = (width, budget, w) => {
       out.push(paint(`· ${WIZARD_LABELS[i]}：`, CODE.dim));
     }
   }
-  if (w.err) out.push(paint(`⚠ ${w.err}`, CODE.red));
+  if (w.err) out.push(paint(`⚠ ${sanitizeLine(w.err)}`, CODE.red));
   if (w.step === 5) { // 摘要确认
     const f = w.fields ?? {};
     out.push(paint('─'.repeat(Math.min(width, 44)), CODE.dim));
@@ -383,6 +403,9 @@ const wizardPane = (width, budget, w) => {
     out.push(composeLine(width, [{ t: `  通道：${w.channel ?? '—'}（机器人 ID ${f.botId || '—'}${f.secret ? '，Secret 已填' : '，Secret 未填'}）`, c: [] }]));
     out.push(composeLine(width, [{ t: `  工牌号：${w.id ?? '?'}（自动分配）`, c: [CODE.dim] }]));
     out.push(paint('  入职后先调休（enabled=false）——到 Web 人事部完善资料，或选中按空格返岗', CODE.dim));
+    // 门禁警示（评审 W2 T3 #3）：TUI 简版向导不做 allowedUsers 字段（Web
+    // 人事部已有完整编辑），但空门禁=接受任何企微用户发消息，必须醒目告知。
+    out.push(paint('  ⚠ 门禁：未配置=接受任何企微用户发消息——返岗前到 Web 人事部配置白名单', CODE.yellow, CODE.bold));
     out.push(composeLine(width, [{ t: '确认 办理入职？(y/n)', c: [CODE.bold, CODE.yellow] }]));
   }
   return out;

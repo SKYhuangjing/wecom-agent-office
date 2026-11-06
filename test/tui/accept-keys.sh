@@ -202,7 +202,7 @@ check "b 弹出目标会话选择窗"         "$FRAMES_B" '广播 · 选择目�
 check "台账行成为选项（fakechat:room1（1 轮））" "$FRAMES_B" 'fakechat:room1（1 轮）'
 check "选中后进内容输入行"           "$FRAMES_B" '广播到 fakechat:room1——内容：'
 check "逐字输入的内容回显"           "$FRAMES_B" '全体注意：十分钟后台演练'
-check "回车后二次确认行"             "$FRAMES_B" '将真实发送到企微，确认？\(y/n\)'
+check "回车后二次确认行"             "$FRAMES_B" '将真实发送到该员工的渠道会话，确认？\(y/n\)'
 check "y 后绿字广播回执"             "$FRAMES_B" '📢 已广播：验收员工 → fakechat:room1'
 say "== b 流 fake channel 侧断言（FAKE_PUSH_LOG）=="
 if [ -s "$OUT/pushes.jsonl" ] && grep -q '"chatRef":"fakechat:room1"' "$OUT/pushes.jsonl" && grep -q '全体注意：十分钟后台演练' "$OUT/pushes.jsonl"; then
@@ -247,8 +247,10 @@ check "摘要：姓名/岗位/工位"          "$FRAMES_N" '姓名：新同学'
 check "摘要：岗位 fakeprov（工位）"    "$FRAMES_N" '岗位：fakeprov（工位 /tmp/wao-hire）'
 check "摘要：通道 + botId + Secret"   "$FRAMES_N" '通道：fakechan（机器人 ID wb-hire-001，Secret 已填）'
 check "摘要：调休入职提示"            "$FRAMES_N" '入职后先调休'
-check "摘要确认行"                    "$FRAMES_N" '确认 办理入职？\(y/n\)'
+check "摘要：门禁未配置警示（醒目）"    "$FRAMES_N" '门禁：未配置=接受任何企微用户发消息'
+check "摘要确认行"                  "$FRAMES_N" '确认 办理入职？\(y/n\)'
 check "y 后入职回执（工牌号 hr-）"    "$FRAMES_N" '已入职：新同学（工牌号 hr-'
+check "入职回执同步门禁警示"          "$FRAMES_N" '门禁：未配置=接受任何企微用户发消息'
 say "== n 流落盘断言（bots.json 逐键核对）=="
 HIRE_CHECK=$(node -e '
   const bots = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).bots;

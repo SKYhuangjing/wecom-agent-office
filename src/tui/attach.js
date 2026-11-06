@@ -31,7 +31,23 @@ export const makeLogTailer = (file) => {
     try { size = statSync(file).size; } catch { return null; }
     if (offset < 0) { // first poll: start near the end, skip the partial line
       offset = Math.max(0, size - 64 * 1024);
-      if (offset > 0 && offset < size) offset += 1;
+      if (offset > 0 && offset < size) {
+        // 起点几乎必然落在半行中间：前进到第一个 \n 之后才开始（旧 +1 只
+        // 跳 1 字节，残半行会被当整行显示）。窗口内没有 \n = 没有完整行可
+        // 显示，直接跳到末尾等增量。
+        let fd;
+        try {
+          fd = openSync(file, 'r');
+          const scan = Buffer.alloc(Math.min(size - offset, 64 * 1024));
+          readSync(fd, scan, 0, scan.length, offset);
+          const nl = scan.indexOf(0x0a);
+          offset = nl >= 0 ? offset + nl + 1 : size;
+        } catch {
+          offset = size;
+        } finally {
+          if (fd != null) closeSync(fd);
+        }
+      }
     } else if (size < offset) { // rotated/truncated: rewind
       offset = 0; buf = '';
     }
@@ -92,6 +108,7 @@ export function attachTUI({
   let quitCalled = false;
 
   const render = () => {
+    if (quitCalled) return; // quit 已还原终端：在途 dispatch/tick/resize 不许再画
     const { w, h } = sizeOf();
     const frame = computeFrame(state, { width: w, height: h, target: base });
     // Alternate screen + per-line erase: cursor home, clear+write each row,

@@ -13,6 +13,6 @@
 //              shell: raw mode, 1s tick, dispatch effects against the SAME
 //              /api the Web console uses, full-frame repaint on the
 //              alternate screen. Ctrl-C / q restore the terminal and quit.
-export { KEYBAR, computeFrame } from './tui/render.js';
+export { KEYBAR, computeFrame, sanitizeTerminal } from './tui/render.js';
 export { genBadgeId, handleKey, applyResult } from './tui/engine.js';
 export { makeLogTailer, openInBrowser, attachTUI, runTUI } from './tui/attach.js';

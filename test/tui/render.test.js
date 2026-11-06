@@ -8,7 +8,7 @@ import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync, writeFileSync, appendFileSync, truncateSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { computeFrame, attachTUI, makeLogTailer, KEYBAR } from '../../src/tui.js';
+import { computeFrame, attachTUI, makeLogTailer, sanitizeTerminal, KEYBAR } from '../../src/tui.js';
 
 const strip = (s) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
 // Simplified display-width counter (CJK + emoji = 2) mirroring the renderer's
@@ -168,6 +168,85 @@ test('makeLogTailer: 首拉取尾部、增量、轮转回卷、不可达为 null
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('makeLogTailer: >64KB 文件首拉跳过被截断的半行（跳到第一个 \\n 之后）', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wao-tui-log-'));
+  const file = join(dir, 'wao.log');
+  try {
+    // 64KB 无换行的长行 + 两条完整行：旧逻辑 offset+=1 只跳 1 字节，会把
+    // 残缺的 x 半行当整行吐出来。
+    writeFileSync(file, `${'x'.repeat(70_000)}\nAFTER1\nAFTER2\n`);
+    assert.deepEqual(makeLogTailer(file)(), ['AFTER1', 'AFTER2']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('sanitizeTerminal: OSC/CSI/控制符剥净，只留可见字符与空格（\\n 放行）', () => {
+  assert.equal(sanitizeTerminal('\x1b]52;c;evil\x07文本'), '文本', 'OSC 52 剪贴板写被剥');
+  assert.equal(sanitizeTerminal('\x1b[31m红\x1b[0m'), '红', '数据自带 SGR 色码被剥（配色只能来自渲染器）');
+  assert.equal(sanitizeTerminal('\x1b]0;title\x1b\\ok'), 'ok', 'ST 结尾的 OSC 被剥');
+  assert.equal(sanitizeTerminal('a\x00b\x07c\x0bd\x1be\r f\tg'), 'abcde fg', 'C0 控制符（除 \\n）全剥');
+  assert.equal(sanitizeTerminal('保留\n换行'), '保留\n换行');
+  assert.equal(sanitizeTerminal('a\x9bb\x85c'), 'abc', 'C1（八位 CSI/控制器字节）同样被剥');
+  assert.equal(sanitizeTerminal(null), '');
+});
+
+test('computeFrame: 数据源字符串进帧前统一清洗（名字/日志/finalText/错误/chatKey）', () => {
+  const evil = '\x1b]52;c;pwn\x07';
+  const frame = computeFrame({
+    agents: [agent({ name: `甲${evil}乙`, status: 'offline', reason: `凭证${'\x1b[31m'}无效` })],
+    now: NOW, connected: true, selectedIdx: 0,
+    logTail: [`log${evil}line`],
+    notice: { kind: 'error', text: `失败：${evil}boom` },
+  });
+  const raw = frame.join('');
+  assert.ok(!raw.includes('\x1b]52'), 'OSC 永不进帧');
+  const text = frameText(frame);
+  assert.ok(text.includes('甲乙'), '员工名内容保留、转义剥净');
+  assert.ok(text.includes('logline'), '日志行同理');
+  assert.ok(text.includes('失败：boom'), 'API error 同理');
+
+  const res = computeFrame({
+    agents: [agent()], now: NOW, connected: true, mode: 'result',
+    result: {
+      title: '岗前测试 · 甲', code: 'timeout', finalText: `红\x1b[31msecret${evil}`,
+      sessionId: 's1', events: 2, errorText: `boom${evil}`, scroll: 0,
+    },
+  });
+  const resRaw = res.join('');
+  assert.ok(!resRaw.includes('\x1b]52'), 'finalText/errorText 的 OSC 不进帧');
+  assert.ok(!resRaw.includes('\x1b[31msecret'), '数据文本前不能挂着数据自带 SGR');
+  const resText = frameText(res);
+  assert.ok(resText.includes('红secret'));
+  assert.ok(resText.includes('boom'));
+
+  const pick = computeFrame({
+    agents: [agent()], now: NOW, connected: true, mode: 'pick',
+    pick: { kind: 'bcast-chat', title: '广播', items: [{ label: `群${evil}聊`, value: 'k' }], idx: 0 },
+  });
+  assert.ok(!pick.join('').includes('\x1b]52'), 'chatKey 标签的 OSC 不进帧');
+  assert.ok(frameText(pick).includes('群聊'));
+});
+
+test('inputRow: 超预算长值保尾——… + 尾部字符正序（不倒序），代理对不劈开', () => {
+  // 预算 = 20 - 8(prompt) - 4 = 8：10 字符输入应显示「… + 尾 8 字（正序）」。
+  // 修复前正向遍历 + 头插把头 8 字倒序成了「…10325476 9」式的乱序前缀。
+  const frame = computeFrame({
+    agents: [agent()], now: NOW, connected: true, mode: 'input',
+    input: { kind: 'test', prompt: 'abcdefgh', value: '0123456789', secret: false, err: null },
+  }, { width: 20, height: 24 });
+  const row = frame.find((l) => l.includes('▌'));
+  assert.equal(strip(row), 'abcdefgh …23456789▌', '尾 8 字正序 + 前导省略号');
+  assert.ok(dispW(row) <= 20, '行宽不超终端');
+
+  // 代理对（emoji 占 2 列）：倒序按码点遍历，不会劈成半个代理项。
+  const emoji = computeFrame({
+    agents: [agent()], now: NOW, connected: true, mode: 'input',
+    input: { kind: 'test', prompt: 'abcdefgh', value: '😀😀😀😀😀', secret: false, err: null },
+  }, { width: 20, height: 24 });
+  assert.equal(strip(emoji.find((l) => l.includes('▌'))), 'abcdefgh …😀😀😀😀▌');
 });
 
 test('attachTUI: 进备用屏渲染 → q 退出还原终端、停轮询', async () => {

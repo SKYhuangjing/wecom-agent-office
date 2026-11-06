@@ -28,12 +28,18 @@ export const genBadgeId = (taken) => {
 };
 
 export const DEFAULT_STATE = {
-  agents: [], selectedIdx: 0, mode: 'dashboard', busy: 0, notice: null,
+  agents: [], selectedIdx: 0, mode: 'dashboard', busy: 0, notice: null, pendingNotice: null,
   confirm: null, input: null, pick: null, result: null, wizard: null, logZoom: false,
 };
-const backToDashboard = (state, extra = {}) => ({
-  ...state, mode: 'dashboard', confirm: null, input: null, pick: null, result: null, wizard: null, ...extra,
-});
+const backToDashboard = (state, extra = {}) => {
+  // 回仪表盘时把暂存的迟到通知（评审 W2 T3 #5）露面并清位：pendingNotice
+  // 优先于旧 notice；调用方 extra.notice（如有）最优先。
+  const { pendingNotice, ...rest } = state;
+  return {
+    ...rest, mode: 'dashboard', confirm: null, input: null, pick: null, result: null, wizard: null,
+    notice: pendingNotice ?? state.notice ?? null, ...extra,
+  };
+};
 const selectedAgent = (state) => (state.agents.length === 0
   ? null : state.agents[Math.min(Math.max(0, state.selectedIdx), state.agents.length - 1)]);
 const noEmployees = (state) => ({
@@ -159,7 +165,7 @@ export function handleKey(state = {}, ev = {}, deps = {}) {
           state: {
             ...st, mode: 'confirm', input: null,
             confirm: {
-              text: '将真实发送到企微，确认？(y/n)',
+              text: '将真实发送到该员工的渠道会话，确认？(y/n)',
               kind: 'send',
               payload: { botId: input.botId, name: input.name, chatKey: input.chatKey, content: value },
             },
@@ -292,9 +298,12 @@ const OP_LABELS = {
 export function applyResult(state = {}, effect = {}, result = {}, deps = {}) {
   const st = { ...DEFAULT_STATE, ...state };
   const label = OP_LABELS[effect.type] ?? '操作';
-  const noticeState = (text, kind) => ({
-    ...backToDashboard(st), notice: { text, kind },
-  });
+  // 迟到回执（评审 W2 T3 #5）：操作在途时用户可能已进入别的模式（如正看
+  // 上一轮结果窗）——不许把人拽回仪表盘。仅当前就在仪表盘才即时弹通知，
+  // 否则暂存为 pendingNotice，下次回仪表盘（backToDashboard）时露面。
+  const noticeState = (text, kind) => (st.mode === 'dashboard'
+    ? { ...backToDashboard(st), notice: { text, kind } }
+    : { ...st, pendingNotice: { text, kind } });
   if (result?.ok !== true) {
     return noticeState(`${label}失败：${result?.error ?? '未知错误'}`, 'error');
   }
@@ -323,11 +332,17 @@ export function applyResult(state = {}, effect = {}, result = {}, deps = {}) {
       };
     case 'send':
       return noticeState(`📢 已广播：${effect.name} → ${effect.chatKey}`, 'ok');
-    case 'createBot':
+    case 'createBot': {
+      // 门禁警示同步到回执（评审 W2 T3 #3）：TUI 向导恒以 allowedUsers: []
+      // 入职——按服务端返回核对，空门禁必须与摘要页同文案警示。
+      const gateOpen = (Array.isArray(data?.bot?.allowedUsers) ? data.bot.allowedUsers : []).length === 0;
       return noticeState(
-        `🎉 已入职：${data?.bot?.name ?? '?'}（工牌号 ${data?.bot?.id ?? '?'}，调休态）——到 Web 人事部完善资料，或选中按空格返岗`,
+        `🎉 已入职：${data?.bot?.name ?? '?'}（工牌号 ${data?.bot?.id ?? '?'}，调休态）`
+        + `${gateOpen ? '——门禁：未配置=接受任何企微用户发消息' : ''}`
+        + '——到 Web 人事部完善资料，或选中按空格返岗',
         'ok',
       );
+    }
     case 'ledger': {
       const rows = Array.isArray(data) ? data : [];
       const counts = new Map();
