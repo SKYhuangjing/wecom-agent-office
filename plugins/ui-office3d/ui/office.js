@@ -1,22 +1,21 @@
-// 办公室 3D v2 (M3 T4) — the visual layer over the ported ofscene engine.
+// 办公室 (company-metaphor redesign P4) — the soft-illustration visual layer
+// over the UNCHANGED ofscene engine (BFS/pan-zoom/slot machine/onFrame stay;
+// its unit tests are the contract).
 //
-// 视觉重做 (the v1 art was deliberately NOT carried over): a calmer, layered
-// palette with light/dark UI variants (canvas can't read CSS vars mid-frame,
-// so two JS palettes follow prefers-color-scheme instead — see PAL/SURF and
-// OfficeScene.setDark), sun/moon + window shafts + night lamp pools for the
-// day phase lighting, a rug + whiteboard + wall clock + door for room depth,
-// per-provider desk plaques & shirts (dsh indigo bolt / claude coral asterisk
-// / codex green brackets), monitors that ticker each bot's latest timeline
-// event, floating task cards driven by progress.line, and DOM nameplates
-// riding canvas heads via onFrame anchors. Layout GEOMETRY (desks/sofa/
-// venues/blockers) is the ported,穿模-free arrangement from v1 — engine
-// mechanics and walkable furniture positions are inherited, only repaint.
+// 重绘要点（软插画 2.5D 拟人）：
+//   · 画布层全换：渐变地板+大地毯、圆角家具+单层柔影、无像素格无硬方块；
+//   · 小人＝头像脸(DiceBear，同 botId 同脸)+胶囊身(provider 色)+简腿：
+//     working 打字微动 / idle 呼吸(引擎的踱步照旧) / 休假 灰暗+Zz；
+//   · 入职走门：引擎机制（新 joiner 从门口 BFS 走到工位）；
+//     离职走出门口淡出：子类 setAgents 差集把离场小人送去门口渐隐；
+//   · 昼夜＝色温柔变（相位钟 lerp，暖色天光/灯光）。
 //
 // Page contract: no build, no JSX, SDK from window.WAO; imports stay inside
 // this ui/ directory. Harness params: ?dim=2d, ?phase=day|dawn|dusk|night.
 import { OfScene, buildNav, ofShade, ofMix, ofSeed, ofHue, PHASE_LOCK_MID } from './ofscene.js';
 
-// —— layout (ported coordinates — proven collision-free) —————————————————
+// —— layout (ported coordinates — proven collision-free; engine mechanics
+// and walkable furniture positions are inherited, only the paint is new) ————
 const ROOM = { W: 16, D: 12, WALL: 3.1 };
 const DESKS = [
   { x: 3.2, y: 0.55, w: 1.7, d: 0.9, seat: [4.05, 1.95], face: 'n' },
@@ -33,20 +32,20 @@ const SOFA_FACE = ['e', 'e', 'e', 'e', 'e', 'n', 'n'];
 const SOFA_APPROACH = SOFA.map(([x, y], i) => (i < 5 ? [2.05, y] : [x, 10.0]));
 const FACE = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] };
 const ACTS = [
-  { id: 'bookshelf', label: '📖 书架', x: 1.45, y: 0.5, w: 1.6, d: 0.55, ax: 2.25, ay: 1.65, face: 'n', lz: 2.4, color: '#d9a96a' },
-  { id: 'pingpong', label: '🏓 乒乓', x: 9.55, y: 7.15, w: 1.9, d: 1.05, ax: 10.5, ay: 8.85, face: 'n', lz: 1.15, color: '#4ecb9a' },
-  { id: 'coffee', label: '☕ 咖啡', x: 14.35, y: 2.15, w: 1.35, d: 0.85, ax: 14.9, ay: 3.4, face: 'n', lz: 1.55, color: '#f0a35e' },
+  { id: 'bookshelf', label: '📖 书架', x: 1.45, y: 0.5, w: 1.6, d: 0.55, ax: 2.25, ay: 1.65, face: 'n', lz: 2.4, color: '#c98d64' },
+  { id: 'pingpong', label: '🏓 乒乓', x: 9.55, y: 7.15, w: 1.9, d: 1.05, ax: 10.5, ay: 8.85, face: 'n', lz: 1.15, color: '#57b394' },
+  { id: 'coffee', label: '☕ 咖啡角', x: 14.35, y: 2.15, w: 1.35, d: 0.85, ax: 14.9, ay: 3.4, face: 'n', lz: 1.55, color: '#d99a62' },
 ];
-const NAP = [[13.0, 9.9], [14.5, 9.3], [12.6, 10.6]]; // offline bots lie here
+const NAP = [[13.0, 9.9], [14.5, 9.3], [12.6, 10.6]]; // 休假同事在这里打盹
 const WANDER = [[7.0, 4.4], [8.6, 5.7], [6.0, 5.8], [9.0, 8.0], [4.9, 4.8], [5.0, 3.4], [2.4, 6.0]];
-const QUEUE = [[1.0, 2.0, 'e'], [1.7, 2.0, 'e'], [1.0, 3.1, 'e'], [1.7, 3.1, 'e']]; // >8 working: stand by the door
+const QUEUE = [[1.0, 2.0, 'e'], [1.7, 2.0, 'e'], [1.0, 3.1, 'e'], [1.7, 3.1, 'e']]; // >8 在岗：门口排队
 const DOOR = [0.6, 2.6];
 const BLOCKERS = [
   ...ACTS.map((a) => [a.x, a.y, a.w, a.d]),
   ...DESKS.map((d) => [d.x, d.y, d.w, d.d]),
   [0, 4.1, 1.5, 5.0],   // west sofa run
   [2.5, 10.55, 2.4, 1.45], // south sofa pair
-  [12.4, 9.2, 1.5, 1.7],   // nap corner rug/dog bed
+  [12.4, 9.2, 1.5, 1.7],   // nap corner rug
   [14.9, 4.6, 0.7, 0.7],   // plant
 ];
 
@@ -58,37 +57,38 @@ const NAV = buildNav({
   docks: SOFA.map(([x, y], i) => ({ to: [x, y], via: SOFA_APPROACH[i] })),
 });
 
-// —— provider identities (克制配色: one hue + one mark each) ————————————
+// —— provider identities：唯一 accent 家族 ————————————————————————————————
 const PROVIDERS = {
-  dsh: { color: '#4f6df5', mark: 'bolt' },
-  claude: { color: '#d97757', mark: 'asterisk' },
-  codex: { color: '#10a37f', mark: 'brackets' },
+  dsh: { color: '#3d5a80', mark: 'bolt', label: 'DSH 工程师' },
+  claude: { color: '#e07856', mark: 'asterisk', label: 'Claude 工程师' },
+  codex: { color: '#2e9e8f', mark: 'brackets', label: 'Codex 工程师' },
 };
-const providerOf = (p) => PROVIDERS[p] ?? { color: '#64748b', mark: 'diamond' };
+const providerOf = (p) => PROVIDERS[p] ?? { color: '#8fa39b', mark: 'diamond', label: `${p ?? '?'} 工程师` };
 
-// timeline kind → ticker hue (same coding as the workbench timeline page)
+// timeline kind → ticker hue
 const KIND_TICK = {
   run_start: '#7fb3ff', step: '#9aa7b8', tool: '#c9a4ff', thinking: '#7fd9e8',
   turn: '#7ce3a4', run_end: '#8fa0b5',
 };
 
-// —— palettes ———————————————————————————————————————————————————————————
-// PHASE-VARYING colors keyed by phase, per UI mode. Entries are hex strings
-// (lerped with ofMix) or [hex, alpha] pairs. Night in dark mode stays
-// contrasted (deep blues, not blacks) so the scene never 糊成一片.
+// —— palettes：暖色软插画 ——————————————————————————————————————————————————
+// PHASE-VARYING colors keyed by phase, per UI mode. 色温柔变：dawn/day/dusk/
+// night 四档，相邻档之间 lerp。floor 是渐变的两端色。
 const PAL = {
   light: {
-    sky: { night: ['#1c2440', '#3b4a74'], dawn: ['#5a5178', '#d9a184'], day: ['#a5c8ea', '#eef1f4'], dusk: ['#523f63', '#d18a6d'] },
-    star: { night: 0.85, dawn: 0.3, day: 0, dusk: 0.4 },
-    glass: { night: ['#9db4e8', 0.5], dawn: ['#eab488', 0.6], day: ['#d6eafc', 0.85], dusk: ['#eaa4b2', 0.6] },
-    amb: { night: ['#1a2650', 0.26], dawn: ['#ff9d6e', 0.08], day: ['#fff8ec', 0.04], dusk: ['#f08a64', 0.10] },
+    sky: { night: ['#43507a', '#8d90ad'], dawn: ['#e5c1a4', '#f7e8d6'], day: ['#c9e0ea', '#f3efe4'], dusk: ['#d9a184', '#f2ddc8'] },
+    floor: { night: ['#6b7183', '#5d6376'], dawn: ['#ecdfc9', '#e3d2b6'], day: ['#efe7d8', '#e5d9c2'], dusk: ['#ecd9bf', '#e0c9a9'] },
+    star: { night: 0.8, dawn: 0.15, day: 0, dusk: 0.3 },
+    glass: { night: ['#9db4e8', 0.45], dawn: ['#ecc39a', 0.6], day: ['#d8ecf6', 0.85], dusk: ['#eab49a', 0.6] },
+    amb: { night: ['#2c3a66', 0.22], dawn: ['#ff9d6e', 0.06], day: ['#fff8ec', 0.05], dusk: ['#f08a64', 0.10] },
     shaft: { night: 0, dawn: 0.05, day: 0.12, dusk: 0.06 },
-    lamp: { night: 0.16, dawn: 0.07, day: 0, dusk: 0.09 },
+    lamp: { night: 0.16, dawn: 0.07, day: 0, dusk: 0.10 },
     ink: { night: '#e9eef8', dawn: '#3a2f3f', day: '#3c4658', dusk: '#463250' },
   },
   dark: {
-    sky: { night: ['#05070f', '#0e1526'], dawn: ['#171628', '#3a2438'], day: ['#0f1d30', '#1f3a5c'], dusk: ['#20122b', '#43233e'] },
-    star: { night: 1, dawn: 0.35, day: 0.06, dusk: 0.45 },
+    sky: { night: ['#0d1424', '#1c2740'], dawn: ['#2a2438', '#4a3242'], day: ['#16324a', '#2c4a66'], dusk: ['#2e1f33', '#503043'] },
+    floor: { night: ['#2c3340', '#262c38'], dawn: ['#3f3830', '#37312a'], day: ['#3a4240', '#323a37'], dusk: ['#433632', '#3a2f2b'] },
+    star: { night: 1, dawn: 0.3, day: 0.05, dusk: 0.4 },
     glass: { night: ['#8fb0ff', 0.14], dawn: ['#fb923c', 0.22], day: ['#93c5fd', 0.26], dusk: ['#f472b6', 0.22] },
     amb: { night: ['#0a1228', 0.28], dawn: ['#fb923c', 0.06], day: ['#93c5fd', 0.06], dusk: ['#f472b6', 0.07] },
     shaft: { night: 0, dawn: 0.03, day: 0.08, dusk: 0.04 },
@@ -99,40 +99,32 @@ const PAL = {
 // STATIC surfaces per UI mode (phase lighting comes from amb/shaft/lamp on top)
 const SURF = {
   light: {
-    floor: ['#dcc7a6', '#d1bb97'], plank: 'rgba(110,78,44,.22)', seam: 'rgba(120,88,52,.30)',
-    wallL: '#e9e4d9', wallR: '#ddd7cb', wallEdge: '#b6afa0', base: 'rgba(70,60,45,.30)',
-    rug: 'rgba(206,222,216,.8)', rugEdge: 'rgba(105,138,130,.55)',
-    desk: '#c99a68', deskLeg: '#48525f', chair: '#46536b', chairSeat: '#5b6d8f',
-    sofa: '#45777e', sofaSeat: '#578e96', sofaArm: '#3b686e', pillow: '#d9a066',
-    shelf: '#8a5f3c', books: ['#b56a5e', '#5f87ac', '#c2a35e', '#7fae7d', '#a07fb0'],
-    counter: '#6f5138', machine: '#39424e',
-    plant: '#4d9455', pot: '#b06a4a',
-    board: '#f4f2ec', boardFrame: '#8d867a',
-    clockFace: '#f8f7f3', clockRim: '#5a5348',
-    door: '#a97c50', doorFrame: '#8d643c',
-    screenOff: '#232c39', screenIdle: '#16212c',
-    shadow: 'rgba(30,25,15,.25)',
+    wallL: '#f1ebdd', wallR: '#e9e2d1', wallEdge: '#d6cdb8', base: 'rgba(90,80,60,.25)',
+    rug: 'rgba(158,180,166,.55)', rugEdge: 'rgba(112,138,124,.5)',
+    desk: '#dbbc90', deskLeg: '#c2a276', chair: '#7d8a97',
+    sofa: '#7d9d92', sofaSeat: '#95b3a7', pillow: '#d9a066',
+    shelf: '#b98d63', books: ['#c97b6d', '#7d9ec4', '#cbb076', '#8fb98c', '#ad8fc0'],
+    counter: '#c99f74', machine: '#5d6670',
+    plant: '#6aa66f', pot: '#c98d64',
+    board: '#f8f6ef', boardFrame: '#b9b1a0',
+    door: '#c99f74', doorFrame: '#a9855c',
+    screenOff: '#39424d', screenIdle: '#2c3540',
+    shadow: 'rgba(60,50,35,.20)',
   },
   dark: {
-    floor: ['#8a7157', '#7f684f'], plank: 'rgba(20,14,8,.30)', seam: 'rgba(15,10,6,.38)',
-    wallL: '#39404f', wallR: '#313847', wallEdge: '#4d5769', base: 'rgba(5,8,15,.5)',
-    rug: 'rgba(56,74,74,.55)', rugEdge: 'rgba(110,150,145,.35)',
-    desk: '#9a7048', deskLeg: '#333c48', chair: '#374359', chairSeat: '#42536f',
-    sofa: '#31565c', sofaSeat: '#3d6a72', sofaArm: '#2a4b50', pillow: '#a97a4e',
-    shelf: '#6b4a2e', books: ['#8d5049', '#48698a', '#967f49', '#5f8a63', '#7a5f8a'],
-    counter: '#57402e', machine: '#2c343f',
-    plant: '#3c7247', pot: '#8d543c',
+    wallL: '#333c37', wallR: '#2c342f', wallEdge: '#46505a', base: 'rgba(4,8,14,.45)',
+    rug: 'rgba(72,92,84,.45)', rugEdge: 'rgba(110,140,130,.3)',
+    desk: '#8a6f4d', deskLeg: '#75603f', chair: '#4c5a66',
+    sofa: '#41605a', sofaSeat: '#4d7068', pillow: '#a97a4e',
+    shelf: '#6b4f35', books: ['#8d5049', '#48698a', '#967f49', '#5f8a63', '#7a5f8a'],
+    counter: '#6d553c', machine: '#3a434e',
+    plant: '#41764c', pot: '#7d5238',
     board: '#c9cdd4', boardFrame: '#5d6675',
-    clockFace: '#d9dde3', clockRim: '#454e5c',
-    door: '#7d5b3a', doorFrame: '#64492c',
+    door: '#6f5638', doorFrame: '#5c4529',
     screenOff: '#171e28', screenIdle: '#101a24',
-    shadow: 'rgba(0,0,0,.4)',
+    shadow: 'rgba(0,0,0,.38)',
   },
 };
-// Worker appearance pools (ported idea: derive from botId hash)
-const SKIN = ['#f2c7a5', '#e8b48a', '#c98d62', '#8d5a3b', '#f5d6bf'];
-const HAIR = ['#2b2118', '#5a3825', '#a0522d', '#1f2937', '#d4a24c', '#7c2d12', '#111111', '#c2410c'];
-const PANTS = ['#334155', '#1e3a8a', '#374151', '#3f3f46', '#78350f'];
 
 const lerpEntry = (entry, ph) => {
   const A = entry[ph.a], B = entry[ph.b];
@@ -140,14 +132,42 @@ const lerpEntry = (entry, ph) => {
   if (typeof A === 'number') return A + (B - A) * ph.mix;
   return ofMix(A, B, ph.mix);
 };
+// two-color gradient pair entry {day: [c1, c2], ...}
+const lerpPair = (entry, ph) => [
+  ofMix(entry[ph.a][0], entry[ph.b][0], ph.mix),
+  ofMix(entry[ph.a][1], entry[ph.b][1], ph.mix),
+];
 
 const roundRect = (g, x, y, w, h, r) => {
+  if (w < 0 || h < 0) return;
+  r = Math.min(r, w / 2, h / 2);
   g.beginPath();
   g.moveTo(x + r, y);
   g.arcTo(x + w, y, x + w, y + h, r);
   g.arcTo(x + w, y + h, x, y + h, r);
   g.arcTo(x, y + h, x, y, r);
   g.arcTo(x, y, x + w, y, r);
+  g.closePath();
+};
+// rounded quad through 4 screen points (软圆角 iso 面)
+const rQuad = (g, pts, r) => {
+  const n = pts.length;
+  const edge = (i) => {
+    const a = pts[i], b = pts[(i + 1) % n];
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const len = Math.hypot(dx, dy) || 1;
+    return { a, b, ux: dx / len, uy: dy / len };
+  };
+  g.beginPath();
+  for (let i = 0; i < n; i++) {
+    const e0 = edge((i - 1 + n) % n), e1 = edge(i);
+    const rr = Math.min(r, Math.hypot(e1.b[0] - e1.a[0], e1.b[1] - e1.a[1]) / 3);
+    const start = [e1.a[0] - e1.ux * rr, e1.a[1] - e1.uy * rr];
+    if (i === 0) g.moveTo(start[0], start[1]);
+    else g.lineTo(start[0], start[1]);
+    g.quadraticCurveTo(e1.a[0], e1.a[1], e1.a[0] + e1.ux * rr, e1.a[1] + e1.uy * rr);
+    void e0;
+  }
   g.closePath();
 };
 const shortTxt = (s, n) => {
@@ -159,7 +179,7 @@ const elapsed = (ms) => {
   return sec >= 60 ? `${Math.floor(sec / 60)}m${sec % 60}s` : `${sec}s`;
 };
 
-// —— the scene: OfScene engine + this office's paint hooks ——————————————
+// —— the scene: OfScene engine + soft-illustration paint hooks ————————————
 export class OfficeScene extends OfScene {
   constructor(canvas, opts = {}) {
     super(canvas, {
@@ -183,36 +203,74 @@ export class OfficeScene extends OfScene {
         },
         fallback: { seat: 'queue', queue: 'wander', act: 'wander', nap: 'wander' },
         door: DOOR,
-        makeWorker: (a, seed) => ({
-          skin: SKIN[seed % SKIN.length],
-          hair: HAIR[(seed >>> 5) % HAIR.length],
-          pants: PANTS[(seed >>> 9) % PANTS.length],
-          long: (seed >>> 13) % 3 === 0,
-          shirt: providerOf(a.provider).color,
-        }),
+        makeWorker: () => ({}), // appearance now lives in the avatar face
       },
     });
     this.dark = opts.dark ?? false;
     this.screens = new Map(); // botId → {text, color} latest timeline event
+    this.faceImgs = new Map(); // botId → HTMLImageElement (avatar, preloaded)
+    this.avatarUrl = opts.avatarUrl ?? null; // (botId) => data: URL
+    this.leaving = []; // 离职走门口淡出: {key, x, y, path, alpha, a}
   }
   setDark(d) { this.dark = !!d; }
   setScreens(map) { this.screens = map instanceof Map ? map : new Map(); }
   pal() { return PAL[this.dark ? 'dark' : 'light']; }
   surf() { return SURF[this.dark ? 'dark' : 'light']; }
 
-  // —— backdrop: sky gradient + stars + sun/moon (new vs port) —————————
+  // —— 离职走出门口淡出：setAgents 差集捕获，step() 走门渐隐 ——————————
+  setAgents(agents, opts = {}) {
+    const before = new Map([...this.workers.entries()]);
+    super.setAgents(agents, opts);
+    for (const [key, w] of before) {
+      if (this.workers.has(key) || w.x == null) continue;
+      this.leaving.push({
+        key, x: w.x, y: w.y, alpha: 1, a: w.a,
+        path: this.nav.path([w.x, w.y], [DOOR[0], DOOR[1]]),
+      });
+    }
+    // 入职走门是引擎自己的机制（later joiner spawn 在门口）；这里只负责
+    // 为新脸预载化身位图。
+    if (this.avatarUrl != null) {
+      for (const a of agents) {
+        if (this.faceImgs.has(a.id)) continue;
+        const img = new Image();
+        img.onload = () => { this.faceImgs.set(a.id, img); };
+        img.onerror = () => { this.faceImgs.delete(a.id); };
+        this.faceImgs.set(a.id, img);
+        img.src = this.avatarUrl(a.id);
+      }
+    }
+  }
+  step(dt) {
+    super.step(dt);
+    // leaving workers walk to the door at a slightly brisker pace, then fade
+    const v = 2.2 * dt;
+    for (const L of this.leaving) {
+      if (L.path == null || L.path.length === 0) { L.alpha -= dt * 0.55; continue; }
+      let left = v;
+      while (left > 1e-6 && L.path.length) {
+        const [px, py] = L.path[0];
+        const dx = px - L.x, dy = py - L.y;
+        const d = Math.hypot(dx, dy);
+        if (d <= left) { L.x = px; L.y = py; L.path.shift(); left -= d; }
+        else { L.x += (dx / d) * left; L.y += (dy / d) * left; left = 0; }
+      }
+      if (L.path.length === 0) L.alpha -= dt * 0.3;
+    }
+    this.leaving = this.leaving.filter((L) => L.alpha > 0);
+  }
+
+  // —— backdrop ————————————————————————————————————————————————————————————
   paint(ph) {
     this.paintSky(ph);
-    this.paintFloor();
+    this.paintFloor(ph);
     this.paintShafts(ph);
     this.paintLamps(ph);
     this.paintWalls(ph);
   }
   paintSky(ph) {
     const g = this.g, pal = this.pal();
-    const S = pal.sky;
-    const top = ofMix(S[ph.a][0], S[ph.b][0], ph.mix);
-    const bot = ofMix(S[ph.a][1], S[ph.b][1], ph.mix);
+    const [top, bot] = lerpPair(pal.sky, ph);
     const grd = g.createLinearGradient(0, 0, 0, this.H);
     grd.addColorStop(0, top); grd.addColorStop(1, bot);
     g.fillStyle = grd; g.fillRect(0, 0, this.W, this.H);
@@ -223,7 +281,7 @@ export class OfficeScene extends OfScene {
         const x = a * this.W, y = b2 * this.H * 0.6;
         const al = 0.5 + 0.5 * Math.sin(this.t * (0.5 + tw) + a * 20);
         g.globalAlpha = al * star;
-        g.fillRect(x, y, 1.4, 1.4);
+        g.beginPath(); g.arc(x, y, 1.1, 0, Math.PI * 2); g.fill();
       }
       g.globalAlpha = 1;
     }
@@ -231,52 +289,45 @@ export class OfficeScene extends OfScene {
   }
   paintSunMoon(ph) {
     const g = this.g;
-    // same clock phaseInfo() reports — read the engine's table, never a copy
     const c = this.phaseLock != null ? PHASE_LOCK_MID[this.phaseLock] : this.clock;
     const dayness = ph.phase === 'day' ? 1 : ph.phase === 'night' ? 0 : 0.5;
-    if (dayness > 0.15) { // sun rides an arc across the day band
+    if (dayness > 0.15) {
       const t = Math.min(1, Math.max(0, (c - 0.25) / 0.5));
       const x = this.W * (0.12 + 0.76 * t);
       const y = this.H * (0.34 - 0.22 * Math.sin(Math.PI * t));
-      const r = Math.max(10, this.H * 0.03);
+      const r = Math.max(10, this.H * 0.032);
       const glow = g.createRadialGradient(x, y, 0, x, y, r * 5);
-      glow.addColorStop(0, 'rgba(255,236,180,.55)');
-      glow.addColorStop(1, 'rgba(255,236,180,0)');
+      glow.addColorStop(0, 'rgba(255,224,170,.5)');
+      glow.addColorStop(1, 'rgba(255,224,170,0)');
       g.fillStyle = glow; g.fillRect(x - r * 5, y - r * 5, r * 10, r * 10);
-      g.fillStyle = '#ffe9a8';
+      g.fillStyle = '#ffd98f';
       g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
     }
-    if (dayness < 0.85) { // moon in the complementary arc
+    if (dayness < 0.85) {
       const t = c > 0.75 ? (c - 0.75) / 0.5 : (c + 0.25) / 0.5;
       const x = this.W * (0.16 + 0.68 * t);
       const y = this.H * (0.30 - 0.2 * Math.sin(Math.PI * t));
-      const r = Math.max(7, this.H * 0.022);
-      g.fillStyle = 'rgba(226,233,248,.9)';
+      const r = Math.max(7, this.H * 0.024);
+      g.fillStyle = 'rgba(232,238,250,.92)';
       g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
-      g.fillStyle = ofMix(ofMix('#05070f', '#1f3a5c', 0.5), '#0b1020', 0.4);
+      g.fillStyle = ofMix(ofMix('#141d33', '#2c4a66', 0.5), '#101828', 0.4);
       g.beginPath(); g.arc(x + r * 0.38, y - r * 0.22, r * 0.86, 0, Math.PI * 2); g.fill();
     }
   }
-  // —— floor: planks + a lounge rug (repainted) ————————————————————————
-  paintFloor() {
-    const s = this.surf();
-    for (let j = 0; j < ROOM.D; j += 0.5) {
-      this.poly([this.P(0, j), this.P(ROOM.W, j), this.P(ROOM.W, j + 0.5), this.P(0, j + 0.5)],
-        s.floor[Math.round(j * 2) % 2], s.plank, 0.6);
-    }
-    this.g.strokeStyle = s.seam; this.g.lineWidth = 0.6;
-    for (let i = 0.5; i < ROOM.W; i += 0.5) {
-      for (let j = 0; j < ROOM.D; j += 1) {
-        const off = Math.round(j) % 2 ? 0.25 : 0;
-        const a = this.P(i + off, j), b = this.P(i + off, j + 1);
-        this.g.beginPath(); this.g.moveTo(a[0], a[1]); this.g.lineTo(b[0], b[1]); this.g.stroke();
-      }
-    }
-    // lounge rug under the sofa corner + ping-pong area
-    this.poly([this.P(2.2, 9.7), this.P(6.4, 9.7), this.P(6.4, 11.7), this.P(2.2, 11.7)],
-      s.rug, s.rugEdge, 1.2);
-    this.poly([this.P(2.55, 10.05), this.P(6.05, 10.05), this.P(6.05, 11.35), this.P(2.55, 11.35)],
-      null, s.rugEdge, 0.8);
+  // —— floor：渐变 + 大地毯，无格无缝 ————————————————————————————————————
+  paintFloor(ph) {
+    const g = this.g, s = this.surf();
+    const [c1, c2] = lerpPair(this.pal().floor, ph);
+    const p0 = this.P(0, 0), p1 = this.P(ROOM.W, 0), p2 = this.P(ROOM.W, ROOM.D), p3 = this.P(0, ROOM.D);
+    const grd = g.createLinearGradient(p0[0], p0[1], p2[0], p2[1]);
+    grd.addColorStop(0, c1); grd.addColorStop(1, c2);
+    this.poly([p0, p1, p2, p3], grd);
+    // lounge rug under the sofa corner + ping-pong area (圆角软地毯)
+    this.softQuad([this.P(2.1, 9.6), this.P(6.5, 9.6), this.P(6.5, 11.75), this.P(2.1, 11.75)], 18, s.rug, s.rugEdge, 1.4);
+    this.softQuad([this.P(2.45, 9.95), this.P(6.15, 9.95), this.P(6.15, 11.4), this.P(2.45, 11.4)], 14, null, s.rugEdge, 1);
+    // nap corner rug
+    this.softQuad([this.P(12.2, 9.05), this.P(15.45, 9.05), this.P(15.45, 11.25), this.P(12.2, 11.25)], 16,
+      this.dark ? 'rgba(96,78,66,.5)' : 'rgba(214,190,168,.6)', 'rgba(120,96,76,.35)', 1.2);
   }
   paintShafts(ph) {
     const a = lerpEntry(this.pal().shaft, ph);
@@ -284,7 +335,7 @@ export class OfficeScene extends OfScene {
     for (const [t0, t1] of [[0.16, 0.36], [0.46, 0.66], [0.68, 0.82]]) {
       const x0 = t0 * ROOM.W + 0.1, x1 = t1 * ROOM.W - 0.1;
       this.poly([this.P(x0, 0.02, ROOM.WALL * 0.34), this.P(x1, 0.02, ROOM.WALL * 0.34),
-        this.P(x1 + 1.1, 3.1, 0), this.P(x0 + 1.1, 3.1, 0)], `rgba(255,243,205,${a})`);
+        this.P(x1 + 1.1, 3.1, 0), this.P(x0 + 1.1, 3.1, 0)], `rgba(255,240,205,${a})`);
     }
   }
   paintLamps(ph) {
@@ -295,31 +346,31 @@ export class OfficeScene extends OfScene {
       const [px, py] = this.P(x, y, 0);
       const r = this.s * 1.7;
       const grd = g.createRadialGradient(px, py - this.s * 0.4, 0, px, py - this.s * 0.4, r);
-      grd.addColorStop(0, `rgba(246,178,107,${a})`);
-      grd.addColorStop(1, 'rgba(246,178,107,0)');
+      grd.addColorStop(0, `rgba(249,183,112,${a})`);
+      grd.addColorStop(1, 'rgba(249,183,112,0)');
       g.fillStyle = grd;
       g.fillRect(px - r, py - r, r * 2, r * 2);
     }
   }
-  // —— walls: two-tone + wainscot, windows, door, clock, whiteboard ————
+  // —— walls：暖色两面 + 圆角窗/门/挂钟/白板 ————————————————————————————
   paintWalls(ph) {
     const g = this.g, s = this.surf(), W = ROOM.WALL;
-    this.poly([this.P(0, 0), this.P(0, ROOM.D), this.P(0, ROOM.D, W), this.P(0, 0, W)], s.wallL, s.wallEdge, 1.2);
-    this.poly([this.P(0, 0), this.P(ROOM.W, 0), this.P(ROOM.W, 0, W), this.P(0, 0, W)], s.wallR, s.wallEdge, 1.2);
-    // wainscot line + baseboard
-    g.strokeStyle = s.wallEdge; g.lineWidth = 1;
+    this.poly([this.P(0, 0), this.P(0, ROOM.D), this.P(0, ROOM.D, W), this.P(0, 0, W)], s.wallL);
+    this.poly([this.P(0, 0), this.P(ROOM.W, 0), this.P(ROOM.W, 0, W), this.P(0, 0, W)], s.wallR);
+    // wainscot line (soft)
+    g.strokeStyle = s.wallEdge; g.lineWidth = 1; g.globalAlpha = 0.6;
     for (const [a, b] of [[this.P(0, 0, 0.95), this.P(0, ROOM.D, 0.95)], [this.P(0, 0, 0.95), this.P(ROOM.W, 0, 0.95)]]) {
       g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
     }
-    // windows on the back wall (y=0), glass tinted by phase; the third is
-    // narrower and stops clear of the whiteboard (13.4+) on the same wall
+    g.globalAlpha = 1;
+    // windows (rounded, glass tinted by phase)
     const glass = lerpEntry(this.pal().glass, ph);
     const [gr, gg2, gb] = hexRgb(glass[0]);
     const glassFill = `rgba(${gr},${gg2},${gb},${glass[1]})`;
     for (const [t0, t1] of [[0.16, 0.36], [0.46, 0.66], [0.68, 0.82]]) {
       const x0 = t0 * ROOM.W, x1 = t1 * ROOM.W;
-      this.poly([this.P(x0, 0.01, W * 0.34), this.P(x1, 0.01, W * 0.34), this.P(x1, 0.01, W * 0.8), this.P(x0, 0.01, W * 0.8)],
-        glassFill, s.wallEdge, 1.4);
+      this.softQuad([this.P(x0, 0.01, W * 0.34), this.P(x1, 0.01, W * 0.34),
+        this.P(x1, 0.01, W * 0.8), this.P(x0, 0.01, W * 0.8)], 8, glassFill, s.wallEdge, 1.4);
       const mid = this.P((x0 + x1) / 2, 0.01, W * 0.57);
       g.strokeStyle = s.wallEdge; g.lineWidth = 1.4;
       g.beginPath();
@@ -327,18 +378,15 @@ export class OfficeScene extends OfScene {
       g.lineTo(mid[0], mid[1] + W * 0.23 * this.s);
       g.stroke();
     }
-    // door on the west wall (where new workers walk in)
-    this.poly([this.P(0.01, 2.0, 0), this.P(0.01, 3.2, 0), this.P(0.01, 3.2, 2.2), this.P(0.01, 2.0, 2.2)], s.doorFrame);
-    this.poly([this.P(0.015, 2.08, 0.06), this.P(0.015, 3.12, 0.06), this.P(0.015, 3.12, 2.12), this.P(0.015, 2.08, 2.12)], s.door);
+    // door on the west wall (新同事从这里进来)
+    this.softQuad([this.P(0.01, 2.0, 0), this.P(0.01, 3.2, 0), this.P(0.01, 3.2, 2.2), this.P(0.01, 2.0, 2.2)], 6, s.doorFrame);
+    this.softQuad([this.P(0.015, 2.08, 0.06), this.P(0.015, 3.12, 0.06), this.P(0.015, 3.12, 2.12), this.P(0.015, 2.08, 2.12)], 6, s.door);
     const knob = this.P(0.02, 2.24, 1.05);
     g.fillStyle = '#e8c14d'; g.beginPath(); g.arc(knob[0], knob[1], Math.max(1.5, this.s * 0.045), 0, Math.PI * 2); g.fill();
-    // exit sign above the door
-    this.poly([this.P(0.02, 2.42, 2.32), this.P(0.02, 2.78, 2.32), this.P(0.02, 2.78, 2.52), this.P(0.02, 2.42, 2.52)], 'rgba(22,101,52,.9)');
-    // wall clock (back wall center) — real local time
+    this.softQuad([this.P(0.02, 2.42, 2.32), this.P(0.02, 2.78, 2.32), this.P(0.02, 2.78, 2.52), this.P(0.02, 2.42, 2.52)], 3, 'rgba(70,140,96,.9)');
     this.wallClock();
-    // whiteboard (back wall, right side, above the coffee corner)
     this.whiteboard();
-    // baseboard shadow at the wall/floor seam
+    // wall/floor seam shadow
     g.strokeStyle = s.base; g.lineWidth = 4;
     const w1 = this.P(0, 0), w2 = this.P(0, ROOM.D), w3 = this.P(ROOM.W, 0);
     g.beginPath(); g.moveTo(w1[0], w1[1]); g.lineTo(w2[0], w2[1]); g.stroke();
@@ -349,8 +397,8 @@ export class OfficeScene extends OfScene {
     const g = this.g, s = this.surf();
     const [cx, cy] = this.P(8.05, 0.02, 2.5);
     const r = this.s * 0.3;
-    g.fillStyle = s.clockRim; g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fill();
-    g.fillStyle = s.clockFace; g.beginPath(); g.arc(cx, cy, r * 0.86, 0, Math.PI * 2); g.fill();
+    g.fillStyle = s.boardFrame; g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fill();
+    g.fillStyle = this.dark ? '#d9dde3' : '#faf8f2'; g.beginPath(); g.arc(cx, cy, r * 0.86, 0, Math.PI * 2); g.fill();
     const d = new Date();
     const hand = (frac, len, wid, color) => {
       const a = frac * Math.PI * 2;
@@ -359,25 +407,41 @@ export class OfficeScene extends OfScene {
     };
     hand(((d.getHours() % 12) + d.getMinutes() / 60) / 12, 0.5, Math.max(1.2, r * 0.09), '#3a4250');
     hand(d.getMinutes() / 60, 0.74, Math.max(1, r * 0.07), '#3a4250');
-    g.fillStyle = '#d9534f'; g.beginPath(); g.arc(cx, cy, Math.max(1, r * 0.06), 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#c46a6a'; g.beginPath(); g.arc(cx, cy, Math.max(1, r * 0.06), 0, Math.PI * 2); g.fill();
   }
   whiteboard() {
     const g = this.g, s = this.surf();
-    this.poly([this.P(13.4, 0.02, 1.5), this.P(15.4, 0.02, 1.5), this.P(15.4, 0.02, 2.62), this.P(13.4, 0.02, 2.62)], s.boardFrame);
-    this.poly([this.P(13.48, 0.025, 1.58), this.P(15.32, 0.025, 1.58), this.P(15.32, 0.025, 2.54), this.P(13.48, 0.025, 2.54)], s.board);
-    // scribbles: a trend line and a tiny bar chart — a workplace that thinks
+    this.softQuad([this.P(13.4, 0.02, 1.5), this.P(15.4, 0.02, 1.5), this.P(15.4, 0.02, 2.62), this.P(13.4, 0.02, 2.62)], 8, s.boardFrame);
+    this.softQuad([this.P(13.48, 0.025, 1.58), this.P(15.32, 0.025, 1.58), this.P(15.32, 0.025, 2.54), this.P(13.48, 0.025, 2.54)], 6, s.board);
     const p = (x, z) => this.P(13.4 + x, 0.03, 1.75 + z);
-    g.strokeStyle = '#4f6df5'; g.lineWidth = 1.6; g.beginPath();
-    let q = p(0, 0); g.moveTo(q[0], q[1]);
-    for (const [x, z] of [[0.35, 0.18], [0.7, 0.05], [1.05, 0.3], [1.4, 0.5]]) { q = p(x, z); g.lineTo(q[0], q[1]); }
+    g.strokeStyle = '#5d7fb0'; g.lineWidth = 1.8; g.lineCap = 'round'; g.beginPath();
+    let q = p(0.12, 0.05); g.moveTo(q[0], q[1]);
+    for (const [x, z] of [[0.45, 0.24], [0.8, 0.1], [1.15, 0.34], [1.5, 0.52]]) { q = p(x, z); g.lineTo(q[0], q[1]); }
     g.stroke();
-    g.strokeStyle = '#d97757'; g.lineWidth = 1.2; g.beginPath();
-    q = p(0, 0.42); g.moveTo(q[0], q[1]); q = p(1.4, 0.2); g.lineTo(q[0], q[1]); g.stroke();
-    const bars = ['#10a37f', '#4f6df5', '#d9a066'];
+    g.strokeStyle = '#d08a68'; g.lineWidth = 1.4; g.beginPath();
+    q = p(0.12, 0.46); g.moveTo(q[0], q[1]); q = p(1.5, 0.22); g.lineTo(q[0], q[1]); g.stroke();
+    const bars = ['#57a08c', '#5d7fb0', '#d9a066'];
     for (let i = 0; i < 3; i++) {
-      const b0 = p(0.1 + i * 0.22, 0), b1 = p(0.1 + i * 0.22, 0.1 + i * 0.05), b2 = p(0.2 + i * 0.22, 0), b3 = p(0.2 + i * 0.22, 0.1 + i * 0.05);
-      this.poly([b0, b2, b3, b1], bars[i]);
+      const h = 0.1 + i * 0.06;
+      const b0 = p(0.18 + i * 0.26, 0.62 - h), b1 = p(0.18 + i * 0.26, 0.62), b2 = p(0.3 + i * 0.26, 0.62), b3 = p(0.3 + i * 0.26, 0.62 - h);
+      this.softQuad([b0, b1, b2, b3], 2, bars[i]);
     }
+  }
+
+  // —— soft-draw helpers ———————————————————————————————————————————————————
+  // 圆角 iso 面 painters（无描边默认）
+  softQuad(pts, r, fill, stroke, lw) {
+    rQuad(this.g, pts, r);
+    if (fill) { this.g.fillStyle = fill; this.g.fill(); }
+    if (stroke) { this.g.strokeStyle = stroke; this.g.lineWidth = lw || 1; this.g.stroke(); }
+  }
+  groundShadow(x, y, rx, ry, alpha = 1) {
+    const g = this.g;
+    const [px, py] = this.P(x, y, 0);
+    g.fillStyle = this.surf().shadow;
+    g.globalAlpha = alpha;
+    g.beginPath(); g.ellipse(px, py, rx * this.s, ry * this.s, 0, 0, Math.PI * 2); g.fill();
+    g.globalAlpha = 1;
   }
 
   // —— furniture + workers, depth-ordered ———————————————————————————————
@@ -385,19 +449,17 @@ export class OfficeScene extends OfScene {
     const out = [];
     const add = (x, y, fn) => out.push({ k: this.depth(x, y), fn: fn.bind(this) });
     DESKS.forEach((d, i) => add(d.x + d.w, d.y + d.d, () => this.desk(d, i)));
-    add(3.7, 11.7, () => { // south sofa pair (seated workers drawn into it)
-      const s = this.surf();
+    add(3.7, 11.7, () => {
       for (let i = 0; i < 2; i++) {
         const x = 2.5 + i * 1.2;
-        this.sofaUnit(x, 11.35, 1.2, 0.35, x, 10.55, 'n', s);
+        this.sofaUnit(x, 11.35, 1.2, 0.35, x, 10.55, 'n');
       }
       this.seatedWorkers(1);
     });
-    add(1.1, 9.1, () => { // west sofa run
-      const s = this.surf();
-      for (let i = 0; i < 5; i++) this.sofaUnit(0.35, 4.4 + i * 0.88, 0.4, 0.88, 0.7, 4.4 + i * 0.88, 'e', s);
-      this.box(0.7, 4.1, 0, 0.8, 0.3, 0.7, this.surf().sofaArm);
-      this.box(0.7, 8.8, 0, 0.8, 0.3, 0.7, this.surf().sofaArm);
+    add(1.1, 9.1, () => {
+      for (let i = 0; i < 5; i++) this.sofaUnit(0.35, 4.4 + i * 0.88, 0.4, 0.88, 0.7, 4.4 + i * 0.88, 'e');
+      this.cushion(0.95, 4.35, 0.35, 0.75);
+      this.cushion(0.95, 8.95, 0.35, 0.75);
       this.seatedWorkers(0);
     });
     const bs = ACTS[0];
@@ -408,33 +470,39 @@ export class OfficeScene extends OfScene {
     add(cof.x + cof.w, cof.y + cof.d, () => this.coffee(cof));
     add(15.0, 4.7, () => this.plant(14.95, 4.65, 0.5, 0.9));
     add(6.9, 11.4, () => this.plant(6.65, 11.25, 0.42, 0.7));
-    add(9.2, 2.1, () => this.plant(9.0, 1.95, 0.36, 0.6)); // desk row end plant
-    // nap corner: a dog bed under the sleeping bots
+    add(9.2, 2.1, () => this.plant(9.0, 1.95, 0.36, 0.6));
+    // nap corner: nap rug drawn in paintFloor; napping workers sorted with it
     add(13.7, 10.2, () => {
-      const s = this.surf();
-      this.poly([this.P(12.3, 9.1), this.P(15.4, 9.1), this.P(15.4, 11.2), this.P(12.3, 11.2)],
-        this.dark ? 'rgba(90,70,60,.5)' : 'rgba(196,170,150,.65)', 'rgba(80,60,45,.4)', 1);
       const napping = [...this.workers.values()].filter((w) => w.kind === 'nap')
         .sort((a, b) => this.depth(a.x, a.y) - this.depth(b.x, b.y));
       for (const w of napping) this.worker(w);
     });
-    // free-roaming workers sorted with furniture
     for (const w of this.workers.values()) {
       if (this.sofaGroup(w) >= 0 || w.kind === 'nap') continue;
-      const sits = !w.walking && (w.kind === 'seat' || this.sofaSlot(w) >= 0);
-      out.push({ k: this.depth(w.x, w.y + (sits ? 0.34 : 0)) + 0.02, fn: () => this.worker(w) });
+      out.push({ k: this.depth(w.x, w.y) + 0.02, fn: () => this.worker(w) });
+    }
+    // 离场小人：按其最后深度插入，走门渐隐
+    for (const L of this.leaving) {
+      out.push({ k: this.depth(L.x, L.y) + 0.02, fn: () => this.leaver(L) });
     }
     return out;
   }
-  // One sofa unit = backrest shell + seat cushion. (x,y,w,d) is the
-  // backrest rect; (cx,cy) is the cushion origin — the cushion extends 0.8
-  // toward the sitter from it (v1 geometry: south cushions sit at y=10.55 in
-  // front of the y=11.35 backrest; west cushions at x=0.7 east of the x=0.35
-  // backrest). Params were originally mis-wired (dead bx/by) — T4 review fix.
-  sofaUnit(x, y, w, d, cx, cy, face, s) {
-    this.box(x, y, 0, w, d, 0.95, s.sofaArm); // backrest against the wall
-    if (face === 'e') this.box(cx, cy, 0, 0.8, d, 0.42, s.sofaSeat);
-    else this.box(cx, cy, 0, w, 0.8, 0.42, s.sofaSeat);
+  cushion(x, y, w, d) { // sofa armrest cushion (rounded, soft)
+    const s = this.surf();
+    this.groundShadow(x + w / 2, y + d / 2, w * 0.7, d * 0.45, 0.7);
+    this.softQuad([this.P(x, y, 0), this.P(x + w, y, 0), this.P(x + w, y + d, 0.42), this.P(x, y + d, 0.42)], 10, s.sofa);
+  }
+  sofaUnit(x, y, w, d, cx, cy, face) {
+    const s = this.surf();
+    // backrest (rounded soft block) + seat cushion
+    this.groundShadow(x + w / 2, y + d / 2 + 0.4, w * 0.8, d * 1.1, 0.7);
+    this.softQuad([this.P(x, y, 0), this.P(x + w, y, 0), this.P(x + w, y + d, 0.95), this.P(x, y + d, 0.95)], 12, s.sofa);
+    if (face === 'e') this.softQuad([this.P(cx, cy, 0), this.P(cx + 0.8, cy, 0), this.P(cx + 0.8, cy + d, 0.42), this.P(cx, cy + d, 0.42)], 10, s.sofaSeat);
+    else this.softQuad([this.P(cx, cy, 0), this.P(cx + w, cy, 0), this.P(cx + w, cy + 0.8, 0.42), this.P(cx, cy + 0.8, 0.42)], 10, s.sofaSeat);
+    // a pillow on every other unit
+    if ((Math.round(x * 7 + y) & 1) === 0) {
+      this.softQuad([this.P(x + 0.08, y + d * 0.2, 0.5), this.P(x + 0.34, y + d * 0.1, 0.5), this.P(x + 0.34, y + d * 0.75, 0.72), this.P(x + 0.08, y + d * 0.85, 0.72)], 6, s.pillow);
+    }
   }
   sofaSlot(w) {
     if (w.kind === 'act' && w.slot >= ACTS.length) return w.slot - ACTS.length;
@@ -457,54 +525,61 @@ export class OfficeScene extends OfScene {
     const wkey = this.atDesk?.[i];
     const w = wkey != null ? this.workers.get(wkey) : null;
     const a = w?.a;
-    // chair (seat + backrest), oriented toward the desk
-    this.box(d.seat[0] - 0.28, d.seat[1] - 0.22, 0, 0.56, 0.12, 0.52, s.chair);
-    this.box(d.seat[0] - 0.3, d.seat[1] - (d.face === 'n' ? 0.34 : -0.12), 0.4, 0.6, 0.12, 0.5, ofShade(s.chair, -0.15));
-    // legs + top
-    for (const [lx, ly] of [[0.06, 0.06], [d.w - 0.16, 0.06], [0.06, d.d - 0.16], [d.w - 0.16, d.d - 0.16]]) {
-      this.box(d.x + lx, d.y + ly, 0, 0.1, 0.1, 0.68, s.deskLeg, { line: false });
+    // soft ground shadow + rounded top
+    this.groundShadow(d.x + d.w / 2, d.y + d.d / 2 + 0.25, d.w * 0.62, d.d * 1.1, 0.8);
+    // legs (two soft rounded columns)
+    for (const lx of [d.x + 0.12, d.x + d.w - 0.3]) {
+      const [px0, py0] = this.P(lx, d.y + d.d - 0.12, 0);
+      const [px1, py1] = this.P(lx, d.y + d.d - 0.12, 0.68);
+      const g = this.g;
+      g.strokeStyle = s.deskLeg; g.lineCap = 'round';
+      g.lineWidth = Math.max(2.5, this.s * 0.09);
+      g.beginPath(); g.moveTo(px0, py0); g.lineTo(px1, py1); g.stroke();
     }
-    this.box(d.x, d.y, 0.68, d.w, d.d, 0.08, s.desk);
-    // monitor + stand; the panel faces the sitter
+    // desktop (rounded iso quad)
+    this.softQuad([this.P(d.x, d.y, 0.68), this.P(d.x + d.w, d.y, 0.68), this.P(d.x + d.w, d.y + d.d, 0.68), this.P(d.x, d.y + d.d, 0.68)], 9, s.desk);
+    this.softQuad([this.P(d.x + 0.08, d.y + 0.07, 0.76), this.P(d.x + d.w - 0.08, d.y + 0.07, 0.76), this.P(d.x + d.w - 0.08, d.y + d.d - 0.07, 0.76), this.P(d.x + 0.08, d.y + d.d - 0.07, 0.76)], 7, ofShade(s.desk, 0.16));
+    // monitor + stand; screen faces the sitter
     const mx = d.x + d.w / 2 - 0.55, my = d.y + d.d / 2 - 0.34;
     this.box(d.x + d.w / 2 - 0.06, d.y + d.d / 2 - 0.05, 0.76, 0.12, 0.12, 0.14, s.machine, { line: false });
-    this.box(mx, my, 0.9, 1.1, 0.68, 0.06, ofShade(s.machine, -0.1));
+    this.softQuad([this.P(mx, my, 0.9), this.P(mx + 1.1, my, 0.9), this.P(mx + 1.1, my + 0.68, 0.9), this.P(mx, my + 0.68, 0.9)], 5, ofShade(s.machine, -0.05));
     this.screen(d, i, w, a);
-    // keyboard toward the sitter + a mug
+    // keyboard (rounded) + mug
     const ky = d.face === 'n' ? d.y + d.d - 0.3 : d.y + 0.12;
-    this.box(d.x + d.w / 2 - 0.28, ky, 0.76, 0.56, 0.17, 0.035, '#2c343f', { line: false });
-    this.onFront(d.x + d.w / 2 - 0.28, ky - 0.01, 0.76, 0.56, 0.17, 0.035, 0.12, 0.5, 0.88, 0.62, 'rgba(160,175,195,.5)');
-    this.box(d.x + d.w - 0.24, d.y + d.d / 2 + 0.08, 0.76, 0.1, 0.1, 0.12, a?.status === 'working' ? '#e8c14d' : '#b06a4a', { line: false });
-    // provider plaque standing at the desk's left
+    this.softQuad([this.P(d.x + d.w / 2 - 0.28, ky, 0.76), this.P(d.x + d.w / 2 + 0.28, ky, 0.76), this.P(d.x + d.w / 2 + 0.28, ky + 0.17, 0.8), this.P(d.x + d.w / 2 - 0.28, ky + 0.17, 0.8)], 4, '#4a525d');
+    this.mug(d.x + d.w - 0.24, d.y + d.d / 2 + 0.12, a?.status === 'working' ? '#e8c14d' : '#c98d64');
     this.plaque(d, a);
   }
-  // monitor screen: lit ticker for working bots, standby mark for idle,
-  // dark glass when offline/empty
+  mug(x, y, color) {
+    const [px, py] = this.P(x, y, 0.78);
+    const g = this.g, r = Math.max(2.2, this.s * 0.06);
+    g.fillStyle = color;
+    g.beginPath(); g.arc(px, py, r, 0, Math.PI * 2); g.fill();
+    g.fillStyle = this.dark ? '#22282e' : '#f4f1ea';
+    g.beginPath(); g.arc(px, py, r * 0.55, 0, Math.PI * 2); g.fill();
+  }
+  // monitor screen: lit ticker for working, standby mark for idle, dark glass
   screen(d, i, w, a) {
     const s = this.surf();
     const mx = d.x + d.w / 2 - 0.55;
     const my = d.y + d.d / 2 - 0.34;
-    const south = d.face !== 's'; // panel faces the sitter
+    const south = d.face !== 's';
     const yPlane = south ? my + 0.68 : my - 0.005;
     const quad = [this.P(mx + 0.05, yPlane, 0.97), this.P(mx + 1.05, yPlane, 0.97),
       this.P(mx + 1.05, yPlane, 1.5), this.P(mx + 0.05, yPlane, 1.5)];
     const working = a?.status === 'working';
     const feed = w != null ? this.screens.get(w.key) : null;
-    const body = working ? '#12291d' : a ? s.screenIdle : s.screenOff;
-    this.poly(quad, body, working ? 'rgba(140,240,180,.4)' : 'rgba(255,255,255,.08)', 1);
+    const body = working ? '#14301f' : a ? s.screenIdle : s.screenOff;
+    rQuad(this.g, quad, 4);
+    this.g.fillStyle = body; this.g.fill();
+    this.g.strokeStyle = working ? 'rgba(140,240,180,.4)' : 'rgba(255,255,255,.08)';
+    this.g.lineWidth = 1; this.g.stroke();
     const g = this.g;
     g.save();
-    g.beginPath();
-    quad.forEach(([x, y], idx) => (idx ? g.lineTo(x, y) : g.moveTo(x, y)));
-    g.closePath();
+    rQuad(g, quad, 4);
     g.clip();
     const qh = Math.hypot(quad[3][0] - quad[0][0], quad[3][1] - quad[0][1]);
     if (working) {
-      // faint scanlines + a scrolling latest-event ticker
-      g.fillStyle = 'rgba(120,230,170,.05)';
-      for (let z = 0.1; z < 1; z += 0.22) {
-        this.poly([this.P(mx + 0.05, yPlane, 0.97 + z), this.P(mx + 1.05, yPlane, 0.97 + z), this.P(mx + 1.05, yPlane, 0.97 + z + 0.05), this.P(mx + 0.05, yPlane, 0.97 + z + 0.05)], 'rgba(140,235,180,.06)');
-      }
       const text = shortTxt(feed?.text || a?.progress?.line || '正在工作…', 46);
       const color = feed?.color || '#7ce3a4';
       const fs = Math.max(6.5, qh * 0.34);
@@ -521,7 +596,6 @@ export class OfficeScene extends OfScene {
         g.fillText(text, x0 + dx + 9, by);
       }
     } else if (a) {
-      // standby: provider mark breathing in the dark glass
       const pv = providerOf(a.provider);
       const pulse = 0.35 + 0.25 * Math.sin(this.t * 1.4 + ofSeed(a.id) % 10);
       const cx = (quad[0][0] + quad[1][0]) / 2, cy = (quad[0][1] + quad[3][1]) / 2;
@@ -536,16 +610,14 @@ export class OfficeScene extends OfScene {
   plaque(d, a) {
     const pv = providerOf(a?.provider);
     const x = d.x + 0.1, y = d.y + d.d / 2 - 0.12, z = 0.76;
-    this.box(x, y, z, 0.36, 0.07, 0.3, pv.color);
     const south = d.face !== 's';
     const yPlane = south ? y + 0.07 : y - 0.005;
     const q = [this.P(x, yPlane, z + 0.03), this.P(x + 0.36, yPlane, z + 0.03), this.P(x + 0.36, yPlane, z + 0.27), this.P(x, yPlane, z + 0.27)];
-    this.poly(q, ofShade(pv.color, 0.12));
+    rQuad(this.g, q, 5);
+    this.g.fillStyle = pv.color; this.g.fill();
     const cx = (q[0][0] + q[1][0]) / 2, cy = (q[0][1] + q[3][1]) / 2;
-    const r = Math.max(2.4, this.s * 0.09);
-    this.mark(pv.mark, cx, cy, r, 'rgba(255,255,255,.95)');
+    this.mark(pv.mark, cx, cy, Math.max(2.4, this.s * 0.09), 'rgba(255,255,255,.95)');
   }
-  // provider marks drawn in pixel space (vector, not emoji — crisp at any zoom)
   mark(kind, cx, cy, r, color) {
     const g = this.g;
     g.save();
@@ -585,17 +657,21 @@ export class OfficeScene extends OfScene {
   }
   bookshelf(bs) {
     const s = this.surf();
-    this.box(bs.x, bs.y, 0, bs.w, bs.d, 2.1, s.shelf);
+    this.groundShadow(bs.x + bs.w / 2, bs.y + bs.d + 0.3, bs.w * 0.7, 0.35, 0.8);
+    this.softQuad([this.P(bs.x, bs.y, 0), this.P(bs.x + bs.w, bs.y, 0), this.P(bs.x + bs.w, bs.y + bs.d, 2.1), this.P(bs.x, bs.y + bs.d, 2.1)], 10, s.shelf);
+    const g = this.g;
+    // soft book spines (rounded) on the front face
     for (let shelf = 0; shelf < 3; shelf++) {
       for (let k = 0; k < 5; k++) {
-        this.onFront(bs.x, bs.y, 0.12 + shelf * 0.62, bs.w, bs.d, 2.1,
-          0.06 + k * 0.18, 0.1, 0.06 + k * 0.18 + 0.14, 0.82, s.books[(k + shelf) % 5]);
+        const u0 = 0.07 + k * 0.18, u1 = u0 + 0.13;
+        const p = (u, v) => this.P(bs.x + u * bs.w, bs.y + bs.d, 0.12 + shelf * 0.62 + v * 0.66);
+        const a = p(u0, 0.12), b = p(u1, 0.1), c = p(u1, 0.62), d2 = p(u0, 0.64);
+        this.softQuad([a, b, c, d2], 3, s.books[(k + shelf) % 5]);
       }
     }
   }
   cat() {
-    // the shelf cat (ported beloved resident): pink blanket, cream body,
-    // pacing + tail + blinking
+    // the shelf cat: pink blanket, cream body, pacing + tail + blinking
     const bs = ACTS[0];
     const t = this.reduced ? 0 : this.t;
     const pace = 0.5 + 0.5 * Math.sin(t * 0.22);
@@ -604,41 +680,71 @@ export class OfficeScene extends OfScene {
     const z = 1.55;
     const awake = !this.reduced && Math.sin(t * 0.31) > -0.35;
     const tail = Math.sin(t * (awake ? 1.5 : 0.4));
-    this.box(x - 0.27, y - 0.17, z - 0.03, 0.54, 0.34, 0.05, '#e8879e');
-    this.box(x - 0.17, y - 0.1, z, 0.34, 0.2, 0.12, '#f2e3c8');
-    this.box(x + 0.12, y - 0.07, z + 0.06, 0.17, 0.15, 0.13, '#f7ecd9');
-    this.box(x - 0.12, y - 0.1, z + 0.1, 0.06, 0.2, 0.025, '#d99a4e', { line: false });
-    this.box(x - 0.02, y - 0.1, z + 0.1, 0.05, 0.2, 0.025, '#d99a4e', { line: false });
-    this.box(x - 0.28, y + 0.02 + tail * 0.04, z + 0.05, 0.13, 0.05, 0.05, '#d99a4e', { line: false });
-    this.onFront(x + 0.12, y - 0.07, z + 0.06, 0.17, 0.15, 0.13, 0.2, awake ? 0.44 : 0.46, 0.36, awake ? 0.58 : 0.48, '#2a2320');
-    this.onFront(x + 0.12, y - 0.07, z + 0.06, 0.17, 0.15, 0.13, 0.64, awake ? 0.44 : 0.46, 0.8, awake ? 0.58 : 0.48, '#2a2320');
+    const P = (dx, dy, dz) => this.P(x + dx, y + dy, z + dz);
+    this.softQuad([P(-0.3, -0.2, -0.03), P(0.3, -0.2, -0.03), P(0.3, 0.2, 0.02), P(-0.3, 0.2, 0.02)], 8, '#e8879e');
+    this.softQuad([P(-0.18, -0.11, 0), P(0.16, -0.11, 0), P(0.16, 0.11, 0.12), P(-0.18, 0.11, 0.12)], 6, '#f2e3c8');
+    this.softQuad([P(0.1, -0.08, 0.06), P(0.28, -0.08, 0.06), P(0.28, 0.08, 0.19), P(0.1, 0.08, 0.19)], 5, '#f7ecd9');
+    const g = this.g;
+    // ears (two little dots) + tail
+    g.fillStyle = '#d99a4e';
+    for (const ey of [-0.07, 0.07]) {
+      const e = P(0.24, ey, 0.19);
+      g.beginPath(); g.arc(e[0], e[1], 1.8, 0, Math.PI * 2); g.fill();
+    }
+    const t0 = P(-0.2, 0.05 + tail * 0.04, 0.06), t1 = P(-0.34, 0.12 + tail * 0.06, 0.1);
+    g.strokeStyle = '#d99a4e'; g.lineWidth = 2; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(t0[0], t0[1]); g.lineTo(t1[0], t1[1]); g.stroke();
+    // eyes
+    const eye = (u) => {
+      const p = P(0.2, u, 0.13);
+      g.fillStyle = '#2a2320';
+      g.beginPath(); g.arc(p[0], p[1], awake ? 1.2 : 0.5, 0, Math.PI * 2); g.fill();
+    };
+    eye(-0.05); eye(0.05);
   }
   pingpong(pp) {
     const s = this.surf();
+    this.groundShadow(pp.x + pp.w / 2, pp.y + pp.d / 2 + 0.3, pp.w * 0.62, pp.d * 0.75, 0.8);
+    const g = this.g;
     for (const [lx, ly] of [[0.1, 0.1], [pp.w - 0.18, 0.1], [0.1, pp.d - 0.18], [pp.w - 0.18, pp.d - 0.18]]) {
-      this.box(pp.x + lx, pp.y + ly, 0, 0.1, 0.1, 0.66, s.machine, { line: false });
+      const [px0, py0] = this.P(pp.x + lx, pp.y + ly, 0);
+      const [px1, py1] = this.P(pp.x + lx, pp.y + ly, 0.66);
+      g.strokeStyle = s.machine; g.lineCap = 'round'; g.lineWidth = Math.max(2.5, this.s * 0.09);
+      g.beginPath(); g.moveTo(px0, py0); g.lineTo(px1, py1); g.stroke();
     }
-    this.box(pp.x, pp.y, 0.66, pp.w, pp.d, 0.09, '#1f6e50');
-    this.box(pp.x + 0.02, pp.y + 0.02, 0.75, pp.w - 0.04, pp.d - 0.04, 0.02, '#2e9a6d', { line: false });
-    this.box(pp.x - 0.03, pp.y + pp.d / 2 - 0.03, 0.75, pp.w + 0.06, 0.06, 0.2, '#eef2f5');
-    this.box(pp.x + 0.28, pp.y + 0.3, 0.78, 0.2, 0.14, 0.03, '#d9534f');
-    this.box(pp.x + 1.42, pp.y + 0.62, 0.78, 0.2, 0.14, 0.03, '#3f6df5');
+    this.softQuad([this.P(pp.x, pp.y, 0.66), this.P(pp.x + pp.w, pp.y, 0.66), this.P(pp.x + pp.w, pp.y + pp.d, 0.66), this.P(pp.x, pp.y + pp.d, 0.66)], 10, '#2c7a5b');
+    this.softQuad([this.P(pp.x + 0.05, pp.y + 0.05, 0.75), this.P(pp.x + pp.w - 0.05, pp.y + 0.05, 0.75), this.P(pp.x + pp.w - 0.05, pp.y + pp.d - 0.05, 0.75), this.P(pp.x + 0.05, pp.y + pp.d - 0.05, 0.75)], 8, '#3f9e73');
+    // net + paddles + ball
+    this.softQuad([this.P(pp.x - 0.02, pp.y + pp.d / 2 - 0.02, 0.75), this.P(pp.x + pp.w + 0.02, pp.y + pp.d / 2 - 0.02, 0.75), this.P(pp.x + pp.w + 0.02, pp.y + pp.d / 2 + 0.04, 0.95), this.P(pp.x - 0.02, pp.y + pp.d / 2 + 0.04, 0.95)], 2, '#eef2f5');
     const bt = this.reduced ? 0 : this.t;
-    this.box(pp.x + 0.95 + Math.sin(bt * 2.1) * 0.3, pp.y + 0.42 + Math.cos(bt * 1.7) * 0.12, 0.8, 0.05, 0.05, 0.05, '#f5d76e', { line: false });
+    const ball = this.P(pp.x + 0.95 + Math.sin(bt * 2.1) * 0.3, pp.y + 0.42 + Math.cos(bt * 1.7) * 0.12, 0.82);
+    g.fillStyle = '#f5d76e';
+    g.beginPath(); g.arc(ball[0], ball[1], Math.max(1.6, this.s * 0.05), 0, Math.PI * 2); g.fill();
   }
   coffee(cof) {
     const s = this.surf();
-    this.box(cof.x, cof.y, 0, cof.w, cof.d, 0.92, s.counter);
-    this.box(cof.x + 0.04, cof.y + 0.04, 0.92, cof.w - 0.08, cof.d - 0.08, 0.06, ofShade(s.counter, 0.3));
-    this.box(cof.x + 0.14, cof.y + 0.1, 0.98, 0.46, 0.34, 0.5, s.machine);
-    this.box(cof.x + 0.2, cof.y + 0.1, 1.14, 0.34, 0.02, 0.2, '#e8874e', { line: false });
-    for (let i = 0; i < 3; i++) this.box(cof.x + 0.86 + i * 0.14, cof.y + 0.34, 0.98, 0.09, 0.09, 0.13, ['#eef2f5', '#e8c14d', '#e8879e'][i], { line: false });
-    this.box(cof.x + 0.06, cof.y + 0.02, 1.7, cof.w - 0.12, 0.16, 0.06, '#5a3e28');
-    for (let i = 0; i < 4; i++) this.box(cof.x + 0.16 + i * 0.26, cof.y + 0.05, 1.76, 0.16, 0.12, 0.18, ['#c05a52', '#4a8a5c', '#c89040', '#4a6a9a'][i], { line: false });
-    // steam over the machine (new: gentle ambience)
+    this.groundShadow(cof.x + cof.w / 2, cof.y + cof.d / 2 + 0.3, cof.w * 0.66, cof.d * 0.7, 0.8);
+    this.softQuad([this.P(cof.x, cof.y, 0), this.P(cof.x + cof.w, cof.y, 0), this.P(cof.x + cof.w, cof.y + cof.d, 0.92), this.P(cof.x, cof.y + cof.d, 0.92)], 12, s.counter);
+    this.softQuad([this.P(cof.x + 0.05, cof.y + 0.05, 0.92), this.P(cof.x + cof.w - 0.05, cof.y + 0.05, 0.92), this.P(cof.x + cof.w - 0.05, cof.y + cof.d - 0.05, 0.99), this.P(cof.x + 0.05, cof.y + cof.d - 0.05, 0.99)], 9, ofShade(s.counter, 0.22));
+    this.softQuad([this.P(cof.x + 0.14, cof.y + 0.1, 0.99), this.P(cof.x + 0.6, cof.y + 0.1, 0.99), this.P(cof.x + 0.6, cof.y + 0.44, 1.5), this.P(cof.x + 0.14, cof.y + 0.44, 1.5)], 6, s.machine);
+    const g = this.g;
+    // cups row
+    for (let i = 0; i < 3; i++) {
+      const p = this.P(cof.x + 0.86 + i * 0.14, cof.y + 0.4, 1.0);
+      g.fillStyle = ['#eef2f5', '#e8c14d', '#e8879e'][i];
+      g.beginPath(); g.arc(p[0], p[1], Math.max(1.8, this.s * 0.055), 0, Math.PI * 2); g.fill();
+    }
+    // beans jars
+    for (let i = 0; i < 4; i++) {
+      const p0 = this.P(cof.x + 0.16 + i * 0.26, cof.y + 0.05, 1.0);
+      const p1 = this.P(cof.x + 0.16 + i * 0.26, cof.y + 0.05, 1.18);
+      g.strokeStyle = ['#c05a52', '#4a8a5c', '#c89040', '#4a6a9a'][i];
+      g.lineWidth = Math.max(3, this.s * 0.1); g.lineCap = 'round';
+      g.beginPath(); g.moveTo(p0[0], p0[1]); g.lineTo(p1[0], p1[1]); g.stroke();
+    }
+    // steam
     if (!this.reduced) {
-      const g = this.g;
-      const [sx, sy] = this.P(cof.x + 0.37, cof.y + 0.28, 1.5);
+      const [sx, sy] = this.P(cof.x + 0.37, cof.y + 0.28, 1.55);
       for (let i = 0; i < 2; i++) {
         const p = ((this.t * 0.35 + i * 0.5) % 1);
         g.strokeStyle = `rgba(240,244,248,${0.4 * (1 - p)})`;
@@ -651,116 +757,124 @@ export class OfficeScene extends OfScene {
   }
   plant(x, y, size, h) {
     const s = this.surf();
-    this.box(x, y, 0, size, size, size * 0.8, s.pot);
     const g = this.g;
-    const [px, py] = this.P(x + size / 2, y + size / 2, size * 0.8 + h * 0.5);
+    this.groundShadow(x + size / 2, y + size / 2, size * 0.8, size * 0.4, 0.7);
+    const [px, py] = this.P(x + size / 2, y + size / 2, size * 0.5);
     const sway = this.reduced ? 0 : Math.sin(this.t * 0.8 + x * 3) * 2;
-    for (const [dx, dy, r] of [[-5, -2, size * this.s * 0.16], [5, -6, size * this.s * 0.14], [0, -12, size * this.s * 0.15]]) {
-      g.fillStyle = dx < 0 ? s.plant : ofShade(s.plant, 0.18);
-      g.beginPath(); g.arc(px + dx + sway, py + dy, Math.max(3, r), 0, Math.PI * 2); g.fill();
+    g.strokeStyle = ofShade(s.pot, -0.25); g.lineWidth = Math.max(1.5, size * this.s * 0.07); g.lineCap = 'round';
+    const [tx, ty] = this.P(x + size / 2, y + size / 2, size * 0.8 + h * 0.4);
+    g.beginPath(); g.moveTo(px, py); g.lineTo(tx, ty); g.stroke();
+    for (const [dx, dy, r] of [[-5, -3, size * this.s * 0.17], [5, -7, size * this.s * 0.15], [0, -13, size * this.s * 0.16]]) {
+      g.fillStyle = dx < 0 ? s.plant : ofShade(s.plant, 0.2);
+      g.beginPath(); g.arc(px + dx + sway, py + dy - h * this.s * 0.25, Math.max(3, r), 0, Math.PI * 2); g.fill();
     }
-    g.fillStyle = ofShade(s.pot, -0.2);
-    g.fillRect(px - size * this.s * 0.06, py + size * this.s * 0.1, size * this.s * 0.12, h * this.s * 0.3);
+    const [bx, by] = this.P(x + size / 2, y + size / 2, size * 0.42);
+    g.fillStyle = s.pot;
+    roundRect(g, bx - size * this.s * 0.28, by - size * this.s * 0.16, size * this.s * 0.56, size * this.s * 0.42, size * this.s * 0.16);
+    g.fill();
   }
 
-  // —— worker art (ported poses, repainted + provider shirts) ———————————
-  worker(w) {
-    const t = this.t + w.phase;
-    const a = w.a || {};
-    const off = isOff(a);
-    const shirt = off ? ofMix(w.shirt, '#6b7280', 0.55) : w.shirt;
-    const pants = off ? ofMix(w.pants, '#6b7280', 0.4) : w.pants;
-    const skin = off ? ofMix(w.skin, '#8b8b93', 0.35) : w.skin;
-    const sitting = !w.walking && (w.kind === 'seat' || this.sofaSlot(w) >= 0);
-    const sleeping = !w.walking && (w.kind === 'nap' || (this.sofaSlot(w) >= 0 && a.status === 'idle'));
-    const { x, y } = w;
-    let z = 0;
-    if (w.walking) z = Math.abs(Math.sin(t * 9)) * 0.06;
-    const bw = 0.44, bd = 0.3;
-    const bx = x - bw / 2, by = y - bd / 2;
-    const [shx, shy] = this.P(x, y, 0);
+  // —— worker art：头像脸 + 胶囊身 + 简腿（screen-space，锚在脚点）——————
+  worker(w, opts = {}) {
     const g = this.g;
-    // soft two-layer ground shadow
+    const a = w.a || {};
+    const off = isOff(a) || opts.leaving;
+    const status = a.status ?? 'offline';
+    const working = status === 'working';
+    const t = this.t + (w.phase ?? 0);
+    const alpha = opts.alpha ?? 1;
+    const pv = providerOf(a.provider);
+    const bodyColor = off ? ofMix(pv.color, this.dark ? '#5c6663' : '#a8b0ac', 0.55) : pv.color;
+    const [fx, fy] = this.P(w.x, w.y, 0);
+    const k = this.s; // scale
+    const zoom = this.cam.z || 1;
+    const bw = Math.max(10, k * 0.4 * zoom);
+    const bodyH = Math.max(14, k * 0.52 * zoom);
+    const legH = Math.max(5, k * 0.16 * zoom);
+    const headR = Math.max(7, k * 0.23 * zoom);
+    const sitting = !w.walking && (w.kind === 'seat' || this.sofaSlot(w) >= 0);
+    // 打字微动 / 呼吸 / 行走摆动
+    const typing = working && sitting;
+    const bob = typing ? Math.sin(t * 10) * k * 0.012 : 0;
+    const breath = (!working && !off && !w.walking) ? 1 + Math.sin(t * 2) * 0.02 : 1;
+    const step2 = w.walking ? Math.sin(t * 9) * legH * 0.55 : 0;
+    g.save();
+    g.globalAlpha = alpha;
+    // ground shadow
     g.fillStyle = this.surf().shadow;
-    g.beginPath(); g.ellipse(shx, shy, this.s * 0.32, this.s * 0.17, 0, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.ellipse(fx, fy, bw * 0.55, bw * 0.3, 0, 0, Math.PI * 2); g.fill();
     if (this.selected === w.key || this.hover === w.key) {
-      g.save();
       g.strokeStyle = this.selected === w.key ? 'rgba(255,196,80,.95)' : 'rgba(255,255,255,.55)';
       g.lineWidth = this.selected === w.key ? 2.5 : 1.5;
-      g.beginPath(); g.ellipse(shx, shy, this.s * 0.46, this.s * 0.24, 0, 0, Math.PI * 2); g.stroke();
-      g.restore();
+      g.beginPath(); g.ellipse(fx, fy, bw * 0.8, bw * 0.42, 0, 0, Math.PI * 2); g.stroke();
     }
-    let hip = 0.34;
-    const dir = FACE[w.facing] || FACE.s;
-    if (sitting) {
-      hip = 0.4;
-      const thigh = 0.4, legW = 0.16;
-      if (dir[1] !== 0) {
-        const ty = dir[1] > 0 ? by + bd - 0.1 : by - thigh + 0.1;
-        this.box(bx + 0.04, ty, hip - 0.02, legW, thigh, 0.13, pants);
-        this.box(bx + bw - legW - 0.04, ty, hip - 0.02, legW, thigh, 0.13, pants);
-        const sy = dir[1] > 0 ? ty + thigh - 0.14 : ty;
-        this.box(bx + 0.04, sy, 0, legW, 0.14, hip, pants);
-        this.box(bx + bw - legW - 0.04, sy, 0, legW, 0.14, hip, pants);
-      } else {
-        const tx = dir[0] > 0 ? bx + bw - 0.1 : bx - thigh + 0.1;
-        this.box(tx, by + 0.05, hip - 0.02, thigh, 0.16, 0.13, pants);
-        this.box(tx, by + bd - 0.21, hip - 0.02, thigh, 0.16, 0.13, pants);
-        const sx = dir[0] > 0 ? tx + thigh - 0.14 : tx;
-        this.box(sx, by + 0.05, 0, 0.14, 0.16, hip, pants);
-        this.box(sx, by + bd - 0.21, 0, 0.14, 0.16, hip, pants);
-      }
+    const bodyBottom = fy - legH * (sitting ? 0.35 : 1);
+    // 简腿：两根圆头短线
+    g.strokeStyle = ofShade(bodyColor, -0.35);
+    g.lineWidth = Math.max(2, bw * 0.16);
+    g.lineCap = 'round';
+    const legSpread = bw * 0.2;
+    g.beginPath();
+    g.moveTo(fx - legSpread, bodyBottom);
+    g.lineTo(fx - legSpread + step2 * 0.6, fy - (w.walking ? Math.abs(step2) * 0.4 : 0));
+    g.stroke();
+    g.beginPath();
+    g.moveTo(fx + legSpread, bodyBottom);
+    g.lineTo(fx + legSpread - step2 * 0.6, fy - (w.walking ? Math.abs(step2) * 0.4 : 0));
+    g.stroke();
+    // 胶囊身（provider 色，浅浅的高光）
+    const bodyW = bw * breath;
+    const bodyTop = bodyBottom - bodyH + bob;
+    const grad = g.createLinearGradient(fx - bodyW / 2, bodyTop, fx + bodyW / 2, bodyBottom);
+    grad.addColorStop(0, ofShade(bodyColor, 0.18));
+    grad.addColorStop(1, bodyColor);
+    roundRect(g, fx - bodyW / 2, bodyTop, bodyW, bodyH, bodyW / 2);
+    g.fillStyle = grad; g.fill();
+    // 胸前小工牌点
+    g.fillStyle = 'rgba(255,255,255,.85)';
+    g.beginPath(); g.arc(fx, bodyTop + bodyH * 0.55, Math.max(1.2, bw * 0.07), 0, Math.PI * 2); g.fill();
+    // 头像脸（DiceBear，同 botId 同脸）+ provider 描边环
+    const headCx = fx;
+    const headCy = bodyTop - headR * 0.9 + bob;
+    const img = this.faceImgs.get(w.key);
+    if (off) g.filter = 'grayscale(0.8) opacity(0.85)';
+    g.save();
+    g.beginPath(); g.arc(headCx, headCy, headR, 0, Math.PI * 2); g.clip();
+    if (img != null && img.complete && img.naturalWidth > 0) {
+      g.drawImage(img, headCx - headR, headCy - headR, headR * 2, headR * 2);
     } else {
-      const step2 = w.walking ? Math.sin(t * 9) * 0.08 : 0;
-      this.box(bx + 0.04, by + 0.07 + step2, z, 0.16, 0.16, hip, pants);
-      this.box(bx + bw - 0.2, by + 0.07 - step2, z, 0.16, 0.16, hip, pants);
+      g.fillStyle = ofShade(bodyColor, 0.35);
+      g.fillRect(headCx - headR, headCy - headR, headR * 2, headR * 2);
     }
-    const zb = (sitting ? hip + 0.08 : hip) + z;
-    this.box(bx, by, zb, bw, bd, 0.42, shirt);
-    // provider chest patch: a light badge with the provider mark
-    this.onFront(bx, by, zb, bw, bd, 0.42, 0.36, 0.58, 0.64, 0.97, 'rgba(255,255,255,.88)');
-    const badgeX = this.P(bx + bw * 0.5, by + bd, zb + 0.42 * 0.775);
-    this.mark(off ? 'diamond' : providerOf(a.provider).mark, badgeX[0], badgeX[1], Math.max(1.6, this.s * 0.055), off ? 'rgba(90,98,110,.9)' : providerOf(a.provider).color);
-    // arms: typing at desks, swinging on walks
-    const typing = sitting && w.kind === 'seat' && a.status === 'working';
-    const ay = typing ? Math.sin(t * 18) * 0.03 : w.walking ? Math.sin(t * 9) * 0.02 : 0;
-    this.box(bx - 0.12, by + 0.06 + ay, zb + 0.08, 0.12, 0.16, 0.32, ofShade(shirt, -0.1));
-    this.box(bx + bw, by + 0.06 - ay, zb + 0.08, 0.12, 0.16, 0.32, ofShade(shirt, -0.1));
-    // head + hair + face
-    const hs = 0.46;
-    const hx = x - hs / 2 + (sleeping ? 0.06 : 0), hy = y - hs / 2 + (sleeping ? 0.04 : 0);
-    const hz = zb + 0.42 - (sleeping ? 0.1 : 0) + (typing ? Math.sin(t * 3.1) * 0.008 : 0);
-    this.box(hx, hy, hz, hs, hs, hs, skin);
-    const f = w.facing === 'n' ? 'n' : w.facing === 'e' ? 'e' : 's';
-    const hair = off ? ofMix(w.hair, '#8b8b93', 0.3) : w.hair;
-    const eyes = (c0, c1) => {
-      if (sleeping) {
-        this.onFront(hx, hy, hz, hs, hs, hs, c0, 0.5, c0 + 0.2, 0.56, '#33302c');
-        this.onFront(hx, hy, hz, hs, hs, hs, c1, 0.5, c1 + 0.2, 0.56, '#33302c');
-        return;
+    g.restore();
+    g.filter = 'none';
+    g.strokeStyle = pv.color;
+    g.lineWidth = Math.max(1.5, headR * 0.14);
+    g.beginPath(); g.arc(headCx, headCy, headR + g.lineWidth * 0.4, 0, Math.PI * 2); g.stroke();
+    // 状态标识：working provider 色脉动点；休假 Zz
+    if (working) {
+      const pulse = 0.5 + 0.5 * Math.sin(t * 3);
+      g.fillStyle = pv.color;
+      g.globalAlpha = alpha * (0.55 + 0.45 * pulse);
+      g.beginPath(); g.arc(headCx + headR * 0.85, headCy - headR * 0.85, Math.max(1.6, headR * 0.16 + pulse * headR * 0.08), 0, Math.PI * 2); g.fill();
+      g.globalAlpha = alpha;
+    } else if (off) {
+      for (let i = 0; i < 2; i++) {
+        const p = (t * 0.5 + i * 0.5) % 1;
+        g.font = `800 ${Math.max(7, headR * (0.4 + 0.25 * i))}px system-ui`;
+        g.fillStyle = `rgba(200,208,214,${(1 - p) * 0.9})`;
+        g.fillText('z', headCx + headR * (0.6 + p * 0.7), headCy - headR * (0.4 + p * 1.1));
       }
-      const blink = Math.sin(t * 1.3) > 0.97 ? 0.03 : 0.14;
-      const draw = f === 'e' ? 'onRight' : 'onFront';
-      this[draw](hx, hy, hz, hs, hs, hs, c0, 0.45, c0 + 0.12, 0.45 + blink, '#2c2a28');
-      this[draw](hx, hy, hz, hs, hs, hs, c1, 0.45, c1 + 0.12, 0.45 + blink, '#2c2a28');
-    };
-    if (f === 's') {
-      this.onFront(hx, hy, hz, hs, hs, hs, 0, 0.78, 1, 1, hair);
-      this.onRight(hx, hy, hz, hs, hs, hs, 0, 0.45, 1, 1, hair);
-      eyes(0.22, 0.66);
-      this.onFront(hx, hy, hz, hs, hs, hs, 0.36, 0.66, 0.64, 0.72, 'rgba(60,40,30,.55)'); // gentle smile
-    } else if (f === 'e') {
-      this.onFront(hx, hy, hz, hs, hs, hs, 0, 0.2, 1, 1, hair);
-      this.onRight(hx, hy, hz, hs, hs, hs, 0, 0.72, 1, 1, hair);
-      eyes(0.3, 0.62);
-    } else {
-      this.onFront(hx, hy, hz, hs, hs, hs, 0, 0.15, 1, 1, hair);
-      this.onRight(hx, hy, hz, hs, hs, hs, 0, 0.15, 1, 1, hair);
     }
-    if (w.long) this.onRight(hx, hy, hz, hs, hs, hs, 0, 0, 1, 0.5, hair);
-    this.box(hx - 0.03, hy - 0.03, hz + hs, hs + 0.06, hs + 0.06, 0.1, hair);
-    const top = this.P(x, y, (sitting ? 0.48 : 0.34) + 0.42 + hs + 0.1);
-    w.screen = { x: top[0], y: top[1], foot: this.P(x, y, 0) };
+    g.restore();
+    w.screen = { x: headCx, y: headCy - headR, foot: [fx, fy] };
+  }
+  leaver(L) {
+    // 离职小人：向门口走+淡出；w.a 保留最后状态（休假样式）
+    this.worker({
+      key: L.key, a: L.a ?? { status: 'offline' }, x: L.x, y: L.y,
+      walking: (L.path?.length ?? 0) > 0, kind: '', slot: -1, phase: 0.5,
+    }, { alpha: Math.max(0, Math.min(1, L.alpha)), leaving: true });
   }
 
   // —— overlays: venue labels, status bubbles, task cards —————————————
@@ -771,11 +885,10 @@ export class OfficeScene extends OfScene {
       const [x, y] = this.P(a.x + a.w / 2, a.y + a.d / 2, a.lz);
       g.font = '700 10.5px system-ui,"PingFang SC",sans-serif';
       const tw = g.measureText(a.label).width;
-      g.fillStyle = this.dark ? 'rgba(10,16,26,.62)' : 'rgba(255,252,246,.72)';
+      g.fillStyle = this.dark ? 'rgba(10,16,26,.62)' : 'rgba(255,252,246,.78)';
       roundRect(g, x - tw / 2 - 7, y - 12, tw + 14, 18, 9); g.fill();
       this.text(a.label, x, y + 1, 10.5, a.color, '700');
     }
-    for (const w of this.workers.values()) this.bubble(w);
     for (const w of this.workers.values()) this.card(w, ink);
   }
   ambient(ph) {
@@ -783,45 +896,14 @@ export class OfficeScene extends OfScene {
     const [r, gg, b] = hexRgb(hex);
     return `rgba(${r},${gg},${b},${alpha})`;
   }
-  bubble(w) {
-    const a = w.a, g = this.g;
-    if (!w.screen) return;
-    const { x, y } = w.screen;
-    const r = Math.max(7, this.s * 0.2);
-    const bx = x + this.s * 0.42, by = y - this.s * 0.1;
-    const t = this.t + w.phase;
-    const pill = (fill, draw) => {
-      g.save();
-      g.fillStyle = fill;
-      g.shadowColor = 'rgba(0,0,0,.35)'; g.shadowBlur = 5;
-      g.beginPath(); g.arc(bx, by, r, 0, Math.PI * 2); g.fill();
-      g.restore();
-      draw();
-    };
-    if (a.status === 'working') {
-      pill('rgba(255,255,255,.95)', () => {
-        g.save(); g.translate(bx, by); g.rotate(t * 3);
-        g.strokeStyle = '#3b82f6'; g.lineWidth = Math.max(1.5, r * 0.22);
-        g.beginPath(); g.arc(0, 0, r * 0.5, 0, Math.PI * 1.4); g.stroke();
-        g.restore();
-      });
-    } else if (isOff(a)) {
-      pill('rgba(255,255,255,.9)', () => this.text('💤', bx, by + r * 0.4, r * 1.1, '#64748b', '600'));
-    } else if (!w.walking && this.sofaSlot(w) >= 0) {
-      for (let i = 0; i < 2; i++) {
-        const p = (t * 0.6 + i * 0.5) % 1;
-        this.text('z', x + this.s * (0.2 + p * 0.35), y - this.s * (0.1 + p * 0.6), Math.max(8, this.s * (0.2 + 0.1 * i)), `rgba(226,232,240,${1 - p})`, '800');
-      }
-    }
-  }
-  // floating task card: the bot's live progress.line (semantic progress)
+  // floating task card: the bot's live progress.line (工作汇报)
   card(w, ink) {
     const a = w.a, g = this.g;
     if (!w.screen || a.status !== 'working') return;
     const dark = this.dark;
     const pv = providerOf(a.provider);
     const sx = w.screen.x;
-    const headY = w.screen.y - this.s * 0.45;
+    const headY = w.screen.y - 6;
     const prog = a.progress?.line || '工作中';
     const el = a.progress?.startedAt ? elapsed(Date.now() - a.progress.startedAt) : '';
     g.font = '700 10px system-ui,"PingFang SC",sans-serif';
@@ -836,7 +918,7 @@ export class OfficeScene extends OfScene {
     g.strokeStyle = dark ? 'rgba(120,160,220,.35)' : 'rgba(90,120,180,.4)';
     g.beginPath(); g.moveTo(sx, headY); g.lineTo(sx, y + ch); g.stroke();
     g.fillStyle = dark ? 'rgba(15,21,33,.93)' : 'rgba(255,255,255,.97)';
-    roundRect(g, x, y, w2, ch, 9); g.fill();
+    roundRect(g, x, y, w2, ch, 10); g.fill();
     g.strokeStyle = dark ? 'rgba(255,255,255,.14)' : 'rgba(20,30,50,.12)'; g.stroke();
     g.fillStyle = pv.color;
     roundRect(g, x + 3, y + 6, 3, ch - 12, 2); g.fill();
@@ -856,6 +938,7 @@ export class OfficeScene extends OfScene {
       g.fillStyle = '#2fa365';
       g.fillText(el, x + w2 - ew - 3, y + ch - 5.5);
     }
+    void ink;
   }
 }
 const hexRgb = (c) => {
@@ -869,32 +952,38 @@ const hexRgb = (c) => {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 };
 
-// —— page styles (same var(--*) tokens as the shell; light/dark via the
-// media query the shell already defines) ———————————————————————————————
+// —— page styles ——————————————————————————————————————————————————————————
 const CSS = `
 .of-stage {
-  position: relative; height: calc(100vh - 108px); min-height: 520px;
+  position: relative; height: calc(100vh - 158px); min-height: 520px;
   border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
   background: var(--bg); user-select: none;
+  box-shadow: var(--shadow);
 }
 .of-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
 .of-otags { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
 .of-tag {
   position: absolute; left: 0; top: 0; pointer-events: auto; cursor: pointer;
   display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
-  padding: 3px 10px 3px 8px; border-radius: 999px; border: 1px solid var(--line);
-  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  padding: 2px 10px 2px 3px; border-radius: 999px; border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
   color: var(--ink); font: 600 11px/1.4 -apple-system,"PingFang SC",sans-serif;
-  box-shadow: 0 2px 8px rgb(9 14 22 / .18);
+  box-shadow: var(--shadow);
 }
 .of-tag:hover { border-color: var(--accent); }
-.of-tag .d { width: 7px; height: 7px; border-radius: 50%; background: #94a3b8; flex: none; }
-.of-tag .pv { width: 7px; height: 7px; border-radius: 2px; background: var(--pc, #64748b); flex: none; }
-.of-tag[data-st="work"] .d { background: var(--ok); animation: of-pulse 1.6s ease-in-out infinite; }
-.of-tag[data-st="idle"] .d { background: #d9a00e; }
-.of-tag[data-st="off"] .d { background: #8a93a5; }
+.of-tag .face {
+  width: 18px; height: 18px; border-radius: 50%; flex: none;
+  border: 1.5px solid var(--pc, var(--line)); background: var(--panel-2); overflow: hidden;
+}
+.of-tag .face svg { width: 100%; height: 100%; display: block; }
+.of-tag .d { width: 7px; height: 7px; border-radius: 50%; background: var(--st-idle); flex: none; }
+.of-tag[data-st="work"] .d { background: var(--pc, var(--accent)); animation: of-pulse 1.6s ease-in-out infinite; }
+.of-tag[data-st="idle"] .d { background: var(--st-idle); }
+.of-tag[data-st="off"] .d { background: var(--st-offline); }
 .of-tag[data-st="off"] { opacity: .82; }
-@keyframes of-pulse { 0%,100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 45%, transparent); } 50% { box-shadow: 0 0 0 3px transparent; } }
+.of-tag[data-st="off"] .face { filter: grayscale(0.8); }
+@keyframes of-pulse { 0%,100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--pc, var(--accent)) 45%, transparent); } 50% { box-shadow: 0 0 0 3px transparent; } }
+@media (prefers-reduced-motion: reduce) { .of-tag[data-st="work"] .d { animation: none; } }
 .of-hud {
   position: absolute; top: 12px; right: 12px; display: flex; gap: 8px; align-items: center;
   pointer-events: auto; z-index: 4;
@@ -923,16 +1012,17 @@ const CSS = `
   flex-direction: column; gap: 8px; z-index: 3; pointer-events: none;
   color: var(--ink); text-align: center;
 }
-.of-empty .card { background: var(--panel); border: 1px dashed var(--line); padding: 22px 30px; border-radius: 12px; }
+.of-empty .card { background: var(--panel); border: 1px dashed var(--line); padding: 22px 30px; border-radius: 12px; box-shadow: var(--shadow); }
 .of-pop {
   position: absolute; top: 52px; right: 12px; width: 264px; z-index: 5;
   background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-  padding: 12px 14px; box-shadow: 0 12px 40px rgb(0 0 0 / .25);
+  padding: 12px 14px; box-shadow: var(--shadow-lift);
   display: flex; flex-direction: column; gap: 8px;
 }
 .of-pop .head { display: flex; align-items: center; gap: 8px; }
+.of-pop .head .face { width: 30px; height: 30px; border-radius: 50%; flex: none; border: 2px solid var(--pc, var(--line)); overflow: hidden; }
+.of-pop .head .face svg { width: 100%; height: 100%; display: block; }
 .of-pop .head b { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.of-pop .head .pv { width: 10px; height: 10px; border-radius: 3px; flex: none; }
 .of-pop .line { font-size: 13px; overflow-wrap: anywhere; color: var(--ink); }
 .of-pop .sub { font-size: 12px; color: var(--muted); }
 .of-pop .close {
@@ -940,9 +1030,9 @@ const CSS = `
 }
 .of-pop .close:hover { color: var(--bad); }
 .of-badge { font-size: 12px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line); }
-.of-badge-w { color: var(--ok); border-color: var(--ok); }
-.of-badge-i { color: var(--muted); }
-.of-badge-o { color: var(--bad); border-color: var(--bad); }
+.of-badge-w { color: var(--pc, var(--accent)); border-color: var(--pc, var(--accent)); }
+.of-badge-i { color: var(--st-idle); border-color: var(--st-idle); }
+.of-badge-o { color: var(--st-offline); border-color: var(--st-offline); }
 .of-err { position: absolute; top: 12px; left: 12px; z-index: 5; }
 `;
 
@@ -964,20 +1054,20 @@ const groupTimeline = (rows) => {
   return map;
 };
 
-const STATUS_LABEL = { working: '工作中', idle: '空闲', offline: '离线' };
-// This repo's /api/agents carries no `connected` flag (v1's client.js had one) —
-// status alone is authoritative; anything not working/idle reads as offline.
+const STATUS_LABEL = { working: '工作中', idle: '待命', offline: '休假' };
+// This repo's /api/agents carries no `connected` flag — status alone is
+// authoritative; anything not working/idle reads as offline (休假).
 const isOff = (a) => a.status !== 'working' && a.status !== 'idle';
 
 export default {
   id: 'office3d',
-  title: '办公室 3D',
-  icon: '⌂',
+  title: '办公室',
+  icon: '🏢',
   order: 2,
   component({ WAO }) {
     // useRef isn't on the WAO hook surface — pull it from the shared React
     // instance (same single copy the shell/stub mounts, so refs stay legal).
-    const { h, useState, useEffect, useAgents, useTimeline, React } = WAO;
+    const { h, useState, useEffect, useAgents, useTimeline, React, avatar, avatarUrl } = WAO;
     const useRef = React.useRef;
     ensurePageStyle();
     const { agents, error } = useAgents();
@@ -993,6 +1083,7 @@ export default {
     const agentsRef = useRef(agents); agentsRef.current = agents ?? [];
     const selRef = useRef(null);
     selRef.current = sel;
+    const hasAvatar = typeof avatarUrl === 'function';
 
     useEffect(() => {
       const canvas = canvasRef.current;
@@ -1002,6 +1093,7 @@ export default {
         dim: params.get('dim') === '2d' ? '2d' : '3d',
         phaseLock: ['day', 'dawn', 'dusk', 'night'].includes(params.get('phase')) ? params.get('phase') : null,
         dark: globalThis.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false,
+        avatarUrl: hasAvatar ? (id) => avatarUrl(id, { size: 64 }) : null,
         onPick: (id) => setSel((cur) => (cur === id ? null : id)),
         onFrame: (anchors, info) => {
           const layer = tagsRef.current;
@@ -1017,9 +1109,14 @@ export default {
                 el.type = 'button';
                 el.className = 'of-tag';
                 const d = document.createElement('i'); d.className = 'd';
-                const pv = document.createElement('b'); pv.className = 'pv';
                 const sp = document.createElement('span');
-                el.appendChild(d); el.appendChild(pv); el.appendChild(sp);
+                el.appendChild(d); el.appendChild(sp);
+                if (hasAvatar) {
+                  const face = document.createElement('span');
+                  face.className = 'face';
+                  face.innerHTML = avatar(an.key, { size: 36 });
+                  el.insertBefore(face, d);
+                }
                 el.addEventListener('click', () => setSel((cur) => (cur === an.key ? null : an.key)));
                 layer.appendChild(el);
                 tagMap.current.set(an.key, el);
@@ -1027,14 +1124,12 @@ export default {
               if (el.dataset.st !== st || el.dataset.name !== (a.name ?? an.key)) {
                 el.dataset.st = st;
                 el.dataset.name = a.name ?? an.key;
-                el.lastChild.textContent = shortTxt(a.name || an.key, 12);
-                el.children[1].style.setProperty('--pc', providerOf(a.provider).color);
-                el.children[1].style.background = providerOf(a.provider).color;
+                const label = el.lastChild;
+                if (label.nodeType === 3 || label.tagName === 'SPAN') label.textContent = shortTxt(a.name || an.key, 12);
+                el.style.setProperty('--pc', providerOf(a.provider).color);
               }
-              // working bots carry a canvas task card above the head — lift
-              // the nameplate clear of it
-              const lift = st === 'work' ? 36 : 0;
-              el.style.transform = `translate(${Math.round(an.x)}px, ${Math.round(an.y - lift)}px) translate(-50%, -100%)`;
+              const lift = st === 'work' ? 40 : 0;
+              el.style.transform = `translate(${Math.round(an.x)}px, ${Math.round(an.y - lift - 4)}px) translate(-50%, -100%)`;
             }
             for (const [k, el] of tagMap.current) if (!seen.has(k)) { el.remove(); tagMap.current.delete(k); }
           }
@@ -1045,6 +1140,10 @@ export default {
         },
       });
       sceneRef.current = scene;
+      // deterministic camera for screenshots: ?zoom=2.6 centers the room at a
+      // fixed zoom (same spirit as ?phase/?dim harness knobs)
+      const zoom = Number(params.get('zoom'));
+      if (Number.isFinite(zoom) && zoom >= 1 && zoom <= 3.5) scene.cam.z = zoom;
       scene.setAgents(agentsRef.current);
       scene.setScreens(groupTimeline(rows));
       const ro = new ResizeObserver(() => scene.resize());
@@ -1089,7 +1188,7 @@ export default {
     return h('div', { className: 'of-stage' },
       h('canvas', { ref: canvasRef }),
       h('div', { className: 'of-otags', ref: tagsRef }),
-      error != null ? h('div', { className: 'error of-err' }, `加载机器人列表失败：${error}`) : null,
+      error != null ? h('div', { className: 'error of-err' }, `加载同事列表失败：${error}`) : null,
       h('div', { className: 'of-hud' },
         h('span', { className: 'of-chip', ref: phaseRef }, '…'),
         h('button', {
@@ -1099,29 +1198,32 @@ export default {
       (agents ?? []).length === 0 && error == null
         ? h('div', { className: 'of-empty' },
             h('div', { className: 'card' },
-              h('p', null, '空的办公室 — 去 Bot 管理创建一个机器人，它就会搬进来 🤖')))
-        : null,
+              h('p', null, '空的办公室——第一位同事入职后就会搬进来'),
+              h('p', { className: 'muted' }, '去人事部办理入职，它将从门口走到自己的工位'))) : null,
       overflow > 0
-        ? h('div', { className: 'of-queue' }, `ⓘ 工位共 ${DESKS.length} 个，${overflow} 位工作中的机器人在门口排队/室内走动`)
-        : null,
-      h('div', { className: 'of-hint' }, '拖拽平移 · 滚轮缩放 · 按 0 复位 · 点击小人查看详情'),
+        ? h('div', { className: 'of-queue' }, `ⓘ 工位共 ${DESKS.length} 个，${overflow} 位工作中的同事在门口排队/室内走动`) : null,
+      h('div', { className: 'of-hint' }, '拖拽平移 · 滚轮缩放 · 按 0 复位 · 点小人看工作汇报'),
       selAgent ? (() => {
         const off = isOff(selAgent);
         const cls = selAgent.status === 'working' ? 'of-badge-w' : off ? 'of-badge-o' : 'of-badge-i';
         const pv = providerOf(selAgent.provider);
-        return h('aside', { className: 'of-pop' },
+        return h('aside', { className: 'of-pop', style: { '--pc': pv.color } },
           h('div', { className: 'head' },
-            h('b', { className: 'pv', style: { background: pv.color }, title: selAgent.provider ?? '' }),
+            hasAvatar ? h('span', {
+              className: 'face',
+              dangerouslySetInnerHTML: { __html: avatar(selAgent.id, { size: 30, mood: off ? 'sleep' : 'neutral' }) },
+            }) : null,
             h('b', null, selAgent.name || selAgent.id),
-            h('span', { className: 'badge ' + cls.replace('of-badge', 'of-badge') }, STATUS_LABEL[selAgent.status] ?? selAgent.status),
+            h('span', { className: 'badge of-badge ' + cls, title: `状态：${selAgent.status ?? 'offline'}${selAgent.reason ? `\n原因：${selAgent.reason}` : ''}` },
+              STATUS_LABEL[selAgent.status] ?? selAgent.status),
             h('button', { className: 'close', onClick: () => setSel(null) }, '✕')),
           selAgent.progress?.line
-            ? h('div', { className: 'line' }, selAgent.progress.line)
-            : h('div', { className: 'sub' }, off && selAgent.reason ? `离线原因：${selAgent.reason}` : '暂无进行中的任务'),
+            ? h('div', { className: 'line', title: '工作汇报（实时进度行）' }, selAgent.progress.line)
+            : h('div', { className: 'sub' }, off && selAgent.reason ? `离岗原因：${selAgent.reason}` : '手上暂无进行中的工单'),
           selAgent.progress?.startedAt
-            ? h('div', { className: 'sub' }, '⏱ 已运行 ' + elapsed(Date.now() - selAgent.progress.startedAt)) : null,
-          h('div', { className: 'sub' }, `今日 ${selAgent.todayTurns ?? 0} 轮 · 用户 ${selAgent.users ?? 0} · 会话 ${selAgent.chats ?? 0}`),
-          h('div', { className: 'sub' }, `${selAgent.provider ?? '?'} · ${selAgent.id}`));
+            ? h('div', { className: 'sub' }, '⏱ 已进行 ' + elapsed(Date.now() - selAgent.progress.startedAt)) : null,
+          h('div', { className: 'sub' }, `今日工单 ${selAgent.todayTurns ?? 0} · 服务同事 ${selAgent.users ?? 0} · 档案 ${selAgent.chats ?? 0}`),
+          h('div', { className: 'sub' }, `${pv.label ?? selAgent.provider ?? '?'} · ${selAgent.id}`));
       })() : null,
     );
   },

@@ -24,7 +24,9 @@ export function avatar(seed, { size = 48, mood = 'neutral' } = {}) {
     size: Number.isFinite(size) && size > 0 ? Math.round(size) : 48,
     ...(MOOD_OVERRIDES[mood] ?? {}),
   };
-  return createAvatar(notionists, opts).toString();
+  // Strip the SVG <metadata> block (license/attribution links — textContent
+  // noise for DOM nameplates; the CC0 credit lives in the package LICENSE).
+  return createAvatar(notionists, opts).toString().replace(/<metadata[\s\S]*?<\/metadata>/, '');
 }
 
 export function avatarUrl(seed, opts) {
