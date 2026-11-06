@@ -78,7 +78,7 @@ bash test/probe.sh --check         # dsh/claude/codex 事件序列 vs 已存基�
 ```sh
 # 建 bot (enabled:false 只存配置不连企微 —— M3 切换的推荐姿势)
 curl -X POST localhost:8792/api/bots -H 'content-type: application/json' -d '{...bot 记录...}'
-curl -X POST localhost:8792/api/bots/<id>/test    # 真跑该 bot 的 provider(不进引擎链/不记台账); 可选 body {sessionId} 续跑试
+curl -X POST localhost:8792/api/bots/<id>/test    # 真跑该 bot 的 provider(不进引擎链/不记台账); 可选 body {sessionId?, prompt?}: sessionId 续跑该会话, prompt 自定义提问(1..2000 字符, 缺省"回复：收到")
 curl -X POST localhost:8792/api/bots/<id>/toggle  # 上/下线
 curl -X PATCH localhost:8792/api/bots/<id> -d '{...}'   # 改配置(last-good: 失败保留旧配置)
 curl -X DELETE localhost:8792/api/bots/<id>       # 删除(连同 provider-dsh 物化的 profile)

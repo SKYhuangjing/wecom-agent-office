@@ -166,6 +166,11 @@ accept-m2: PASS (doctor clean, dsh+claude+codex probe×2 each with resume, switc
    交接前缀/切回 delta+功能性召回）以 `npm run test:matrix` 为准。
 5. 真实企微端到端、Web UI、launchd（M1 §2 遗留）不变，见下节。
 
+**盲评观察（M2 终审 P2-2/P3，行为记录非缺陷）**：
+
+- claude 探针回复可能**多行冗长**（网关/模型行为；accept 脚本显示取首行，不影响 completed 判定）。
+- codex 探针延迟实测 **~25s**（dsh/claude ~6s）——M3 运维预期：接近 /test 的 30s 超时阈值，余量仅 ~5s。
+
 **遗留 minors**：M2 各任务 deferred minors 总账见 `.superpowers/sdd/2026-11-06-wao-m2/progress.md`
 （要点：model-dependent 召回断言为已申报 flake 向量[网关漂移非回归]；roundtrip 探针 ask-present 不进
 判定[装饰性]；DESIGN §5.1/§321 旧表述勘误已记）。

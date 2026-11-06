@@ -78,6 +78,8 @@ export default {
       createRunner({ bot }) {
         return {
           async run({ prompt, sessionId, signal, onEvent }) {
+            // prompt reached the runner — recorded for the body.prompt tests
+            (globalThis.__waoFakePrompts ??= []).push(prompt);
             if (signal?.aborted) {
               return { ok: false, code: 'aborted', finalText: '', aborted: true, sessionId: sessionId ?? null, reason: 'aborted before start', detail: {} };
             }
@@ -284,6 +286,37 @@ test('POST /api/bots/:id/test optional body.sessionId resumes that session; junk
   assert.equal((await post('/api/bots/b1/test', { sessionId: '' })).status, 400);
   assert.equal((await post('/api/bots/b1/test', { sessionId: 42 })).status, 400);
   assert.equal((await post('/api/bots/b1/test', { sessionId: ['x'] })).status, 400);
+});
+
+test('POST /api/bots/:id/test optional body.prompt reaches the runner; junk 400; empty string → default', async () => {
+  // The fake runner RECORDS every prompt it received (globalThis log, same
+  // shape as the materialize/removeConfig recordings) — the assertion reads
+  // the recording itself, not only the echoed finalText.
+  const lastPrompt = async () => globalThis.__waoFakePrompts?.at(-1);
+  const resp = await post('/api/bots/b1/test', { prompt: '自定义探针问题：1+1=?' });
+  assert.equal(resp.status, 200);
+  const body = await resp.json();
+  assert.equal(body.code, 'completed');
+  assert.equal(await lastPrompt(), '自定义探针问题：1+1=?', 'custom prompt reached the runner');
+  assert.equal(body.finalText, 'fake 完成：自定义探针问题：1+1=?');
+  // absent / null / '' fall back to the default probe prompt (unlike
+  // sessionId, an empty question is "not given", not junk)
+  await post('/api/bots/b1/test', {});
+  assert.equal(await lastPrompt(), '回复：收到');
+  await post('/api/bots/b1/test', { prompt: null });
+  assert.equal(await lastPrompt(), '回复：收到');
+  await post('/api/bots/b1/test', { prompt: '' });
+  assert.equal(await lastPrompt(), '回复：收到');
+  // untrusted-input shapes and the 2000-char cap are rejected, never coerced
+  assert.equal((await post('/api/bots/b1/test', { prompt: 42 })).status, 400);
+  assert.equal((await post('/api/bots/b1/test', { prompt: ['x'] })).status, 400);
+  assert.equal((await post('/api/bots/b1/test', { prompt: { q: 1 } })).status, 400);
+  assert.equal((await post('/api/bots/b1/test', { prompt: 'x'.repeat(2000) })).status, 200);
+  assert.equal((await post('/api/bots/b1/test', { prompt: 'x'.repeat(2001) })).status, 400);
+  // sessionId and prompt compose on one probe
+  const both = await (await post('/api/bots/b1/test', { sessionId: 'probe-both-sid', prompt: '第二个问题' })).json();
+  assert.equal(both.sessionId, 'probe-both-sid');
+  assert.equal(await lastPrompt(), '第二个问题');
 });
 
 test('DELETE /api/bots/:id detaches, removeConfig cleans materialized files, persists; failure is non-fatal', async () => {

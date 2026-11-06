@@ -239,11 +239,14 @@ async function toggleBotHandler({ res, m, state }) {
 
 // Probe run: the provider runner DIRECTLY — no channel, no engine chain, no
 // ledger row. Answers "does this bot's provider still work?" in isolation.
-// An optional JSON body { sessionId } resumes THAT session instead of minting
-// a fresh one (M2 Task 6: the probe doubles as the real-CLI resume check —
-// the response's sessionId tells the caller what the CLI echoed/kept). A body
-// is not required; absent/empty sessionId keeps the historical fresh-probe
-// contract (accept-m1.sh relies on it).
+// An optional JSON body { sessionId, prompt } shapes the probe: sessionId
+// resumes THAT session instead of minting a fresh one (M2 Task 6: the probe
+// doubles as the real-CLI resume check — the response's sessionId tells the
+// caller what the CLI echoed/kept), prompt asks a custom question instead of
+// the fixed '回复：收到' (blind-review P2-1: operators get to interrogate the
+// bot, not just watch a sessionId echo). A body is not required; absent/empty
+// sessionId keeps the historical fresh-probe contract (accept-m1.sh relies on
+// it) and absent/empty prompt keeps the default one.
 async function testBotHandler({ req, res, m, state }) {
   const bot = findBot(state, idOf(m));
   if (bot == null) throw httpError(404, 'bot not found');
@@ -260,10 +263,20 @@ async function testBotHandler({ req, res, m, state }) {
     }
     sessionId = reqBody.sessionId;
   }
+  // sessionId treats '' as junk (400); prompt treats '' as "not given" — an
+  // empty question falls back to the default probe instead of failing, so a
+  // bare {prompt: ''} from a shell one-liner still probes.
+  let prompt = TEST_PROMPT;
+  if (reqBody.prompt !== undefined && reqBody.prompt !== null && reqBody.prompt !== '') {
+    if (typeof reqBody.prompt !== 'string' || reqBody.prompt.length > 2000) {
+      throw httpError(400, 'prompt must be a string of 1..2000 characters when present');
+    }
+    prompt = reqBody.prompt;
+  }
   const runner = port.createRunner({ bot, providerConfig: bot.providerConfig, log: state.log });
   let events = 0;
   const result = await runner.run({
-    prompt: TEST_PROMPT,
+    prompt,
     sessionId,
     signal: new AbortController().signal,
     timeoutMs: TEST_TIMEOUT_MS,
