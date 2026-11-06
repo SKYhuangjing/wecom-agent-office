@@ -23,6 +23,8 @@
 //      ambient) instead of hardcoded scenery; sorting + anchors stay here.
 //   6. syncWorkers() takes a layout table and a fallback chain, so the office
 //      can queue over-quota working bots near the door instead of wandering.
+//   7. ofShade's cache key carries a \u0000 separator between color and factor
+//      (the port concatenated raw strings — equivalent behavior, collision-proof).
 
 // —— color math (ported verbatim; cache keeps per-frame shading free) ————
 export function ofRgb(c) {
@@ -94,7 +96,10 @@ export function phaseAt(c) {
   }
   return { a: 'night', b: 'night', mix: 0, phase: 'night' }; // unreachable band math guard
 }
-const PHASE_LOCK_MID = { night: 0.95, dawn: 0.23, day: 0.51, dusk: 0.79 };
+// Lock targets: the clock position each phase lock pins to (screenshot
+// determinism). Exported — office.js's sun/moon positioning must agree with
+// phaseInfo()'s, so both read this one table.
+export const PHASE_LOCK_MID = { night: 0.95, dawn: 0.23, day: 0.51, dusk: 0.79 };
 
 // —— BFS navigation grid (ported verbatim in mechanics, parameterized) ————
 // cell: grid resolution in tiles; radius: worker body radius padded around
