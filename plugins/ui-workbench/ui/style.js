@@ -199,6 +199,120 @@ const CSS = `
   .wb-tl-kind-thinking { color: #22d3ee; border-color: #22d3ee; }
   .wb-tl-kind-run_end { color: #94a3b8; border-color: #94a3b8; }
 }
+
+/* —— 公司比喻重设计 (P2 人事部) ——————————————————————————————————— */
+.wb-mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+
+/* 头像即化身：seed=botId 全站同脸，provider 色描边环 */
+.wao-av {
+  display: inline-flex; flex: none; border-radius: 50%;
+  border: 2px solid var(--line); background: var(--panel-2);
+  overflow: hidden; line-height: 0;
+}
+.wao-av svg { width: 100%; height: 100%; display: block; }
+
+.wb-side-item { gap: 8px; }
+.wb-side-new { color: var(--accent); font-weight: 600; }
+.wb-file-head {
+  display: flex; align-items: center; gap: 12px; margin: -4px 0 12px;
+  padding-bottom: 12px; border-bottom: 1px solid var(--line);
+}
+
+/* 分组折叠 */
+.wb-group {
+  border: 1px solid var(--line); border-radius: 10px;
+  margin-bottom: 10px; overflow: hidden; background: var(--panel);
+}
+.wb-group-head {
+  display: flex; align-items: baseline; gap: 8px; width: 100%;
+  padding: 9px 14px; border: none; background: var(--panel-2);
+  color: var(--ink); font: inherit; cursor: pointer; text-align: left;
+}
+.wb-group-head:hover { background: color-mix(in srgb, var(--ink) 6%, var(--panel-2)); }
+.wb-group-caret { width: 1em; color: var(--muted); }
+.wb-group-title { font-weight: 600; font-size: 13px; }
+.wb-group-body { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 12px; }
+
+/* sticky 保存栏 */
+.wb-stickybar {
+  position: sticky; bottom: -20px; margin: 14px -20px -20px;
+  padding: 10px 20px; background: var(--panel);
+  border-top: 1px solid var(--line); border-radius: 0 0 12px 12px;
+  box-shadow: 0 -8px 20px rgb(35 42 44 / .06);
+}
+@media (prefers-color-scheme: dark) {
+  .wb-stickybar { box-shadow: 0 -8px 20px rgb(0 0 0 / .35); }
+}
+
+/* 入职向导 */
+.wb-wizard { display: flex; flex-direction: column; gap: 16px; }
+.wb-steps { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.wb-step {
+  display: inline-flex; align-items: center; gap: 7px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--muted);
+  border-radius: 999px; padding: 5px 14px; cursor: pointer; font: inherit; font-size: 13px;
+}
+.wb-step .wb-step-num {
+  width: 18px; height: 18px; border-radius: 50%; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; background: var(--panel-2); border: 1px solid var(--line);
+}
+.wb-step.visited { color: var(--ink); }
+.wb-step.visited .wb-step-num { background: var(--st-idle); border-color: var(--st-idle); color: var(--panel); }
+.wb-step.active { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.wb-step.active .wb-step-num { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.wb-step[disabled] { cursor: not-allowed; opacity: .75; }
+.wb-step-sub { font-size: 12px; color: var(--muted); margin-left: 6px; }
+.wb-wizard-card-row { display: flex; gap: 16px; align-items: flex-start; }
+.wb-wizard-nav {
+  position: sticky; bottom: 0; margin: 0 -20px -20px; padding: 12px 20px;
+  background: var(--panel); border-top: 1px solid var(--line);
+  border-radius: 0 0 12px 12px; display: flex; gap: 10px; justify-content: flex-end;
+}
+.wb-editor { padding-bottom: 0; } /* 让 sticky 栏贴住卡片底 */
+
+/* 技能岗位三部门卡片 */
+.wb-dept-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.wb-dept-card {
+  position: relative; display: flex; flex-direction: column; gap: 6px;
+  border: 1.5px solid var(--line); border-radius: 12px; background: var(--panel);
+  padding: 16px 14px 14px; cursor: pointer; font: inherit; color: var(--ink);
+  text-align: left; transition: border-color .12s ease, box-shadow .12s ease;
+}
+.wb-dept-card:hover { box-shadow: var(--shadow); }
+.wb-dept-card.active { border-color: var(--pv); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pv) 18%, transparent); }
+.wb-dept-bar { position: absolute; top: 0; left: 14px; right: 14px; height: 4px; border-radius: 0 0 4px 4px; background: var(--pv); }
+.wb-dept-name { font-weight: 700; margin-top: 6px; }
+.wb-dept-card.active .wb-dept-name { color: var(--pv); }
+.wb-dept-blurb { font-size: 12.5px; color: var(--muted); line-height: 1.55; }
+.wb-dept-tech { font-size: 11px; color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+
+/* 成功页工牌 */
+.wb-wizard-done { display: flex; flex-direction: column; gap: 14px; }
+.wb-badgecard {
+  display: flex; gap: 16px; align-items: center;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+  box-shadow: var(--shadow); padding: 18px 20px;
+}
+.wb-badgecard-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.wb-badgecard-name { font-size: 18px; font-weight: 700; }
+.wb-badgecard-rows { display: flex; gap: 18px; font-size: 13px; margin-top: 6px; flex-wrap: wrap; }
+
+/* 离职面谈 */
+.wb-offboard { max-width: 520px; }
+.wb-offboard-head { display: flex; align-items: center; gap: 12px; }
+.wb-offboard-head h3 { margin: 0; }
+.wb-offboard-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+
+/* toast */
+.wb-toast {
+  position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
+  box-shadow: var(--shadow-lift); padding: 9px 20px; font-size: 13px; color: var(--ink);
+  z-index: 60; animation: wb-toast-in .25s ease;
+}
+@keyframes wb-toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@media (prefers-reduced-motion: reduce) { .wb-toast { animation: none; } }
 `;
 
 export function ensurePageStyle() {

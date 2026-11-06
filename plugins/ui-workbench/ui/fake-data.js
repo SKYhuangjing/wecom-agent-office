@@ -99,19 +99,19 @@ export const FAKE = {
     {
       id: 'main-bot', name: '主号机器人', enabled: true, channel: 'wecom',
       account: { botId: '1000002', wsUrl: 'wss://openws.work.weixin.qq.com' },
-      provider: 'dsh',
+      provider: 'dsh', createdAt: now - 62 * 24 * 3600_000, // 入职两个月
       providerConfig: { cwd: '/Users/sky/work/main', permission: 'workspace-write', progressCoT: true },
     },
     {
       id: 'bot-2', name: '二号机器人', enabled: true, channel: 'wecom',
       account: { botId: '1000003' },
-      provider: 'claude',
+      provider: 'claude', createdAt: now - 9 * 24 * 3600_000,
       providerConfig: { cwd: '/Users/sky/work/bot2', progressCoT: true },
     },
     {
       id: 'bot-3', name: '归档机器人', enabled: false, channel: 'wecom',
       account: { botId: '1000004' },
-      provider: 'codex',
+      provider: 'codex', createdAt: now - 200 * 24 * 3600_000, // 老员工：createdAt 后补的规则之前入职
       providerConfig: { cwd: '/Users/sky/work/bot3' },
     },
   ],
@@ -191,10 +191,11 @@ const flipPlugin = (id) => () => ({
 
 export const FAKE_API = {
   '/api/ports': FAKE.ports,
-  // Method-blind branch: GET (no body) → list; POST/PATCH (body) → saved echo.
+  // Method-blind branch: GET (no body) → list; POST/PATCH (body) → saved echo
+  // (create echoes a server-stamped createdAt — same shape as the kernel).
   '/api/bots': (body) => (body === undefined
     ? { bots: FAKE.bots }
-    : echoBot({ ...FAKE.bots[0], id: body.id ?? 'new-bot' })(body)),
+    : echoBot({ ...FAKE.bots[0], id: body.id ?? 'new-bot', createdAt: Date.now() })(body)),
   '/api/bots/main-bot': echoBot(FAKE.bots[0]),
   '/api/bots/bot-2': echoBot(FAKE.bots[1]),
   '/api/bots/main-bot/toggle': () => ({ bot: FAKE.bots[0] }),

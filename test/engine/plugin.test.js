@@ -172,7 +172,9 @@ const BOT_B1 = {
 };
 
 test('POST /api/bots validates, materializes, persists, attaches; no secret ever echoes', async () => {
+  const createdBefore = Date.now();
   const resp = await post('/api/bots', BOT_B1);
+  const createdAfter = Date.now();
   assert.equal(resp.status, 200);
   const raw = await resp.text();
   assert.equal(raw.includes('supersecretvalue123'), false, 'response body must not echo the account secret');
@@ -180,6 +182,11 @@ test('POST /api/bots validates, materializes, persists, attaches; no secret ever
   assert.equal(body.bot.id, 'b1');
   assert.equal(body.bot.account.endpoint, 'http://fake.local');
   assert.equal(body.bot.account.secret, undefined);
+  // 入职日期 (redesign P2): server-stamped at creation, echoed to the 工牌.
+  assert.ok(Number.isFinite(body.bot.createdAt) && body.bot.createdAt >= createdBefore
+    && body.bot.createdAt <= createdAfter, `createdAt stamped at creation: ${body.bot.createdAt}`);
+  assert.equal(loadBots(join(dataDir, 'bots.json')).bots[0].createdAt, body.bot.createdAt,
+    'createdAt persisted in bots.json');
   assert.ok((globalThis.__waoFakeMaterialize ?? 0) >= 1, 'create materializes the provider config');
   assert.deepEqual(loadBots(join(dataDir, 'bots.json')).bots.map((b) => b.id), ['b1'], 'bot persisted to bots.json');
 
@@ -196,6 +203,15 @@ test('POST /api/bots validates, materializes, persists, attaches; no secret ever
   assert.equal((await get('/api/nope')).status, 404);
   assert.equal((await get('/api')).status, 404);
   assert.equal((await get('/api/state')).status, 200);
+
+  // createdAt is registry truth: caller-supplied values are refused, PATCH keeps it.
+  const dupe = await post('/api/bots', { ...BOT_B1, id: 'b-stamped', createdAt: 12345 });
+  assert.equal(dupe.status, 400, 'a caller-supplied createdAt is rejected');
+  const patched = await (await patch('/api/bots/b1', {})).json();
+  assert.equal(patched.bot.createdAt, body.bot.createdAt, 'PATCH preserves createdAt');
+  const listed = await (await get('/api/bots')).json();
+  assert.equal(listed.bots.find((b) => b.id === 'b1').createdAt, body.bot.createdAt,
+    'GET /api/bots echoes createdAt');
 });
 
 test('PATCH /api/bots/:id re-materializes providerConfig and reconnects', async () => {

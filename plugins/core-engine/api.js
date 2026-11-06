@@ -264,6 +264,11 @@ async function createBotHandler({ req, res, state }) {
     throw httpError(400, `bot id already exists: ${bot.id}`);
   }
   validateOrThrow(bot, state.ports);
+  // 入职日期 (redesign P2): stamped at creation, echoed by GET /api/bots for
+  // the 工牌. Refuse a caller-supplied value — createdAt is registry truth,
+  // not editable record data.
+  if (bot.createdAt !== undefined) throw httpError(400, 'createdAt is set by the server, not accepted');
+  bot.createdAt = Date.now();
   await materialize(state, bot);
   state.doc.bots.push(bot);
   saveBots(state.botsFile, state.doc);
