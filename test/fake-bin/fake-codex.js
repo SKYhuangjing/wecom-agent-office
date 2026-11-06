@@ -21,7 +21,9 @@
 //     arguments, status} · web_search{query, action} · todo_list{items:[{text,
 //     completed}]} · error{message}. NOTE: 0.166.0 has NO `plan_update` tag —
 //     the plan item is `todo_list`; the runner hedge-maps the `plan_update`
-//     spelling too, but this fake emits the REAL shape only.
+//     spelling too. The fake emits the REAL shape in every mode except the
+//     explicit 'plan-update' hedge mode (below), which exists to lock that
+//     hedge branch against the spelling it guards for.
 //
 // Modes (isomorphic with fake-claude; the contract suite hardcodes the name
 // 'thinking' for group 2, so 'reasoning' is an alias, not the primary):
@@ -45,6 +47,10 @@
 //   resume-echo   ok, but the `resume <id>` positional in argv is echoed as
 //                 the thread_id (real codex re-emits the SAME id — baseline
 //                 proven, including resume-of-resume)
+//   plan-update   HEDGE mode (spelling NOT in 0.166.0): emits one
+//                 item.completed{type:'plan_update', text} so the runner's
+//                 plan_update→tool{计划} hedge branch is locked by a test —
+//                 no real 0.166.0 run ever produces this shape
 //
 // Side files under $FAKE_HOME (written only when FAKE_HOME is set), same
 // contract as fake-dsh/fake-claude: last-prompt (raw stdin), last-argv,
@@ -134,6 +140,19 @@ async function main() {
       await sleep(50);
       emit({ type: 'item.completed', item: { id: 'item_1', type: 'agent_message', text: '答案文本' } });
       await sleep(50);
+      emit({ type: 'turn.completed', usage: USAGE });
+      process.exitCode = 0;
+      return;
+    }
+    case 'plan-update': { // hedge spelling — see header; never a real 0.166.0 shape
+      emit({ type: 'thread.started', thread_id: freshTid() });
+      await sleep(30);
+      emit({ type: 'turn.started' });
+      await sleep(30);
+      emit({ type: 'item.completed', item: { id: 'item_0', type: 'plan_update', text: '拟定计划：先检查配置，再修复问题，最后复测' } });
+      await sleep(30);
+      emit({ type: 'item.completed', item: { id: 'item_1', type: 'agent_message', text: '答案文本' } });
+      await sleep(30);
       emit({ type: 'turn.completed', usage: USAGE });
       process.exitCode = 0;
       return;

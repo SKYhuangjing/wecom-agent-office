@@ -11,7 +11,10 @@
 #                                 # claude thinking blocks (informational),
 #                                 # claude history roundtrip (two-round real session
 #                                 # in a tmp cwd parsed through the production
-#                                 # history.js reader — M2-T3 committed artifact).
+#                                 # history.js reader — M2-T3 committed artifact),
+#                                 # codex history roundtrip (same shape for the
+#                                 # rollout reader: two-round real thread parsed
+#                                 # through provider-codex/history.js — M2-T5).
 #   bash test/probe.sh --check    # re-run the three minimal probes and compare EVENT-TYPE
 #                                 # SEQUENCES against the baselines; drift → diff + exit 1.
 #
@@ -21,10 +24,10 @@
 # behavior, not protocol; the ORDER and presence of event types is the contract.
 #
 # NOTE-only baselines (claude-resume, claude-thinking, claude-history-
-# roundtrip, codex-resume-stdin, dsh-kill-resume): multi-round / model-output
-# probes whose header comments are the deliverable (observed facts for the
-# runners). --check never compares them — only the three minimal <cli>.ndjson
-# baselines are compared.
+# roundtrip, codex-resume-stdin, codex-history-roundtrip, dsh-kill-resume):
+# multi-round / model-output probes whose header comments are the deliverable
+# (observed facts for the runners). --check never compares them — only the
+# three minimal <cli>.ndjson baselines are compared.
 #
 # Never hangs: every probe runs under a 150s kill cap (node-based runner —
 # macOS ships no GNU timeout). Missing CLIs are skipped loudly, never fatal.
@@ -556,6 +559,112 @@ probe_claude_history_roundtrip() {
   echo "saved $BASE_DIR/claude-history-roundtrip.ndjson (roundtrip=${pass_ok}, turns=${hist_turns:-n/a}, warnings=${hist_warn:-n/a})"
 }
 
+# —— special probe: codex history roundtrip (NOTE-only, M2-T5 artifact) ————————
+# Same shape as the claude T3 roundtrip, for the codex rollout reader: runs a
+# REAL two-round codex thread — round1 `exec` stores a RANDOM passcode (told to
+# write it to no file or memory), round2 `exec resume <tid>` asks it back (both
+# prompts via stdin '-') — then parses THAT brand-new rollout file through the
+# PRODUCTION reader plugins/provider-codex/history.js (readHistory({cwd:<tmp>},
+# tid), default codexHome resolution exactly like a bot turn: the rollout lives
+# under $CODEX_HOME/sessions/YYYY/MM/DD/rollout-*<tid>.jsonl regardless of cwd).
+# Deliverable = the header verdict: thread id, same-id echo on resume, turn
+# count, both passcode texts present in the parsed turns, warnings count.
+# Recall-attribution is codex-resume-stdin.ndjson's domain (its Y9 legs); here
+# the passcode texts only need to appear in the rollout FILE's turns, whichever
+# route produced them (random per run — no earlier thread can answer this run).
+
+probe_codex_history_roundtrip() {
+  local out1 out2 workdir pass tid tid2 rc1 rc2 verdict pass_ok
+  local hist_turns hist_trunc hist_warn hist_rem hist_rec hist_ask
+  if ! have codex; then
+    echo "skip  codex history-roundtrip probe: codex not installed"
+    return 0
+  fi
+  pass="C5-${RANDOM}${RANDOM}"
+  workdir="$(mktemp -d "${TMPDIR:-/tmp}/wao-cohr-XXXXXX")"
+  out1="$(mktemp "$BASE_DIR/.tmp-chr2-a.XXXXXX")"
+  out2="$(mktemp "$BASE_DIR/.tmp-chr2-b.XXXXXX")"
+  ( cd "$workdir" && printf '%s' "记住暗号${pass}，只记在心里不要写入任何文件或记忆" | run_timed "$TIMEOUT_SECS" codex exec --json --skip-git-repo-check - ) >"$out1" 2>/dev/null
+  rc1=$?
+  tid="$(codex_tid_of "$out1")"
+  if [ -n "$tid" ]; then
+    ( cd "$workdir" && printf '%s' "暗号是什么？只回复暗号" | run_timed "$TIMEOUT_SECS" codex exec resume "$tid" --json --skip-git-repo-check - ) >"$out2" 2>/dev/null
+    rc2=$?
+  else
+    rc2=skipped
+  fi
+  tid2="$(codex_tid_of "$out2")"
+
+  # Direct node harness: readHistory via the production reader. Emits strict
+  # `KEY value` single lines (turn texts whitespace-collapsed + capped, so
+  # model output can never break the bash assembly below).
+  if [ -n "$tid" ]; then
+    verdict="$(node --input-type=module -e '
+      import { pathToFileURL } from "node:url";
+      const { readHistory } = await import(pathToFileURL(process.argv[4]).href);
+      const r = readHistory({ cwd: process.argv[2] }, process.argv[3]);
+      const pass = process.argv[5];
+      const clean = (s) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+      const has = (fn) => (r.turns.some(fn) ? "yes" : "no");
+      const out = [
+        `TURNS ${r.turns.length}`,
+        `TRUNCATED ${r.truncated}`,
+        `WARNINGS ${r.warnings.length}`,
+        `REMEMBER ${has((t) => (t.user ?? "").includes(pass))}`,
+        `RECALLED ${has((t) => (t.assistant ?? "").includes(pass))}`,
+        `ASK ${has((t) => (t.user ?? "").includes("暗号是什么"))}`,
+        ...r.warnings.map((w) => `WARNING ${clean(w)}`),
+        ...r.turns.map((t, i) => `TURN ${i + 1} [${clean(t.user)}] => [${clean(t.assistant)}]`),
+      ];
+      process.stdout.write(out.join("\n") + "\n");
+    ' hr "$workdir" "$tid" "$SCRIPT_DIR/../plugins/provider-codex/history.js" "$pass")"
+    hist_turns="$(sed -n 's/^TURNS //p' <<<"$verdict")"
+    hist_trunc="$(sed -n 's/^TRUNCATED //p' <<<"$verdict")"
+    hist_warn="$(sed -n 's/^WARNINGS //p' <<<"$verdict")"
+    hist_rem="$(sed -n 's/^REMEMBER //p' <<<"$verdict")"
+    hist_rec="$(sed -n 's/^RECALLED //p' <<<"$verdict")"
+    hist_ask="$(sed -n 's/^ASK //p' <<<"$verdict")"
+  fi
+  # verdict precomputed: bash 3.2 (macOS) cannot parse $(case…) inline below
+  pass_ok=no
+  if [ "$rc1" = 0 ] && [ "$rc2" = 0 ] && [ -n "$tid" ] && [ "$tid2" = "$tid" ] \
+     && [ "${hist_turns:-0}" -ge 2 ] && [ "$hist_rem" = yes ] && [ "$hist_rec" = yes ] \
+     && [ "${hist_warn:-1}" -eq 0 ]; then
+    pass_ok=yes
+  fi
+  {
+    echo "# codex history roundtrip probe — captured ${NOW} (NOTE-only: real-data artifact, NOT compared in --check)"
+    echo "# purpose: prove plugins/provider-codex/history.js end-to-end against a brand-new REAL rollout file"
+    echo "# method: fresh tmp cwd; round1 tells codex a RANDOM passcode ${pass} (no file/memory writes), round2 \`exec resume <tid>\` asks it back"
+    echo "#         (both prompts via stdin '-'), then readHistory({cwd:<tmp>}, tid) parses THAT rollout via the production reader"
+    echo "#         (default codexHome resolution — rollouts live under \$CODEX_HOME/sessions/YYYY/MM/DD/, cwd-independent)"
+    echo "# round1: \`printf <记住暗号${pass}，只记在心里不要写入任何文件或记忆> | codex exec --json --skip-git-repo-check -\` (tmp cwd) exit=${rc1}; thread id from thread.started: $([ -n "$tid" ] && echo "$tid" || echo MISSING)"
+    if [ "$rc2" = skipped ]; then
+      echo "# round2: SKIPPED — round1 emitted no thread.started, nothing to resume"
+    else
+      echo "# round2: \`printf <暗号是什么？只回复暗号> | codex exec resume <tid> --json --skip-git-repo-check -\` exit=${rc2}; thread.started: $([ -n "$tid2" ] && ([ "$tid2" = "$tid" ] && echo "echoes the SAME thread id (session-id contract, baseline leg2/leg3)" || echo "NEW id ${tid2}") || echo "NOT emitted — run() falls back to the input id")"
+    fi
+    echo "# readHistory result (turn texts whitespace-collapsed, 80 chars each):"
+    echo "#   thread id: ${tid:-none} | turn count: ${hist_turns:-n/a} | warnings: ${hist_warn:-n/a} | truncated: ${hist_trunc:-n/a}"
+    echo "#   passcode texts in turns: remember-prompt=${hist_rem:-n/a} recalled-passcode=${hist_rec:-n/a} ask-present=${hist_ask:-n/a}"
+    sed -n 's/^WARNING /#   WARNING: /p' <<<"$verdict"
+    sed -n 's/^TURN /#   TURN: /p' <<<"$verdict"
+    if [ "$pass_ok" = yes ]; then
+      echo "# verdict: PASS — real 2-round thread parsed clean: both passcode texts present in turns, 0 warnings, same-id echo"
+    else
+      echo "# verdict: FAIL — rc1=${rc1} rc2=${rc2} tid-echo=$([ "$tid2" = "$tid" ] && echo same || echo differs) turns=${hist_turns:-n/a} remember=${hist_rem:-n/a} recalled=${hist_rec:-n/a} warnings=${hist_warn:-n/a}"
+    fi
+    echo "# ---- round1 output (raw, as captured) ----"
+    cat "$out1"
+    echo "# ---- round2 output (raw, as captured) ----"
+    cat "$out2"
+  } > "${out1}.final"
+  atomic_write "$BASE_DIR/codex-history-roundtrip.ndjson" "${out1}.final"
+  rm -f "$out1" "$out2"
+  rm -rf "$workdir"
+  echo "saved $BASE_DIR/codex-history-roundtrip.ndjson (roundtrip=${pass_ok}, turns=${hist_turns:-n/a}, warnings=${hist_warn:-n/a})"
+}
+
 # —— check mode ——————————————————————————————————————————————————————————————
 
 check_minimal() { # check_minimal <cli> <capture-fn>
@@ -598,6 +707,7 @@ case "$MODE" in
     probe_claude_resume
     probe_claude_thinking
     probe_claude_history_roundtrip
+    probe_codex_history_roundtrip
     echo "probe: baselines captured (git add $BASE_DIR/*.ndjson)"
     ;;
   --check)

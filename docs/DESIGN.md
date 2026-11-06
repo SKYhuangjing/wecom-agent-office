@@ -312,12 +312,12 @@ claude（会话文件挂 cwd 哈希目录）必失效 → 视为切换走交接�
 
 | | dsh 0.2.1 | claude 2.1.318 | codex 0.166 |
 |---|---|---|---|
-| 起进程 | `dsh --profile P --json -`（`--session-id` 仅 resume，新会话省略；首事件回传新 id） | `claude -p --output-format stream-json --verbose`（stdin 传 prompt；新会话**不传 session 旗标**，id 由 system/init 事件回传；续接 `--resume <id>`，init 回显同 id——T1/T2 实测，与上文续接契约一致） | `codex exec --json --skip-git-repo-check -`；续接 `codex exec resume <id>`（**resume+stdin 哨兵待 probe 复测**，回退=prompt 位置参数） |
+| 起进程 | `dsh --profile P --json -`（`--session-id` 仅 resume，新会话省略；首事件回传新 id） | `claude -p --output-format stream-json --verbose`（stdin 传 prompt；新会话**不传 session 旗标**，id 由 system/init 事件回传；续接 `--resume <id>`，init 回显同 id——T1/T2 实测，与上文续接契约一致） | `codex exec --json --skip-git-repo-check -`；续接 `codex exec resume <id>`（stdin 哨兵实测**可用**，基线 codex-resume-stdin；**resume 拒 `-s`**——实测 `error: unexpected argument '-s' found`，续接腿改传 `-c sandbox_mode="…"`；**`-c` 字符串值需 TOML 引号**，help 自带示例 `-c model="o3"`——0.166 实测） |
 | 模型 | profile（materialize） | `--model` | `-m` / `-c model=` |
 | 权限/沙箱 | profile（presets+sandbox-policy） | `--permission-mode`+`--allowedTools` | `-s read-only\|workspace-write\|danger-full-access` |
 | **模型网关路由（评审修正）** | `extraEnv`（apiKeyEnv，现状保留） | bot 级 `env`：`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`（官方文档化，✅成立） | ❌ **`OPENAI_BASE_URL` 不存在**——改走 `-c openai_base_url=...` + `-c model_provider=...` 运行时覆盖，或 materializeConfig 写 per-bot `CODEX_HOME/config.toml`；凭证 `CODEX_API_KEY`；ChatGPT OAuth token 对网关无效 |
 | 成功判据 | exit 0 且 `turn_end.reason.kind==='completed'`（✅实测） | `result.subtype==='success'`（M2 复核） | exit 0 且 `turn.completed`（✅实测） |
-| 事件映射 | session/status(step·reason)/text/tool_call/final | system(init)/assistant(text·thinking·tool_use)/result | thread.started/turn.started/**item.completed(reasoning·agent_message·command·file_change·mcp_tool_call·web_search·plan_update)**/turn.completed/**turn.failed·error**（评审补全，漏映射=进度与 timeline 整条丢失） |
+| 事件映射 | session/status(step·reason)/text/tool_call/final | system(init)/assistant(text·thinking·tool_use)/result | thread.started/turn.started/**item.completed(reasoning·agent_message·command_execution·file_change·mcp_tool_call·web_search·todo_list)**/turn.completed/**turn.failed·error**（0.166 实测勘误，T4/T5：计划 item 实为 `todo_list{items}`，**无 `plan_update`**——runner 留 plan_update 拼写对冲映射；`collab_tool_call` 存在但暂不映射，按宽松解析降级不可见；漏映射=进度与 timeline 整条丢失） |
 | 只读历史 | zstd 多帧解码（移植 history.js） | `~/.claude/projects/<hash>/*.jsonl` | `~/.codex/sessions/**.jsonl` |
 | 锁冲突 | code='lock-conflict' → 重试 1 次→防线三文案 | 独占冲突同文案 | 同左 |
 
@@ -330,6 +330,9 @@ stdin 哨兵**可用**（新 prompt 经 stdin 生效、thread_id 回显）。**c
 新鲜对照会话法，`claude-resume.ndjson`）**：resume 轮忆出本会话暗号而对照新会话不能 → 上下文确随 `--resume`
 存活；**风险注记（M3 runbook 素材）**：同 cwd 会话共享 auto-memory（`~/.claude/projects/<cwd>/memory/`），
 单会话被告知的秘密可泄入同 cwd 其他会话——多 bot 同 cwd 部署须视 memory 为共享态。
+**codex rollout 历史闭环已证（2026-11-06，随机暗号两轮法，`codex-history-roundtrip.ndjson`）**：
+两轮真实线程（`exec` 存暗号 → `exec resume` 取回，resume 同 thread id 回显）经
+provider-codex/history.js 解析=2 turns、暗号双向在场、0 warnings。
 基线漂移检测：`bash test/probe.sh --check`。
 
 ---

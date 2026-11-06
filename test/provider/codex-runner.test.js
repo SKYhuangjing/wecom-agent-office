@@ -4,7 +4,7 @@
 // fake-codex.js (exec keeps the pid, so last-pid is the pid the runner
 // spawned). Covers: completed shape + the FULL codex event set mapping
 // (reasoning/command_execution/file_change/mcp_tool_call/web_search/todo_list
-// /agent_message; item.started NOT mapped), thinking mode, resume argv
+// /agent_message; item.started NOT mapped) + the plan_update hedge spelling, thinking mode, resume argv
 // (`exec resume <id>` subcommand), sandbox flag split (-s fresh leg,
 // -c sandbox_mode on the resume leg — resume has no -s), configOverrides
 // TOML quoting, env injection (CODEX_HOME + apiKeyEnv), abort-partial,
@@ -114,6 +114,24 @@ test('runner: thinking mode — reasoning item → thinking event with text', as
     const thinks = events.filter((e) => e.type === 'thinking');
     assert.equal(thinks.length, 1, `exactly one thinking event (got ${thinks.length} of ${events.length})`);
     assert.equal(thinks[0].text, '好的，让我先想一下这个问题。');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('runner: plan_update hedge — a plan_update-shaped item still maps to tool{计划}', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wao-cx-pu-'));
+  try {
+    // 0.166.0 has NO plan_update item (its plan item is todo_list — see the
+    // ok-mode test); the runner carries a hedge for the spelling anyway, and
+    // fake-codex's 'plan-update' mode (also NOT a real 0.166.0 shape — see its
+    // header) exists to lock that branch: item → tool{name:'计划'}, brief from
+    // item.plan||item.text.
+    const runner = makeRunner(dir, { codexBin: makeWrapper(dir, 'plan-update') });
+    const events = [];
+    const res = await runOnce(runner, { onEvent: (ev) => events.push(ev) });
+    assert.equal(res.code, 'completed');
+    const plans = events.filter((e) => e.type === 'tool' && e.name === '计划');
+    assert.equal(plans.length, 1, `exactly one 计划 tool event (got ${JSON.stringify(events.filter((e) => e.type === 'tool'))})`);
+    assert.ok(plans[0].brief.includes('先检查配置') && plans[0].brief.includes('复测'), `plan_update brief carries the plan text (${JSON.stringify(plans[0].brief)})`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
