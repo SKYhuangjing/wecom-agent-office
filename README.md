@@ -78,9 +78,11 @@ bash test/probe.sh --check         # dsh/claude/codex 事件序列 vs 已存基�
 ```sh
 # 建 bot (enabled:false 只存配置不连企微 —— M3 切换的推荐姿势)
 curl -X POST localhost:8792/api/bots -H 'content-type: application/json' -d '{...bot 记录...}'
+curl -s localhost:8792/api/bots       # 完整 bot 记录表(UI 编辑器用; secret 仍不回显)
+curl -s localhost:8792/api/ports      # channel/provider 清单 + 各自 accountSchema/configSchema(UI 动态表单用)
 curl -X POST localhost:8792/api/bots/<id>/test    # 真跑该 bot 的 provider(不进引擎链/不记台账); 可选 body {sessionId?, prompt?}: sessionId 续跑该会话, prompt 自定义提问(1..2000 字符, 缺省"回复：收到")
 curl -X POST localhost:8792/api/bots/<id>/toggle  # 上/下线
-curl -X PATCH localhost:8792/api/bots/<id> -d '{...}'   # 改配置(last-good: 失败保留旧配置)
+curl -X PATCH localhost:8792/api/bots/<id> -d '{...}'   # 改配置(last-good: 失败保留旧配置; schema 声明的 password 字段缺省/空串=保留已存值——UI 编辑器不回显 secret 的配套语义)
 curl -X DELETE localhost:8792/api/bots/<id>       # 删除(连同 provider-dsh 物化的 profile)
 curl -X POST localhost:8792/api/service/reload    # 四阶段热重载(升级插件后)
 curl -X POST localhost:8792/api/plugins/<id>/disable|enable   # 禁/启用某插件(走同一 reload)

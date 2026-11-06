@@ -73,6 +73,26 @@ const idOf = (m) => {
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const findBot = (state, id) => state.doc.bots.find((b) => isObject(b) && b.id === id) ?? null;
 
+// Write-only password fields (M3 UI red line: secrets never echo): the editor
+// loads a sanitized record, so in a PATCHed block a password that is blank OR
+// ABSENT means "keep the stored value" (the UI omits untouched fields; a curl
+// that sends '' gets the same rule) — without it, saving an edit of unrelated
+// fields would wipe the secret and trip required-validation. Schema-driven over
+// the merged channel's accountSchema and the merged provider's configSchema;
+// POST keeps the raw semantics ('' / absent = missing = required error), so
+// creating a bot still demands the real secret. Consequence, accepted: a
+// password can never be CLEARED via PATCH — replaced, yes; removed, no.
+const keepBlankPasswords = (schema, patchBlock, oldBlock) => {
+  if (!Array.isArray(schema) || !isObject(patchBlock) || !isObject(oldBlock)) return;
+  for (const item of schema) {
+    if (item == null || item.type !== 'password' || typeof item.key !== 'string') continue;
+    if ((patchBlock[item.key] === undefined || patchBlock[item.key] === '')
+      && oldBlock[item.key] !== undefined) {
+      patchBlock[item.key] = oldBlock[item.key];
+    }
+  }
+};
+
 const validateOrThrow = (bot, ports) => {
   const errors = validateBot(bot, { channels: ports?.channel, providers: ports?.provider });
   if (errors.length > 0) {
@@ -182,6 +202,13 @@ async function patchBotHandler({ req, res, m, state }) {
   if (bot == null) throw httpError(404, 'bot not found');
   const patchBody = await readBody(req);
   if (!isObject(patchBody)) throw httpError(400, 'patch body must be a JSON object');
+  // Resolve blank passwords BEFORE the merge (the rule reads the OLD record's
+  // stored values); the schemas are the merged channel/provider's — a patch
+  // may retarget either port id in the same request.
+  keepBlankPasswords(state.ports?.getChannel?.(patchBody.channel ?? bot.channel)?.accountSchema,
+    patchBody.account, bot.account);
+  keepBlankPasswords(state.ports?.getProvider?.(patchBody.provider ?? bot.provider)?.configSchema,
+    patchBody.providerConfig, bot.providerConfig);
   const merged = { ...bot, ...patchBody, id: bot.id }; // id is immutable
   validateOrThrow(merged, state.ports);
   if (patchBody.provider !== undefined || patchBody.providerConfig !== undefined) {
@@ -238,6 +265,30 @@ async function toggleBotHandler({ res, m, state }) {
     state.detach(bot.id, 'bot disabled');
   }
   sendJson(res, 200, { bot });
+}
+
+// Registry view for the UI's schema-driven forms (M3 T2): which channels and
+// providers are live, each with the schema that validates its config block.
+// Ports registry entries are {impl, owner} wrappers; a bare-lifecycle test
+// without ports yields empty lists, not a 500.
+async function portsHandler({ res, state }) {
+  const channels = [...(state.ports?.channel?.entries() ?? [])].map(([id, { impl } = {}]) => ({
+    id,
+    accountSchema: Array.isArray(impl?.accountSchema) ? impl.accountSchema : [],
+  }));
+  const providers = [...(state.ports?.provider?.entries() ?? [])].map(([id, { impl } = {}]) => ({
+    id,
+    configSchema: Array.isArray(impl?.configSchema) ? impl.configSchema : [],
+  }));
+  sendJson(res, 200, { channels, providers });
+}
+
+// Full bot records for the CRUD editor (M3 T2). sendJson's sanitize strips
+// secret/*apikey* keys, so what the editor receives is write-only — editing
+// an unrelated field resubmits the account without the secret, which the
+// PATCH keep-blank-password rule turns back into the stored value.
+async function listBotsHandler({ res, state }) {
+  sendJson(res, 200, { bots: state.doc.bots.filter(isObject) });
 }
 
 // Probe run: the provider runner DIRECTLY — no channel, no engine chain, no
@@ -384,6 +435,8 @@ async function sendHandler({ req, res, state }) {
 
 const ROUTES = [
   ['GET', /^\/agents$/, agentsHandler],
+  ['GET', /^\/ports$/, portsHandler],
+  ['GET', /^\/bots$/, listBotsHandler],
   ['POST', /^\/bots$/, createBotHandler],
   ['PATCH', /^\/bots\/([^/]+)$/, patchBotHandler],
   ['DELETE', /^\/bots\/([^/]+)$/, deleteBotHandler],

@@ -237,6 +237,51 @@ test('toggle off detaches (offline), toggle on re-attaches (idle)', async () => 
   assert.equal(agents[0].status, 'idle');
 });
 
+// M3 T2 UI data surface: the schema-driven editor reads /api/ports for the
+// dynamic forms and /api/bots for the sanitized records.
+test('GET /api/ports lists channels/providers with their schemas; GET /api/bots is secret-free', async () => {
+  const ports = await (await get('/api/ports')).json();
+  const chanIds = ports.channels.map((c) => c.id);
+  assert.ok(chanIds.includes('fakechan') && chanIds.includes('wecom'), `fake + repo channels listed: ${chanIds}`);
+  const fakeChan = ports.channels.find((c) => c.id === 'fakechan');
+  assert.deepEqual(fakeChan.accountSchema.map((i) => `${i.key}:${i.type}`), ['endpoint:string', 'secret:password']);
+  const provIds = ports.providers.map((p) => p.id);
+  assert.ok(provIds.includes('fakeprov') && provIds.includes('dsh'), `fake + repo providers listed: ${provIds}`);
+  assert.ok(ports.providers.every((p) => Array.isArray(p.configSchema)), 'every provider carries a configSchema array');
+
+  const list = await (await get('/api/bots')).json();
+  const b1 = list.bots.find((b) => b.id === 'b1');
+  assert.equal(b1.account.endpoint, 'http://fake.local');
+  assert.equal(b1.account.secret, undefined, 'GET /api/bots must not echo the account secret');
+});
+
+// The write-only password flow: the editor never receives the stored secret
+// and omits untouched fields from the PATCHed block — both an ABSENT key and
+// an explicit '' must keep the stored value, while POST (nothing stored yet)
+// keeps the raw required-error semantics.
+test('PATCH blank/absent password keeps the stored secret; POST stays strict', async () => {
+  // absent key (what the UI sends: serializeSchema omits blank text fields)
+  const resp = await patch('/api/bots/b1', { account: { endpoint: 'http://v2.local' } });
+  assert.equal(resp.status, 200);
+  const onDisk = loadBots(join(dataDir, 'bots.json')).bots.find((b) => b.id === 'b1');
+  assert.equal(onDisk.account.endpoint, 'http://v2.local');
+  assert.equal(onDisk.account.secret, 'supersecretvalue123', 'absent password on PATCH = keep the stored one');
+  // explicit '' — the curl shape gets the same rule
+  const resp2 = await patch('/api/bots/b1', { account: { endpoint: 'http://v2.local', secret: '' } });
+  assert.equal(resp2.status, 200);
+  assert.equal(loadBots(join(dataDir, 'bots.json')).bots.find((b) => b.id === 'b1').account.secret,
+    'supersecretvalue123', 'blank password on PATCH = keep the stored one');
+  assert.equal((await (await get('/api/bots')).json()).bots.find((b) => b.id === 'b1').account.endpoint, 'http://v2.local');
+
+  // enabled:false + a required blank password → 400 BEFORE persistence or attach
+  const bad = await post('/api/bots', {
+    id: 'wecom-x', name: 'X', enabled: false, channel: 'wecom',
+    account: { botId: '1', secret: '' }, provider: 'dsh', providerConfig: { cwd: '/tmp' },
+  });
+  assert.equal(bad.status, 400);
+  assert.match((await bad.json()).error, /account\.secret is required/);
+});
+
 test('POST /api/bots/:id/test runs the provider runner engine-independently; ledger untouched', async () => {
   const resp = await post('/api/bots/b1/test');
   assert.equal(resp.status, 200);
