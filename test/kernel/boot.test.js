@@ -253,13 +253,17 @@ test('stop() resolves within the close timeout when a client is wedged mid-reque
   // so the socket stays non-idle and an unbounded server.close() would hang.
   sock.write('GET /healthz HTTP/1.1\r\nHost: localhost\r\n');
   const began = Date.now();
+  // Watcher attached BEFORE stop(): stop() ends with bounded async work (the
+  // orphan sweep's pgrep execFile), and that event-loop yield can deliver the
+  // client-side 'close' BEFORE stop() resolves — a listener attached only
+  // afterwards would miss an event that already fired.
+  const closedPromise = new Promise((resolve) => {
+    sock.once('close', () => resolve(true));
+    setTimeout(() => resolve(false), 2000);
+  });
   await assert.doesNotReject(k.stop({ closeTimeoutMs: 300 }));
   assert.ok(Date.now() - began < 4000, 'stop resolves via the bounded close, not by hanging');
-  const closed = await new Promise((resolve) => {
-    sock.once('close', () => resolve(true));
-    setTimeout(() => resolve(false), 1000);
-  });
-  assert.equal(closed, true, 'the wedged connection is destroyed once the timeout fires');
+  assert.equal(await closedPromise, true, 'the wedged connection is destroyed once the timeout fires');
 });
 
 test('data/ is owner-only: boot creates 0700 / tightens a looser dir; files are born 0600', async () => {

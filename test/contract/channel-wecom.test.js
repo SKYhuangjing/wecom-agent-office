@@ -415,6 +415,52 @@ test('final frame lost on a dropped connection → replayed via push (aibot_send
   }
 });
 
+test('empty-text final frame queued → dropped at reconnect flush (never retained, no push)', async () => {
+  const server = await startFakeWecom();
+  const engine = makeEngine();
+  const log = makeLog();
+  const adapter = makeAdapter(server, engine, log);
+  try {
+    adapter.start();
+    await until(() => adapter.status().state === 'online');
+
+    // inbound group message: reqId r-ef ↔ chatKey wecom:group:EF
+    server.sendToCurrent(msgCallback('r-ef', groupText('EF', 'u1', '空终帧任务')));
+    await until(() => engine.messages.length === 1);
+
+    // kill the connection, then let an EMPTY finish frame fail → it is queued
+    server.current().terminate();
+    await until(() => adapter.status().state === 'reconnecting');
+    await adapter.progress('r-ef', 'sid-ef', '', true);
+
+    // reconnect → flush: the empty entry must be DROPPED with a warn, never
+    // pushed, and never "kept for next reconnect" (the retention bug: push()'s
+    // empty guard resolves null, which the ack check would read as keep).
+    await until(() => adapter.status().state === 'online', 10000);
+    await until(() => log.warns.some((w) => /dropping empty queued final/.test(w)), 3000);
+    await sleep(300);
+    assert.ok(!server.frames.some((f) => f.cmd === 'aibot_send_msg' && f.body.chatid === 'EF'),
+      'empty queued final never pushed');
+    assert.ok(!log.warns.some((w) => /kept for next reconnect/.test(w)),
+      'empty entry not retained for the next reconnect');
+
+    // and it stays dropped: a SECOND reconnect cycle attempts no replay
+    server.current().terminate();
+    await until(() => adapter.status().state === 'reconnecting');
+    await until(() => adapter.status().state === 'online', 10000);
+    await sleep(300);
+    assert.equal(log.warns.filter((w) => /dropping empty queued final/.test(w)).length, 1,
+      'drop happened exactly once (entry no longer in the queue)');
+    assert.ok(!server.frames.some((f) => f.cmd === 'aibot_send_msg' && f.body.chatid === 'EF'));
+    // stop() has nothing left to discard for this chat — no discard warn
+    adapter.stop();
+    assert.ok(!log.warns.some((w) => /discarding/.test(w)));
+  } finally {
+    adapter.stop();
+    await server.close();
+  }
+});
+
 test('push: 30 rapid pushes to one chat → at most 25 on the wire; 4000-char truncation', async () => {
   const server = await startFakeWecom();
   const log = makeLog();

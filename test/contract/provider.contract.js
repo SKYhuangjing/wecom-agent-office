@@ -109,6 +109,10 @@ export async function runContractSuite({ pluginDir, providerId = null }) {
   // Mode injection without env-passthrough support in the provider: a tiny
   // /bin/sh wrapper exports FAKE_MODE/FAKE_HOME, then exec's the port's fake
   // CLI (exec keeps the pid, so last-pid is the pid the provider spawned).
+  // The wrapper writes $$ itself first (ms after spawn): the timeout group's
+  // deadline starts at run(), and under load the wrapper+node boot can outrun
+  // it — SIGTERM would land before the fake's top-level write and last-pid
+  // would never land (ENOENT flake). $$ IS the exec'd fake's pid.
   // The filename carries a bare sequence number only — embedding FAKE_MODE
   // would let a provider smell the test mode from argv[0]/$0.
   const wrapBin = (mode, fakeHome, fakeBin = FAKE_DSH) => {
@@ -116,6 +120,7 @@ export async function runContractSuite({ pluginDir, providerId = null }) {
     writeFileSync(script, '#!/bin/sh\n'
       + `export FAKE_MODE="${mode}"\n`
       + `export FAKE_HOME="${fakeHome}"\n`
+      + `mkdir -p "$FAKE_HOME" && printf '%s\\n' "$$" > "$FAKE_HOME/last-pid"\n`
       + `exec "${fakeBin}" "$@"\n`);
     chmodSync(script, 0o755);
     return script;

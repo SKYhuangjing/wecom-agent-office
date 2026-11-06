@@ -245,6 +245,15 @@ export function createAdapter({ account, bot, log, engine, WebSocket }) {
   client.on('state', ({ state }) => {
     if (state !== 'online' || pendingFinal.size === 0) return;
     for (const [chatKey, q] of [...pendingFinal]) {
+      // Empty queued final (a finish frame that carried no text): push()'s
+      // empty guard would reject it with a warn and resolve null — which the
+      // ack check below reads as "keep for next reconnect", retaining the
+      // entry (and re-warning) on EVERY reconnect, forever. Drop it here.
+      if (!String(q?.text ?? '').trim()) {
+        log.warn?.(`channel-wecom: dropping empty queued final for ${chatKey} (nothing to replay)`);
+        pendingFinal.delete(chatKey);
+        continue;
+      }
       log.info?.(`channel-wecom: replaying final via push chatKey=${chatKey}`);
       try {
         Promise.resolve(push(chatKey, q.text))

@@ -33,7 +33,11 @@ const pidDeadWithin = (pid, ms) => until(() => !pidAlive(pid), ms);
 
 // A wrapper bakes FAKE_MODE into a /bin/sh script (same technique as
 // test/contract/provider.contract.js); exec preserves the pid, so last-pid is
-// the pid the runner spawned.
+// pid the runner spawned. The wrapper writes $$ itself (mkdir+printf, single
+// digits of ms after spawn): the timeout cases SIGTERM 3s after run(), and
+// under parallel-test load the wrapper+node boot can outrun that — killing the
+// wrapper before the fake's top-level write, so last-pid never landed and the
+// post-resolve read hit ENOENT (the M2 flake). $$ IS the exec'd fake's pid.
 const makeWrapper = (dir, mode, { prelude = '' } = {}) => {
   const fakeHome = join(dir, 'fake-home');
   mkdirSync(join(dir, 'bin'), { recursive: true });
@@ -41,6 +45,7 @@ const makeWrapper = (dir, mode, { prelude = '' } = {}) => {
   writeFileSync(bin, '#!/bin/sh\n'
     + `export FAKE_MODE="${mode}"\n`
     + `export FAKE_HOME="${fakeHome}"\n`
+    + `mkdir -p "$FAKE_HOME" && printf '%s\\n' "$$" > "$FAKE_HOME/last-pid"\n`
     + prelude
     + `exec "${FAKE_DSH}" "$@"\n`);
   chmodSync(bin, 0o755);

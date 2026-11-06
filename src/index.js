@@ -8,6 +8,7 @@
 // fails the boot before anything serves traffic.
 import process from 'node:process';
 import net from 'node:net';
+import { execFile } from 'node:child_process';
 import { accessSync, chmodSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,6 +34,54 @@ const defaultPluginsDirs = () => {
 const json = (res, code, obj, extra = {}) => {
   res.writeHead(code, { 'Content-Type': 'application/json', ...extra });
   res.end(JSON.stringify(obj));
+};
+
+// Orphan sweep (M3 ops hardening): stop()'s four phases already abort every
+// run and every runner escalates SIGTERM→SIGKILL — but the drain windows are
+// bounded (5s each), and a run whose SIGKILL escalation outlives them (or a
+// provider that ignores its abort signal entirely) still holds a LIVE CLI
+// child when the service exits: an orphan holding session write-locks with
+// nobody left to reap it. The sweep is the last line before exit: enumerate
+// this process's direct children (exactly what the runners spawned — pgrep
+// excludes itself), confirm each is dead, and SIGKILL any survivor. Success
+// is silent; only action/failure narrates. Assembly-layer on purpose (entry
+// owns process lifetime, kernel modules stay child-free). pgrep is a macOS
+// given here; where it is missing the sweep degrades to a warn, never throws.
+export const sweepOrphanChildren = async ({ pid = process.pid, log, execFileFn = execFile } = {}) => {
+  const say = (level, msg) => { (log?.[level] ?? (() => {}))(msg); };
+  const list = await new Promise((resolve) => {
+    execFileFn('pgrep', ['-P', String(pid)], { timeout: 2000 }, (err, stdout) => {
+      if (err) {
+        // pgrep exit 1 = no children matched (the happy norm); ENOENT = this
+        // platform has no pgrep — degrade loudly, the sweep is best-effort.
+        if (err.code === 1) return resolve([]);
+        say('warn', `stop: orphan sweep skipped (pgrep unavailable: ${err.code ?? err.message})`);
+        return resolve(null);
+      }
+      resolve(String(stdout).split('\n').map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0));
+    });
+  });
+  if (list == null) return;
+  const alive = (childPid) => {
+    try { process.kill(childPid, 0); return true; } catch (e) { return e?.code !== 'ESRCH'; }
+  };
+  const survivors = list.filter(alive);
+  if (survivors.length === 0) return;
+  say('warn', `stop: orphan sweep — ${survivors.length} live child process(es) after teardown (${survivors.join(', ')}), SIGKILL`);
+  for (const childPid of survivors) {
+    try { process.kill(childPid, 'SIGKILL'); } catch (e) {
+      if (e?.code !== 'ESRCH') say('error', `stop: orphan sweep kill ${childPid} failed: ${e?.code ?? e?.message}`);
+    }
+  }
+  // Bounded re-confirmation: a SIGKILLed process can linger a beat as a
+  // zombie until reaped; a survivor past this window is loudly an error.
+  const deadline = Date.now() + 1500;
+  while (Date.now() < deadline && survivors.some(alive)) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  for (const childPid of survivors) {
+    if (alive(childPid)) say('error', `stop: orphan sweep — pid ${childPid} survived SIGKILL`);
+  }
 };
 
 // Library entry: wires every kernel module and returns the kernel object.
@@ -284,6 +333,9 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
         await http.forceClose();
       }
     } catch (err) { logger.error('stop: http close failed', err); }
+    // Orphan sweep (see sweepOrphanChildren): after the bounded four phases a
+    // CLI child that outlived its kill window must not survive the process.
+    try { await sweepOrphanChildren({ pid: process.pid, log: logger }); } catch (err) { logger.error("stop: orphan sweep failed", err); }
     lock.release();
     logger.info('wao: stopped (lock released)');
   };
@@ -483,6 +535,26 @@ const cmdDoctor = async (flags) => {
     mark('✓', 'lock', `${dataDir} lockable (claim+release probe)`);
   } catch (err) {
     mark('✗', 'lock', `${dataDir} not lockable (${err.message})`);
+  }
+
+  // launchd install check (M3 T6): the agent is a user LaunchAgent from the
+  // docs/launchd.plist template. `!` not installed (informational — the
+  // production install is the cutover's job); `✗` installed but not running
+  // (a real failure for an unattended box: KeepAlive should have it up).
+  // `launchctl list` line shape: "<pid>|-\t<last-status>\t<label>".
+  const plistPath = join(process.env.HOME ?? '', 'Library', 'LaunchAgents', 'com.wecom-agent-office.plist');
+  if (!existsSync(plistPath)) {
+    mark('!', 'launchd', `not installed (informational — cp docs/launchd.plist ${plistPath} per its header, then launchctl load)`);
+  } else {
+    const listed = await new Promise((resolve) => {
+      execFile('launchctl', ['list'], { timeout: 3000 }, (err, stdout) => resolve(err ? null : String(stdout ?? '')));
+    });
+    const m = listed != null
+      ? new RegExp('^\\s*(\\d+|-)\\s+[-\\d]+\\s+com\\.wecom-agent-office\\s*$', 'm').exec(listed)
+      : null;
+    if (m != null && m[1] !== '-') mark('✓', 'launchd', `installed and running (pid ${m[1]})`);
+    else if (m != null) mark('✗', 'launchd', 'loaded but NOT running (tail the plist\'s launchd.err.log; launchctl kickstart -k gui/$(id -u)/com.wecom-agent-office to force-restart)');
+    else mark('✗', 'launchd', `installed at ${plistPath} but not loaded (launchctl load ${plistPath})`);
   }
   return bad === 0 ? 0 : 1;
 };

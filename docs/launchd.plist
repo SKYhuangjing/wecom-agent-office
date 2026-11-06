@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ==========================================================================
+  wao launchd 模板（M3 T6 运维加固）。生产安装是 T9 切换的事——这份是模板。
+
+  使用三步（把两个 <...> 占位替换成本机绝对路径后）：
+
+    1) 填模板（示例，本仓库默认布局——注意 node 路径按机器改，见下方
+       EnvironmentVariables 注释）：
+         cp docs/launchd.plist ~/Library/LaunchAgents/com.wecom-agent-office.plist
+         # 编辑：REPO_DIR → 仓库绝对路径；DATA_DIR → 数据目录绝对路径
+         #       NODE_BIN → `which node` 的绝对路径（nvm 机器上是
+         #         /Users/<user>/.nvm/versions/node/<ver>/bin/node）
+
+    2) 安装并启动（用户级 LaunchAgent，随用户登录自起）：
+         launchctl load ~/Library/LaunchAgents/com.wecom-agent-office.plist
+         curl -s localhost:8792/healthz        # 确认起来
+
+    3) 升级 = 进程重启（控制器裁定，README 运维节有完整说明）：
+         launchctl kickstart -k gui/$(id -u)/com.wecom-agent-office
+       KeepAlive 让崩溃/被杀后自动拉活（冷启动自愈）；
+       改配置（bot 表/plugins.json）用配置级重载即可，无需重启：
+         curl -X POST localhost:8792/api/service/reload
+
+  卸载（调试用；生产常驻）：
+         launchctl unload ~/Library/LaunchAgents/com.wecom-agent-office.plist
+         rm ~/Library/LaunchAgents/com.wecom-agent-office.plist
+
+  日志：data/logs/wao.log（结构化运行日志）+ 本 plist 的 launchd.{out,err}.log
+        （launchd 侧 stdout/stderr，捕获进程崩溃这类 wao.log 里看不到的东西）。
+=========================================================================== -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- 唯一 Label；kickstart/unload 都用它寻址 -->
+    <key>Label</key>
+    <string>com.wecom-agent-office</string>
+
+    <!-- 绝对路径 node + 仓库 src/index.js + start 参数（--port 8792 默认口）。
+         DATA_DIR 显式传绝对路径：launchd 不继承 shell 的 cwd/PWD，
+         WAO_HOME 默认的 process.cwd()/data 会落到 /，必须钉死。 -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>NODE_BIN</string>
+        <string>REPO_DIR/src/index.js</string>
+        <string>start</string>
+        <string>--port</string>
+        <string>8792</string>
+        <string>--data-dir</string>
+        <string>DATA_DIR</string>
+    </array>
+
+    <!-- 崩溃/被杀即拉活（冷启动自愈）；launchctl kickstart -k 也是走它重启 -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- 用户登录即起（无人值守前提：机器重启→登录→服务自动回来） -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- 后台服务档位：降低调度优先级争抢，不打扰前台 -->
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>WorkingDirectory</key>
+    <string>REPO_DIR</string>
+
+    <!-- launchd 环境没有 nvm 的 shell 初始化——PATH 必须带上 node 所在目录，
+         provider 子进程（dsh/claude/codex）也从这里找。nvm 机器按实际版本改：
+         /Users/<user>/.nvm/versions/node/<ver>/bin -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>NODE_DIR:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- launchd 侧输出（与 data/logs/wao.log 互补；目录需预先存在：
+         mkdir -p DATA_DIR/logs） -->
+    <key>StandardOutPath</key>
+    <string>DATA_DIR/logs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>DATA_DIR/logs/launchd.err.log</string>
+</dict>
+</plist>

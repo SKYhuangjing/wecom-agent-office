@@ -34,7 +34,7 @@
 - 消息流：企微回调 → channel-wecom adapter → engine 串行链（抢占/队列合并/出站预算）
   → provider runner（`dsh --json -` 子进程，NDJSON → 统一事件）→ 流式回传企微。
 - 会话延续：chatKey → sessionId 缓存（`data/sessions/`），下一条消息带 `--session-id` 续跑。
-- 停机 = SIGINT/SIGTERM 触发四阶段（drain 补终帧 → 逆序拆插件 → 关监听 → 释放锁），不是裸 kill；
+- 停机 = SIGINT/SIGTERM 触发四阶段（drain 补终帧 → 逆序拆插件 → 关监听 → 孤儿扫尾 → 释放锁），不是裸 kill；
   每阶段在日志留一行（`wao: stopping (four-phase)` … `wao: stopped (lock released)`），见 `data/logs/wao.log`。
 
 三家 provider 一览（M2 起，同一 runner 契约：run 7 字段 / code 枚举 / readHistory 三件套）：
@@ -97,6 +97,53 @@ curl -X POST localhost:8792/api/plugins/<id>/disable|enable   # 禁/启用某插
 > dsh bot 的 profile 物化是**即时**的：创建/修改 dsh bot 就把 profile 写到
 > `~/.dsh/profiles/<profile>/`（即使 bot 停用）；`DELETE /api/bots/<id>` 会清理该目录。
 
+### 3.1 无人值守运维（launchd）
+
+模板在 `docs/launchd.plist`（Label `com.wecom-agent-office`，KeepAlive+RunAtLoad+ProcessType
+Background；头部注释即安装三步）。安装（生产切换 T9 执行，平时调试装完记得卸）：
+
+```sh
+cp docs/launchd.plist ~/Library/LaunchAgents/com.wecom-agent-office.plist
+# 编辑三处占位：REPO_DIR（仓库绝对路径）/ DATA_DIR（数据目录绝对路径）/
+#   NODE_BIN、NODE_DIR（`which node` 及其 bin 目录——launchd 不跑 nvm 初始化）
+mkdir -p <DATA_DIR>/logs
+launchctl load ~/Library/LaunchAgents/com.wecom-agent-office.plist
+curl -s localhost:8792/healthz          # 确认起来
+```
+
+**升级路径裁定（控制器 2026-11-06）——进程重启 vs reload 的定位**：
+
+| 场景 | 手段 | 为什么 |
+|---|---|---|
+| **代码升级**（plugin.js 及其 import 的任何模块、`src/kernel/`） | `launchctl kickstart -k gui/$(id -u)/com.wecom-agent-office` | in-process reload 刷不掉 ESM 模块缓存：plugin.js 内部静态 import 的子模块（runner.js 等）reload 后仍是旧代码——已验。kickstart 走完整四阶段停机（在跑任务补终帧、孤儿扫尾）+ KeepAlive 自愈，是唯一可信的换代码路径 |
+| **配置级变化**（plugins.json 启用表、新插件目录、bot CRUD） | `POST /api/service/reload` 或对应 API | 四阶段热重载足够：重扫目录/重读启用表/重建 bot 运行时，进程不停、在跑消息有维护终帧 |
+
+冷启动自愈：KeepAlive=崩溃/被杀即拉活；机器重启→用户登录（RunAtLoad）→服务自动回来。
+数据面（ledger/sessions/bots.json）全在 data/，重启无损；data 目录锁有 stale-holder 认领，
+崩残留的锁不挡下一次启动。停机尾部还有**孤儿扫尾**：四阶段的有界 drain（5s×2）放弃后仍在跑的
+CLI 子进程，进程退出前按 `pgrep -P <服务pid>` 枚举并 SIGKILL（日志 `stop: orphan sweep` 行），
+不留占着会话写锁的孤儿。
+
+日志三层（排障顺序从下往上）：
+
+```sh
+tail -50 <DATA_DIR>/logs/wao.log            # 运行日志：生命周期/drain/orphan sweep 全在这
+tail -50 <DATA_DIR>/logs/launchd.err.log    # launchd 侧 stderr：进程崩溃类（wao.log 里看不到）
+launchctl print gui/$(id -u)/com.wecom-agent-office | head -30   # launchd 视角：退出码/重启计数
+```
+
+无人值守巡检命令表（日常/远程只看这几条）：
+
+| 命令 | 看什么 | 异常处置 |
+|---|---|---|
+| `curl -s localhost:8792/healthz` | `ok:true` + uptimeSec | 不通 → `kickstart -k`；反复挂 → launchd.err.log |
+| `curl -s localhost:8792/api/agents` | 每 bot `idle/working` + `channelState.state=online` | `offline` 带 reason → 查 wao.log 对应 bot 段 |
+| `curl -s localhost:8792/api/state` | 插件 active/failed/disabled | 出现 `failed` → 修后 `POST /api/service/reload` |
+| `tail -50 <DATA_DIR>/logs/wao.log` | `wao: stopping` / `orphan sweep` / drain 超时 | 有 sweep 行=曾有 CLI 活过停机，确认无残留 |
+| `node src/index.js doctor` | 全量自检（含 launchd 三态：✓运行/!未装/✗装了没跑） | 任何 ✗ 行=需要动手 |
+| `launchctl list \| grep wecom-agent-office` | 首列 pid（`-`=没在跑） | `-` → kickstart -k 强拉 |
+
+
 ## 4. 开发（写插件）
 
 - 脚手架：`cp -r plugins/_template/<channel|provider|page> plugins/<你的名字>/`，改三处名字
@@ -148,7 +195,7 @@ curl -X POST localhost:8792/api/plugins/<id>/disable|enable   # 禁/启用某插
 
 | 命令 | 内容 | 时长 |
 |---|---|---|
-| `npm test` | 329 用例：内核/loader/engine/ledger/provider（dsh/claude/codex 剖析）+ web 基建（静态托管/穿越拒绝/uiPlugins/SSE 桥）+ e2e 六场景（fake ws + fake-dsh 全链路） | ~30s |
+| `npm test` | 344 用例：内核/loader/engine/ledger/provider（dsh/claude/codex 剖析）+ web 基建（静态托管/穿越拒绝/uiPlugins/SSE 桥）+ e2e 六场景（fake ws + fake-dsh 全链路）+ ops（孤儿扫尾：单元 + 真服务进程 SIGINT e2e） | ~40s |
 | `npm run contract -- --plugin plugins/provider-dsh --port dsh` | provider 端口契约 11/11（真子进程语义） | 秒级 |
 | `npm run contract` | _template 参考实现（4 pass + 7 skip，skip=需真 CLI 的组） | 秒级 |
 | `bash test/smoke-dsh.sh` | **真 dsh**：两轮对话记忆（同 sessionId 续跑记暗号）+ 真 session 文件解码 | ~10s+ |
@@ -169,7 +216,7 @@ curl -X POST localhost:8792/api/plugins/<id>/disable|enable   # 禁/启用某插
 - **锁冲突无 claim-live**：前身"GUI 占锁→界面认领"协议 M1 未实现；dsh 会话被占 →
   `code=lock-conflict` → 固定友好文案（"写锁被另一个进程占用…请稍后重试"）。
 - **单进程爆炸半径**：分级承诺（DESIGN §2.5）——装载失败可隔离、内核中介调用可归因；
-  但一个 bot 的同步死循环/OOM 仍可能拖死全进程，靠 M3 launchd KeepAlive 拉活，不内置守护。
+  但一个 bot 的同步死循环/OOM 仍可能拖死全进程，靠 launchd KeepAlive 拉活（模板已交付，§3.1），不内置守护。
 - **三家 provider 均已交付**（M2：dsh/claude/codex 契约 11/11×3、切换矩阵 6/6 真 CLI）；probe 基线已固化，
   升级 CLI 后 `probe.sh --check` 报漂移属预期流程（对照 test/probe-baselines/ 重捕或修 runner）。
 
@@ -187,7 +234,7 @@ curl -X POST localhost:8792/api/plugins/<id>/disable|enable   # 禁/启用某插
 | `plugins/_template/` | channel / provider / page 三套脚手架（`_` 前缀=内核不扫描） |
 | `data/`（WAO_HOME） | bots.json / plugins.json(启用表) / ledger/*.jsonl / sessions/*.json / logs/wao.log / .lock |
 | `test/` | kernel·engine·ledger·provider 单测 / contract 契约套件 / e2e 六场景 + switch-matrix.realtest 三家切换矩阵（真 CLI，npm run test:matrix） / fake-bin 假 CLI / probe-baselines 基线 / probe.sh·smoke-dsh.sh·accept-m1.sh·accept-m2.sh |
-| `docs/` | DESIGN.md（权威设计）· PLUGIN-DEV.md（插件开发契约） |
+| `docs/` | DESIGN.md（权威设计）· PLUGIN-DEV.md（插件开发契约）· launchd.plist（无人值守模板，§3.1） |
 
 > 交接 Do：改插件后跑对应测试+契约；动内核先读 DESIGN §2；升级 CLI 先 `probe.sh --check`。
 > Don't：别双实例（锁会拒，但别绕）；别手改 data/ 运行中文件（API 有 last-good 语义）；别在插件间 import。
