@@ -281,6 +281,9 @@ async function patchBotHandler({ req, res, m, state }) {
   if (bot == null) throw httpError(404, 'bot not found');
   const patchBody = await readBody(req);
   if (!isObject(patchBody)) throw httpError(400, 'patch body must be a JSON object');
+  // createdAt is registry truth (mirrors createBotHandler's refusal): a patch
+  // body carrying it is rejected, never silently merged into the 工牌.
+  if (patchBody.createdAt !== undefined) throw httpError(400, 'createdAt is set by the server, not accepted');
   // Resolve write-only fields BEFORE the merge (the rules read the OLD
   // record's stored values); the schemas are the merged channel/provider's —
   // a patch may retarget either port id in the same request.

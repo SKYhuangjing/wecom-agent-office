@@ -204,9 +204,14 @@ test('POST /api/bots validates, materializes, persists, attaches; no secret ever
   assert.equal((await get('/api')).status, 404);
   assert.equal((await get('/api/state')).status, 200);
 
-  // createdAt is registry truth: caller-supplied values are refused, PATCH keeps it.
+  // createdAt is registry truth: caller-supplied values are refused on both
+  // create and PATCH (a patch would otherwise silently merge into the 工牌).
   const dupe = await post('/api/bots', { ...BOT_B1, id: 'b-stamped', createdAt: 12345 });
   assert.equal(dupe.status, 400, 'a caller-supplied createdAt is rejected');
+  const forged = await patch('/api/bots/b1', { createdAt: 12345 });
+  assert.equal(forged.status, 400, 'a PATCH-supplied createdAt is rejected too');
+  assert.equal(loadBots(join(dataDir, 'bots.json')).bots[0].createdAt, body.bot.createdAt,
+    'the forged PATCH never persisted');
   const patched = await (await patch('/api/bots/b1', {})).json();
   assert.equal(patched.bot.createdAt, body.bot.createdAt, 'PATCH preserves createdAt');
   const listed = await (await get('/api/bots')).json();

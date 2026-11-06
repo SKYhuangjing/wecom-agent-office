@@ -54,8 +54,8 @@ const EmptyState = () => h('div', { className: 'page' },
 );
 
 // 打卡钟页头（redesign P1）：当前时刻（活钟）· 在岗 N/M · 今日工单 X。
-// 三个数字都是链接——时刻与工单去看工作日志，在岗去看工作台；useAgents
-// 与页面共用同一条 SSE 管道，这里只是多一个订阅者。
+// 三个数字都是链接——时刻去看工作日志，在岗与工单去看今日工作（卡片带
+// todayTurns）；useAgents 与页面共用同一条 SSE 管道，这里只是多一个订阅者。
 const pad2 = (n) => String(n).padStart(2, '0');
 const PunchClock = () => {
   const [now, setNow] = useState(() => new Date());

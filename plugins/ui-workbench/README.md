@@ -1,18 +1,29 @@
 # ui-workbench
 
-内置工作台页面插件（M3 T2/T3）：机器人实况 + Bot 管理 + 会话钻取 + 主动推送 + 插件管理 + 时间线。
-六个页面同住本插件 `ui/`（无构建 ES Module），由内核托管在 `/api/ui/ui-workbench/`。
+内置工作台页面插件（M3 T2/T3 → company-metaphor 重设计）：六个页面同住本插件 `ui/`
+（无构建 ES Module），由内核托管在 `/api/ui/ui-workbench/`。
+
+## 公司化说明（company-metaphor 重设计）
+
+本插件已按「一家你独自经营的公司」重设计（仓库 README §4.2 有公司话↔技术词
+对照表与文案原则）：UI 主层一律公司话（入职/离职/调休/工位/工牌/工单/广播…），
+技术词（provider、botId、chatKey、kind）收进 tooltip/副标题；每位同事的化身由
+`WAO.avatar(botId)` 生成（DiceBear notionists，全离线），同一工牌号在卡片、花名册、
+日志行与工牌上是同一张脸，provider 色描边环编码岗位。`bots` 页重构为「人事部」：
+入职向导四步 + 离职面谈（姓名确认）+ 分组折叠员工档案；状态词统一三档
+工作中/待命/休假。旧页名对照：工作台→今日工作、Bot 管理→人事部、会话→工作档案室、
+推送→广播站、插件→后勤部门、时间线→工作日志（页面 id 不变，锚点兼容）。
 
 ## 页面
 
 | 页 id | 标题 | 内容 |
 | --- | --- | --- |
-| `workbench` | 工作台 | bot 卡片网格：状态徽标（工作中/空闲/离线+原因）、SSE 驱动实时进度行、今日轮次/用户/会话统计、启停开关（`POST /api/bots/:id/toggle`）、编辑/试跑快捷跳转 |
-| `bots` | Bot 管理 | 左侧 bot 列表+新建；右侧编辑表单——channel 选择 + `accountSchema` 动态渲染、provider 选择 + `configSchema` 动态渲染（string→输入框、password→不回显密码框、enum→下拉、bool→开关、list→每行一项多行框、object→JSON 框带解析校验）；跨 provider 切换保留 id/名称/渠道/账号并重置 providerConfig 为新 schema 默认值 + 交接提示条；删除需输入 bot id 二次确认；试跑（`POST /api/bots/:id/test`，可自定义 prompt） |
-| `session` | 会话 | bot 选择后双视图：台账（chatKey 下拉来自 `/api/ledger?bot=` 的分组聚合 → user/assistant 轮次卡片，时间戳 + reason 徽标——完成绿/被打断黄/超时·错误红 + 可点「会话 …」跳原生）；原生会话（`/api/session?bot=&session=` 的 provider 本地轮次，截断/警告提示）；「导出台账 Markdown」（`/api/export?bot=` 下载） |
-| `push` | 推送 | bot → chatKey（同样来自台账分组）→ 内容 textarea（4000 字上限 + 实时计数）→ `POST /api/send`；成功绿条/失败红条（服务端错误文案）；bot 未连接（离线/停用）时禁用发送并给出原因提示。**内容会真实送达企微** |
-| `plugins` | 插件 | 插件表（名称/id/类型/版本/状态徽标——运行中绿·已停用灰·加载失败红，失败原因进 title 与行内）；停用经确认弹层（provider/渠道插件按 `/api/agents` 实时计算受影响机器人并点名）；重载全部插件带「会中断在跑任务」维护确认；操作后刷新列表 |
-| `timeline` | 时间线 | `useTimeline(botId, windowMin)` 事件流：最新在上；kind 分色（run 开始蓝/步骤灰/工具紫/思考青/轮次绿/run 结束蓝灰）；bot 全选/单选 + 5/15/30 分钟窗口；SSE run/* 驱动 + 5 秒轮询兜底 |
+| `workbench` | 今日工作 | bot 卡片网格：化身头像（provider 色环+岗位称呼）、状态徽标（工作中 provider 色脉动/待命/休假+原因）、SSE 驱动实时进度行（工作汇报）、今日工单/服务同事/档案数统计、调休/返岗开关（`POST /api/bots/:id/toggle`）、员工档案/岗前测试快捷跳转 |
+| `bots` | 人事部 | 花名册（化身+状态）；入职向导四步（名片化身骰子/三部门岗位卡片/工位与门禁名单/工牌凭证）→ 工牌预览成功页（入职日期 createdAt）；员工档案分组折叠（基础/工牌凭证/岗位配置/高级）+ sticky 保存栏——channel/provider schema 动态渲染（password 不回显、enum 下拉、bool 开关、list/object 框）；转岗保留 id/姓名/渠道/账号并重置 providerConfig + 交接提示；离职面谈（后果清单+输入姓名确认）；岗前测试（`POST /api/bots/:id/test`，可自定义 prompt） |
+| `session` | 工作档案室 | bot 选择后双视图：工作档案（chatKey=部门群/同事，下拉来自 `/api/ledger?bot=` 分组聚合 → user/assistant 工单卡片，reason 徽标 + 可点「原生档案 …」跳原生）；原生档案（`/api/session?bot=&session=` 的 provider 本地轮次，截断/警告提示）；「导出工作档案」（`/api/export?bot=` 下载） |
+| `push` | 广播站 | 播音员 bot → 播给谁（同样来自台账分组）→ 广播内容（4000 字上限 + 实时计数）→ `POST /api/send`；成功绿条/失败红条；播音员不在岗（离线/停用）时禁用并给出原因。**内容会真实送达企微** |
+| `plugins` | 后勤部门 | 部门表（名称/id/类型/版本/状态徽标，失败原因进 title 与行内）；停用经确认弹层（provider/渠道按 `/api/agents` 实时点名受影响同事）；「部门重组」带「会中断在跑工单」维护确认；操作后刷新列表 |
+| `timeline` | 工作日志 | `useTimeline(botId, windowMin)` 事件流：最新在上，每行化身头像；kind 分色公司话（开工/步骤/工具/思考/工单/收工，技术值进 title）；全部同事/单选 + 5/15/30 分钟窗口；SSE run/* 驱动 + 5 秒轮询兜底 |
 
 ## 数据面
 
