@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- WAO console (DESIGN §9). Hand-written on purpose: it only loads the
+     vendored React UMD (the ONE instance shared by shell + page plugins),
+     the committed shell bundle and its stylesheet. Everything else is
+     page-plugin modules fetched at runtime from /api/ui/<id>/. -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WAO Console</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <div id="root"></div>
+  <script src="/vendor/react.umd.js"></script>
+  <script src="/vendor/react-dom.umd.js"></script>
+  <script src="/assets/app.js"></script>
+</body>
+</html>

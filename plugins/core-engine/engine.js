@@ -458,6 +458,10 @@ export class Engine {
     limits = {},
     runTurnImpl = null,
     channelEventHandler = null,
+    // Kernel bus bridge (M3 UI): (topic, payload) => void, wired by plugin.js
+    // to ctx.events.emit so progress/status changes reach SSE clients. Null in
+    // bare engine tests — every emit site is optional-chained.
+    emit = null,
   } = {}) {
     if (limits.concurrency !== undefined
       && (!Number.isInteger(limits.concurrency) || limits.concurrency < 1)) {
@@ -480,6 +484,7 @@ export class Engine {
     this.limits = { ...ENGINE_LIMITS, ...limits };
     this._runTurnImpl = runTurnImpl ?? defaultRunTurn;
     this.channelEventHandler = channelEventHandler;
+    this.emit = emit;
 
     this.chains = new Map();    // chatKey → tail promise (settles when the chain goes idle)
     this.pending = new Map();   // chatKey → { bot, msg } merged-but-not-started (latest-wins)
@@ -562,6 +567,7 @@ export class Engine {
     if (bot?.id == null) throw new Error('attachBot requires a bot with an id');
     this._bots.set(bot.id, { bot, adapter, runner });
     this.log.info?.(`engine: bot ${bot.id} attached`);
+    this.emit?.('agent/status', { botId: bot.id, ...this._statusOf(bot.id) });
   }
 
   // Bots going offline (plugin disabled, credentials pulled...). In-flight
@@ -572,6 +578,7 @@ export class Engine {
     this._progress.delete(botId);
     const line = `engine: bot ${botId} detached (${reason}) — messages dropped until reattach`;
     if (had) this.log.warn?.(line); else this.log.debug?.(line);
+    this.emit?.('agent/status', { botId, status: 'offline', running: 0, progress: null, reason });
     return had;
   }
 
@@ -599,17 +606,22 @@ export class Engine {
   }
 
   // Called by Task 13's runTurnImpl to refresh the status line. First call
-  // for a bot stamps startedAt; later calls only bump updatedAt.
+  // for a bot stamps startedAt; later calls only bump updatedAt. UI bridge:
+  // a CHANGED line/source emits agent/progress — heartbeats re-sending the
+  // same line do not, so SSE carries semantic deltas, not noise.
   setProgress(botId, line, source = 'run') {
     const now = Date.now();
     const cur = this._progress.get(botId);
     if (cur) {
+      const changed = cur.line !== line || cur.source !== source;
       cur.line = line;
       cur.source = source;
       cur.updatedAt = now;
+      if (changed) this.emit?.('agent/progress', { botId, line, source, updatedAt: now });
       return;
     }
     this._progress.set(botId, { line, source, startedAt: now, updatedAt: now });
+    this.emit?.('agent/progress', { botId, line, source, updatedAt: now });
   }
 
   // status(botId) → that bot; status() → aggregate with a bots[] array.
@@ -820,9 +832,12 @@ export class Engine {
     // Overwrite is safe by construction: callers only register when no live
     // run owns the key (onMessage checked inFlight; pickups happen after the
     // previous turn retired).
+    const wasWorking = [...this._runs.values()].some((r) => r.botId === botId);
     this.inFlight.set(key, ac);
     this._runs.set(key, { ac, botId });
     if (!this._progress.has(botId)) this.setProgress(botId, null, 'run');
+    // idle→working transition (this bot's first live run): one status frame.
+    if (!wasWorking) this.emit?.('agent/status', { botId, ...this._statusOf(botId) });
   }
 
   // Compare-and-delete (invariant 3): remove the registration ONLY when the
@@ -835,6 +850,8 @@ export class Engine {
     this._runs.delete(key);
     if (run && ![...this._runs.values()].some((r) => r.botId === run.botId)) {
       this._progress.delete(run.botId); // bot's last live turn ended: no stale progress line
+      // working→idle transition (the bot's last live turn settled).
+      this.emit?.('agent/status', { botId: run.botId, ...this._statusOf(run.botId) });
     }
   }
 

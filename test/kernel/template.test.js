@@ -3,8 +3,8 @@
 // passed as a plugins root (the scan skips `_`-prefixed entries INSIDE a root,
 // so provider/channel/page below it are fair game). The provider port id is
 // 'template' (manifest id 'template-provider'), its runner echoes, the channel
-// adapter is a loadable no-op, the page registers with entry null (serveUI
-// lands in M3), and plugins.json enabled:false takes the whole set offline.
+// adapter is a loadable no-op, the page declares ui:'./ui' (M3 kernel
+// hosting), and plugins.json enabled:false takes the whole set offline.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -100,11 +100,15 @@ test('channel port: template adapter is a loadable no-op with declared capabilit
   adapter.stop();
 });
 
-test('ui port: page registers with entry null (serveUI is M3)', async () => {
+test('ui port: page registers nav metadata (entry is kernel-derived from manifest.ui)', async () => {
   const k = await start(null);
   const page = k.portRegistry.page.get('template-page')?.impl;
   assert.ok(page, 'page port id is the manifest id');
-  assert.deepEqual(page, { id: 'template-page', title: '模板页', icon: '▤', order: 50, entry: null });
+  assert.deepEqual(page, { id: 'template-page', title: '模板页', icon: '▤', order: 50 });
+  // M3: the manifest `ui` declaration (not the port desc) drives kernel
+  // hosting — /api/state lists the entry the shell imports.
+  const state = await (await fetch(`http://127.0.0.1:${k.http.port}/api/state`)).json();
+  assert.deepEqual(state.uiPlugins, [{ id: 'template-page', entry: '/api/ui/template-page/index.js' }]);
 });
 
 test('plugins.json enabled:false on all three ids: 0 active, ports unregistered', async () => {

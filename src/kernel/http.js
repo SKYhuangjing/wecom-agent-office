@@ -3,14 +3,71 @@
 // throw becomes an attributed 500 (or a socket kill once headers are out)
 // instead of an unhandled error that takes the process down. Body parsing is
 // deliberately absent — plugins parse their own bodies.
+// M3: the shell also serves the built web console (web/dist) at GET /,
+// /assets/* and /vendor/* — small committed files, so readFileSync whole-file
+// delivery with no-cache beats a streaming layer nobody asked for.
+import { readFileSync } from 'node:fs';
+import { extname, resolve } from 'node:path';
 import { createServer } from 'node:http';
 
 const HEARTBEAT_MS = 15_000;
 // Kernel built-ins: shadowing them with a plugin handler would be a silent
 // trap (dispatch checks them first), so registration refuses outright.
-const RESERVED = new Set(['/healthz', '/api/events']);
+const RESERVED = new Set(['/healthz', '/api/events', '/', '/assets/', '/vendor/']);
 
-export function createHttpShell({ log }) {
+// Extension → Content-Type for everything the console and plugin ui/ dirs
+// ship. Unknown extensions fall through to a download, never to a guess.
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.ico': 'image/x-icon',
+};
+
+// Resolve a URL path fragment UNDER root, or null when it escapes/decodes
+// badly. This is the traversal guard every static route goes through: the
+// decoded path is normalized and the RESULT is checked against the root —
+// any %2e%2e/%2f trick must survive to a resolved path that either stays
+// under root or is rejected here, before a file is ever opened.
+export function fileUnder(root, relUrl) {
+  if (typeof relUrl !== 'string') return null;
+  let decoded;
+  try { decoded = decodeURIComponent(relUrl); } catch { return null; } // malformed % never reaches the FS
+  if (decoded.includes('\0')) return null;
+  const rootAbs = resolve(root);
+  const abs = resolve(rootAbs, decoded);
+  if (abs !== rootAbs && !abs.startsWith(rootAbs + '/')) return null;
+  return abs;
+}
+
+// Whole-file static delivery shared by the shell routes (/, /assets/*,
+// /vendor/*) and the kernel's /api/ui/<id>/* hosting in index.js. Missing
+// file = the same 404 JSON every unknown route returns.
+export function sendFile(res, file) {
+  let data;
+  try { data = readFileSync(file); } catch { return json404(res); }
+  const type = MIME[extname(file).toLowerCase()] ?? 'application/octet-stream';
+  res.writeHead(200, { 'Content-Type': type, 'Content-Length': data.length, 'Cache-Control': 'no-cache' });
+  res.end(data);
+}
+
+// The one 404 shape every static miss answers with (kept next to sendFile so
+// the pair reads as one contract).
+const json404 = (res) => {
+  res.writeHead(404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'not found' }));
+};
+
+export function createHttpShell({ log, webDir = null }) {
   const routes = new Map(); // prefix -> { handler, owner }
   const sse = new Set(); // live client records { res, close }; Set delete is idempotent
   const startedAt = Date.now(); // /healthz uptime base
@@ -44,6 +101,20 @@ export function createHttpShell({ log }) {
     if (pathname === '/api/events') {
       if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' }, { Allow: 'GET' });
       return startSse(res);
+    }
+    // Built console (M3): GET / → index.html, /assets/* and /vendor/* → the
+    // committed build artifacts. A shell without a webDir (bare unit tests)
+    // keeps the plain 404. Only GET/HEAD is static — anything else is a 405.
+    if (webDir && (pathname === '/' || pathname === '/index.html'
+      || pathname.startsWith('/assets/') || pathname.startsWith('/vendor/'))) {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: 'method not allowed' }, { Allow: 'GET' });
+      let base; let rel;
+      if (pathname === '/' || pathname === '/index.html') { base = webDir; rel = 'index.html'; }
+      else if (pathname.startsWith('/vendor/')) { base = resolve(webDir, 'vendor'); rel = pathname.slice('/vendor/'.length); }
+      else { base = resolve(webDir, 'assets'); rel = pathname.slice('/assets/'.length); }
+      const file = fileUnder(base, rel);
+      if (file == null) return json(res, 404, { error: 'not found' });
+      return sendFile(res, file);
     }
     // Longest matching prefix wins: /api and /api/dsh can coexist, the more specific one serving deeper paths.
     let best = null;

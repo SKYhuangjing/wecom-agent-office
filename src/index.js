@@ -15,7 +15,7 @@ import { createLogger } from './kernel/log.js';
 import { lockDataDir, readJson, writeJson } from './kernel/config.js';
 import { createEventBus } from './kernel/events.js';
 import { createServices } from './kernel/services.js';
-import { createHttpShell } from './kernel/http.js';
+import { createHttpShell, sendFile, fileUnder } from './kernel/http.js';
 import { createLifecycle } from './kernel/lifecycle.js';
 import * as loader from './kernel/loader.js';
 
@@ -57,7 +57,19 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
 
   const services = createServices();
   const events = createEventBus({ log: logger });
-  const http = createHttpShell({ log: logger });
+  // web/dist is a committed build artifact (M3): the console exists even on a
+  // fresh clone with no build step. A missing dir just means GET / 404s —
+  // boot never depends on the console being present.
+  const webDir = join(repoRoot, 'web', 'dist');
+  const http = createHttpShell({ log: logger, webDir });
+  // SSE bridge (DESIGN §8 /api/events): the bus topics the UI may see are
+  // forwarded verbatim to every live SSE client. The whitelist IS the list —
+  // the bus has no wildcards, so a plugin cannot smuggle a new topic onto the
+  // wire by emitting it. Kernel-lifetime subscription (never unsubscribed).
+  for (const topic of ['agent/progress', 'agent/status', 'run/start', 'run/end',
+    'ledger/turn', 'service/state', 'plugin/lifecycle']) {
+    events.on(topic, (payload) => http.sseSend(topic, payload));
+  }
   const lifecycle = createLifecycle({ events, services, log: logger, http });
   const portRegistry = lifecycle.portRegistry;
   // Kernel-assembly facts for plugins (core-engine reads both at activate):
@@ -71,6 +83,25 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
   let lastLoad = { active: [], failed: [] };
   let lastDisabled = []; // {id,type,version} — plugins the enable table filtered out
   let knownPluginIds = new Set(); // every manifest id ever discovered (incl. disabled/failed)
+  let lastFound = []; // discover() snapshot: {dir,id,manifest} — ui hosting input
+  // Page-plugin ui roots (M3, DESIGN §9): plugins whose manifest declares
+  // `ui: '<dir>'` AND ship <dir>/index.js get that dir hosted at
+  // /api/ui/<id>/*. Rebuilt on every load pass, so reload/deactivate drops a
+  // vanished plugin's hosting with it (same lifetime as its ports).
+  const uiRoots = () => {
+    const activeIds = new Set(lastLoad.active.map((a) => a.id));
+    const out = [];
+    for (const { id, dir, manifest } of lastFound) {
+      if (id == null || !activeIds.has(id)) continue;
+      const rel = manifest?.ui;
+      if (typeof rel !== 'string' || rel === '') continue;
+      const uiDir = resolve(dir, rel);
+      if (!existsSync(join(uiDir, 'index.js'))) continue;
+      out.push({ id, dir: uiDir });
+    }
+    return out;
+  };
+  const uiPlugins = () => uiRoots().map(({ id }) => ({ id, entry: `/api/ui/${id}/index.js` }));
 
   // Snapshot view of the last activateAll batch: /api/state, /api/plugins and
   // status() answer from a copy, never from loader state a concurrent reload
@@ -124,6 +155,7 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
     const table = readJson(join(dir, 'plugins.json'))?.plugins ?? {};
     const enabled = (id) => !(table[id] && table[id].enabled === false);
     const found = await discover();
+    lastFound = found;
     knownPluginIds = new Set(found.filter(({ id }) => id != null).map(({ id }) => id));
     lastDisabled = found
       .filter(({ id }) => id != null && !enabled(id))
@@ -140,7 +172,27 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
   http.register({
     prefix: '/api/state', owner: 'kernel', handler: (req, res) => {
       if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' }, { Allow: 'GET' });
-      json(res, 200, { ok: true, uptimeSec: uptimeSec(), pid: process.pid, plugins: pluginList(), uiPlugins: [] });
+      json(res, 200, { ok: true, uptimeSec: uptimeSec(), pid: process.pid, plugins: pluginList(), uiPlugins: uiPlugins() });
+    },
+  });
+  // Page-plugin static hosting (DESIGN §9): /api/ui/<id>/<file> serves the
+  // ui/ dir a plugin's manifest declared, kernel-native so it exists even
+  // mid-reload quirks and wins dispatch over core-engine's shorter '/api'.
+  // Every path goes through fileUnder — traversal attempts are plain 404s.
+  http.register({
+    prefix: '/api/ui/', owner: 'kernel', handler: (req, res) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: 'method not allowed' }, { Allow: 'GET' });
+      let pathname;
+      try { pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname); } catch {
+        return json(res, 404, { error: 'not found' });
+      }
+      const m = /^\/api\/ui\/([^/]+)\/(.*)$/.exec(pathname);
+      if (m == null) return json(res, 404, { error: 'not found' });
+      const root = uiRoots().find(({ id }) => id === m[1])?.dir;
+      if (root == null) return json(res, 404, { error: 'not found' });
+      const file = fileUnder(root, m[2]);
+      if (file == null) return json(res, 404, { error: 'not found' });
+      return sendFile(res, file);
     },
   });
   http.register({

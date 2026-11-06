@@ -1,10 +1,31 @@
-// No-build page entry (DESIGN §9), hosted by the kernel at /api/ui/<id>/ in
-// M3. Browser-side contract (window.WAO — mount/update APIs provided by the
-// workbench shell) is NOT final yet: component stays null so this module
-// evaluates harmlessly today, and M3 defines the real component shape here.
-// No bundler, no framework import — plain ES Modules only.
-export const id = 'template-page';
-export const title = '模板页';
-export const icon = '▤';
-export const order = 50;
-export const component = null;
+// No-build page entry (DESIGN §9): the shell (and every harness) dynamic-
+// imports this module and renders `component({WAO})` — a plain function
+// returning an h() tree, no JSX, no bare imports, React/SDK only via the
+// injected WAO. This demo renders the live agent list, so the same code
+// runs against the real kernel (via the shell) and against fake data (via
+// ui/harness.html + the WAO stub).
+const STATUS_LABEL = { working: '工作中', idle: '空闲', offline: '离线' };
+
+export default {
+  id: 'template-page',
+  title: '模板页',
+  icon: '▤',
+  order: 50,
+  component({ WAO }) {
+    const { h, useAgents } = WAO;
+    const { agents, error } = useAgents();
+    return h('div', { className: 'page' },
+      h('h2', null, '模板页'),
+      h('p', { className: 'muted' }, '页面插件示例：读取 /api/agents 的实况列表（harness 下为假数据）。'),
+      error != null
+        ? h('p', { className: 'error' }, `加载失败：${error}`)
+        : agents.length === 0
+          ? h('p', { className: 'muted' }, '暂无 bot')
+          : h('ul', { className: 'card-list' }, agents.map((a) => h('li', { key: a.id, className: 'card' },
+            h('span', { className: `badge badge-${a.status ?? 'offline'}` }, STATUS_LABEL[a.status] ?? a.status ?? '未知'),
+            h('strong', null, a.name ?? a.id),
+            a.progress?.line ? h('span', { className: 'muted' }, a.progress.line) : null,
+          ))),
+    );
+  },
+};

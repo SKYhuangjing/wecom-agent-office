@@ -132,7 +132,7 @@ export default {
 | `ctx.services` | `services.register(name, obj)` / `services.get(name)` | 服务容器（core-engine 在此注册 `engine/ledger/timeline`） |
 | `ctx.registerChannel(portId, impl)` | 见 §5.2 | channel 端口注册（map 端口） |
 | `ctx.registerProvider(portId, impl)` | 见 §5.3 | provider 端口注册（map 端口） |
-| `ctx.registerPage(desc)` | `{ id, title, icon, order, entry }` | ui 端口注册（落在注册表 `page` map）。**页面托管 M3 才有**：当前 lifecycle 没有 `ctx.serveUI`，`entry` 传 `null`（模板里有守卫写法） |
+| `ctx.registerPage(desc)` | `{ id, title, icon, order }` | ui 端口注册（落在注册表 `page` map，导航元数据）。页面托管由 manifest 的 `ui: './ui'` 声明驱动（§5.4）：内核激活后把存在 `ui/index.js` 的插件收进 `/api/state.uiPlugins` 并托管在 `/api/ui/<id>/` |
 | `ctx.registerMiddleware(impl)` | `{ onInbound, onOutbound }` | 入链式追加（列表端口，消费方持有的引用即最终链） |
 | `ctx.registerProgressor(impl)` | `{ compose }` | 同上 |
 | `ctx.setTimeout(fn, ms)` / `ctx.setInterval(fn, ms)` | → timer 句柄 | **包装版定时器**：回调抛错/异步拒绝 → 归因日志 + 跳过，interval 继续跑；句柄被追踪，deactivate 自动清理。**不要用全局 `setTimeout`**——裸定时器会在 reload 后变成幽灵 |
@@ -217,11 +217,35 @@ ctx.registerProvider('dsh', {
 ### 5.4 `ui`（页面）
 
 ```js
-ctx.registerPage({ id: 'my-page', title: '我的页', icon: '▤', order: 50, entry: null });
+// manifest 声明 ui 目录 —— 内核托管在 /api/ui/<id>/ 并进 /api/state.uiPlugins
+export default {
+  manifest: { id: 'my-page', /* … */ ui: './ui' },
+  activate(ctx) {
+    ctx.registerPage({ id: 'my-page', title: '我的页', icon: '▤', order: 50 }); // 导航元数据（注册表 page map）
+  },
+};
 ```
 
-页面托管（`/api/ui/<id>/` 静态服务 + `window.WAO` 浏览器契约）M3 落地；当前 `entry` 固定
-`null`，插件先把页面注册进导航即可（模板 `page/` 里有 `ctx.serveUI` 守卫写法，M3 到位后无需改插件）。
+**页面模块契约（DESIGN §9，写死）**：`ui/index.js` 是**无构建 ES Module**——禁 JSX、禁 bare
+import；React 与 SDK 一律从注入的 `WAO` 取（`h/useState/useEffect/useCallback/api/useAgents/
+useTimeline/useSSE/registerPage`）；插件内相对 import 限于自身 `ui/`。`default` 导出
+`{ id, title, icon, order, component }`，`component({WAO})` 返回 h() 树（在宿主组件渲染期内被
+调用，hooks 合法）。参照实现：`plugins/_template/page/ui/index.js`。
+
+**harness（改 UI 必须截图，红线）**：每页面插件在 `ui/harness.html` 放一份桩页（模板：
+`plugins/_template/page/ui/harness.html`）——加载 `/vendor/react*.umd.js` 与
+`/assets/app.css`，`import '/assets/harness-lib/wao-stub.js'` 后 `makeWAOStub(假数据)` 驱动
+同源 `import('./index.js')` 渲染。改完执行：
+
+```sh
+node src/index.js start --port 8792 &   # 或任一实例
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --headless=new --disable-gpu --screenshot=shot.png --window-size=1280,800 \
+  http://127.0.0.1:8792/api/ui/my-page/harness.html
+```
+
+假数据注入点在 `makeWAOStub({ agents, timeline, api: { '/api/agents': … } })`——空态/错误态
+（`api` 项返回 rejected promise）各截一张。
 
 ### 5.5 `middleware`
 

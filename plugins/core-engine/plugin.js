@@ -77,6 +77,9 @@ export default {
 
     const engine = new Engine({
       log,
+      // Kernel bus bridge (M3 UI): progress/status changes ride agent/* to
+      // the kernel's SSE bridge (ctx.events → http.sseSend).
+      emit: (topic, payload) => ctx.events.emit(topic, payload),
       getRunner: (bot) => {
         const runner = runners.get(bot?.id);
         if (runner == null) throw new Error(`engine: bot ${JSON.stringify(bot?.id)} has no runner (offline?)`);

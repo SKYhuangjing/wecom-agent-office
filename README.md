@@ -106,11 +106,33 @@ curl -X POST localhost:8792/api/plugins/<id>/disable|enable   # 禁/启用某插
   排队串行，禁用 core 插件与普通插件同一条路径。
 - 排查：`data/logs/wao.log`；坏插件不倒服务（装载失败进 `failed` 列表，可修后 reload）。
 
+### 4.1 Web UI 开发（Shell / SDK / 页面插件 / harness 截图）
+
+- **控制台**：`wao start` 后浏览器开 `http://127.0.0.1:8792/`——薄 Shell（导航/路由/主题）+ 页面插件。
+  静态资源来自 `web/dist/`（**产物已提交**，运行与测试都不需要构建）；改 `web/src/{shell.jsx,sdk.js,styles.css}`
+  或 `web/index.html` 后 `npm i && node web/build.mjs` 重建并提交 dist。
+- **页面插件契约（硬性）**：无构建 ES Module、禁 JSX/bare import，React/SDK 一律从注入的
+  `WAO` 取（`h/useState/useEffect/useCallback/api/useAgents/useTimeline/useSSE/registerPage`）。
+  manifest 声明 `ui: './ui'` → 内核托管 `/api/ui/<id>/` 并进 `/api/state.uiPlugins`。细节与
+  harness 模板见 `docs/PLUGIN-DEV.md` §5.4，参照实现 `plugins/_template/page/`。
+- **harness 截图（改 UI 红线：必须截图验证）**：每页面插件 `ui/harness.html` 用
+  `web/harness-lib/wao-stub.js` 的假数据桩独立渲染（内核同源托管），无头 Chrome 截图：
+
+  ```sh
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+    --headless=new --disable-gpu --screenshot=/tmp/shot.png --window-size=1280,800 \
+    http://127.0.0.1:8792/api/ui/<插件id>/harness.html
+  ```
+
+  示例（本仓库自带 demo）：`/api/ui/template-page/harness.html`（需 `WAO_PLUGINS_PATH` 指向
+  `plugins/_template` 让模板页生效）。深色/浅色由系统 `prefers-color-scheme` 决定，截图时可加
+  `--force-dark-mode`/`--force-light-mode` 各验一张。
+
 ## 5. 测试矩阵
 
 | 命令 | 内容 | 时长 |
 |---|---|---|
-| `npm test` | 321 用例：内核/loader/engine/ledger/provider（dsh/claude/codex 剖析）+ e2e 六场景（fake ws + fake-dsh 全链路） | ~30s |
+| `npm test` | 329 用例：内核/loader/engine/ledger/provider（dsh/claude/codex 剖析）+ web 基建（静态托管/穿越拒绝/uiPlugins/SSE 桥）+ e2e 六场景（fake ws + fake-dsh 全链路） | ~30s |
 | `npm run contract -- --plugin plugins/provider-dsh --port dsh` | provider 端口契约 11/11（真子进程语义） | 秒级 |
 | `npm run contract` | _template 参考实现（4 pass + 7 skip，skip=需真 CLI 的组） | 秒级 |
 | `bash test/smoke-dsh.sh` | **真 dsh**：两轮对话记忆（同 sessionId 续跑记暗号）+ 真 session 文件解码 | ~10s+ |
@@ -123,7 +145,8 @@ curl -X POST localhost:8792/api/plugins/<id>/disable|enable   # 禁/启用某插
 
 ## 6. 已知边界（诚实申报）
 
-- **M1 无 Web UI**：纯 API 运维（M3 交付 Shell+workbench+3D）。
+- **Web UI 页面未齐**：M3 T1 已交付 Shell+SDK+`window.WAO`+内核静态托管+harness 截图机制（含
+  `_template/page` demo）；workbench 五页与办公室 3D 是 M3 T2-T4，当前控制台在无页面插件时显示内置空态。
 - **真实企微未接**：channel-wecom 只过了 fake openws 契约与 e2e；生产切换按 DESIGN §12 逐 bot
   串行切换（M3），切换前旧系统 wecom-bridge 继续服役。
 - **锁冲突无 claim-live**：前身"GUI 占锁→界面认领"协议 M1 未实现；dsh 会话被占 →

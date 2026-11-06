@@ -1,0 +1,33 @@
+<!doctype html>
+<!-- Page-plugin harness (DESIGN §9 截图工作流): kernel-hosted at
+     /api/ui/template-page/harness.html — same origin, so the dynamic import
+     of ./index.js below works exactly as in the shell. Swap the fake data in
+     makeWAOStub(...) for the state you want to screenshot (empty list, error
+     state, working bot with a progress line...), then:
+       chrome --headless=new --screenshot=shot.png --window-size=1280,800 \
+         http://127.0.0.1:8792/api/ui/template-page/harness.html
+     This file is the TEMPLATE every page plugin copies into its own ui/. -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>harness · template-page</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <div id="root"></div>
+  <script src="/vendor/react.umd.js"></script>
+  <script src="/vendor/react-dom.umd.js"></script>
+  <script type="module">
+    import { makeWAOStub } from '/assets/harness-lib/wao-stub.js';
+    const stub = makeWAOStub({
+      agents: [
+        { id: 'bot-1', name: '主号机器人', status: 'working', progress: { line: '🔧 正在修复测试用例' } },
+        { id: 'bot-2', name: '二号机器人', status: 'idle', progress: null },
+      ],
+    });
+    const mod = await import('./index.js');
+    stub.render(mod.default, document.getElementById('root'));
+  </script>
+</body>
+</html>
