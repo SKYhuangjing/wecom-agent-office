@@ -1,4 +1,4 @@
-# HANDOFF — wecom-agent-office M1 交接（内核+插件体系+wecom+dsh）
+# HANDOFF — wecom-agent-office 交接（M1：内核+插件体系+wecom+dsh ／ M2：三家 provider+切换矩阵）
 
 > 日期：2026-11-06 ｜ 分支 `build/m1-m3` ｜ Node v24.2.0（engines ≥20.10）
 > 权威设计：`docs/DESIGN.md`；插件契约：`docs/PLUGIN-DEV.md`；上手：`README.md`。
@@ -69,11 +69,112 @@ accept-m1: PASS (real dsh probe ×2 completed, profile materialized+removed, SIG
 phase④ 韧性终审修复）——按"诚实申报优先"未为凑数重构；
 如需回预算内，候选是 lifecycle/loader 的注释压缩，动它必须全量重跑内核测试。
 
-## 2. 未验证项（显式申报）
+## 2. M2 完成态总结（2026-11-06，三家 provider + 切换矩阵）
+
+**交付清单**（对应 DESIGN §14 M2 行；任务账本 `.superpowers/sdd/2026-11-06-wao-m2/`）：
+
+- **provider-claude**：`claude -p --output-format stream-json --verbose` 驱动（stdin 喂 prompt、
+  thinking 块 `.thinking` 载荷映射、`--resume <id>` 续同一 session、kill 升级/abort 部分输出同构）；
+  history.js 读 `~/.claude/projects/<slug(realpath cwd)>/<sessionId>.jsonl`；中文 describeError。
+- **provider-codex**：`codex exec --json --skip-git-repo-check -` 驱动（**全事件集**：thread.started/
+  reasoning/agent_message/command_execution/file_change/mcp_tool_call/web_search/todo_list）；续接走
+  `exec resume <id>` 子命令；history.js 读 `$CODEX_HOME/sessions/**/rollout-*.jsonl`（harness 注入块过滤）。
+- **/test sessionId 透传**：`POST /api/bots/:id/test` 接受可选 body `{sessionId}`（缺省保持「每次新会话」
+  探针契约；脏形状 400）——探针兼任真实 CLI resume 检查。
+- **切换矩阵** `test/e2e/switch-matrix.realtest.js`（`npm run test:matrix`，真 CLI）：同 provider 换模型
+  原生续 ×3 / 跨 provider 交接（功能性召回）/ 切回 delta-only 重放（反例 A 真链路复证）+ API 级冒烟。
+- **probe 扩展**：claude resume（去混淆：随机暗号+控制组）/ claude thinking（NOTE-only）/ codex resume
+  连续性（resume-of-resume 同 thread）；**真实 roundtrip artifacts ×2**（claude/codex history 读写往返，
+  `test/probe-baselines/*-history-roundtrip.ndjson`，NOTE-only 不进 --check）。
+- **accept-m2.sh**：三家真 CLI 验收脚本（doctor→三 bot→各家两轮→PATCH 切换两轮→视图→清理→SIGINT）。
+- **docs**：README（测试矩阵/已知边界/三家一览）；DESIGN §5.1 两处勘误（claude 新会话 id 来源、codex 事件集）。
+
+**关键证据**（本机实际执行，2026-11-06；magpie 网关，dsh 0.2.1-rc.5 / claude 2.1.318 / codex 0.166.0）：
+
+| 项 | 结果 |
+|---|---|
+| `npm test` | **319/319 pass, 0 fail**（~30s；含 ledger 反例 A/B 回归与 provider 剖析） |
+| 三家契约 `npm run contract -- --plugin plugins/provider-{dsh,claude,codex} --port …` | **11/11 × 3**，0 skip |
+| `npm run test:matrix`（真 CLI） | **6/6 pass**（S1a/b/c 同 provider 换模型、S2 交接含暗号召回、S3 切回 delta-only+暗号召回、S5 API 冒烟；~98s） |
+| `bash test/accept-m1.sh` 重跑（/test 签名扩展后） | **PASS，exit 0**（不回归；round2 仍按契约新会话） |
+| `bash test/accept-m2.sh`（三家真验收） | **PASS，exit 0**（输出贴文见下） |
+| `bash test/probe.sh --check` | 3/3 CLI 事件序列与基线一致 |
+
+（footnote：本次验收日 npm test 共跑 3 次——第 1 次 runner/claude-runner 的两个 timeout 用例假 CLI
+last-pid 未落盘瞬时失败（ENOENT），第 2、3 次连续 319/319 全绿；偶发向量（区别于已修复的 01d459d
+boot.test flake），非确定性回归，全量判定以连续两次全绿为准。）
+
+**accept-m2.sh 输出贴文**（doctor→真内核:18796→三 bot enabled:false→各家 /test 两轮→PATCH dsh→claude→dsh→
+视图→DELETE→SIGINT）：
+
+```
+accept-m2: 2026-11-06 11:00:10  node v24.2.0  dsh 0.2.1-rc.5  claude 2.1.318 (Claude Code)  codex codex-cli 0.166.0
+✓ doctor → exit 0, no ✗ (9 ✓ lines; port 18796 free, lock probe ok)
+✓ server up (pid 69277), /healthz 200 on :18796
+✓ POST /api/bots m2-accept-dsh → 200 (dsh, enabled:false)
+✓ POST /api/bots m2-accept-claude → 200 (claude, enabled:false)
+✓ POST /api/bots m2-accept-codex → 200 (codex, enabled:false)
+✓ materializeConfig: /Users/sky/.dsh/profiles/wecom-m2-accept/cordis.patch.yml written
+✓ dsh round 1 (no body → fresh session) → completed, sessionId=session-79fd8c88-… finalText='收到'
+✓ dsh round 2 (body {sessionId}) → completed, SAME id echoed (session-79fd8c88-…) finalText='收到'
+✓ claude round 1 (no body → fresh session) → completed, sessionId=17f2de45-… finalText='收到！我已就绪。…'
+✓ claude round 2 (body {sessionId}) → completed, SAME id echoed (17f2de45-…) finalText='好的！我在这儿，…'
+✓ codex round 1 (no body → fresh session) → completed, sessionId=01a1aecd-… finalText='收到'
+✓ codex round 2 (body {sessionId}) → completed, SAME id echoed (01a1aecd-…) finalText='收到'
+✓ PATCH m2-accept-dsh provider dsh→claude → 200 (record + runtime re-targeted; enabled:false → no wecom attach)
+✓ switch round 1: m2-accept-dsh on claude → /test completed, sessionId=a914a832-… finalText='收到你的消息了，…'
+✓ PATCH m2-accept-dsh provider claude→dsh → 200 (dsh profile re-materialized on the switch back)
+✓ switch round 2: m2-accept-dsh back on dsh → /test completed, sessionId=session-78ee5e02-… finalText='收到'
+✓ GET /api/ledger?bot=m2-accept-dsh → 200, 0 rows (probe isolation: /test never journals)
+✓ GET /api/ledger?bot=m2-accept-claude → 200, 0 rows (probe isolation: /test never journals)
+✓ GET /api/ledger?bot=m2-accept-codex → 200, 0 rows (probe isolation: /test never journals)
+✓ GET /api/agents → 3 bots present, all offline + disabled (enabled:false — wecom never attached)
+✓ DELETE /api/bots m2-accept-dsh → ok
+✓ DELETE /api/bots m2-accept-claude → ok
+✓ DELETE /api/bots m2-accept-codex → ok
+✓ removeConfig: profile dir /Users/sky/.dsh/profiles/wecom-m2-accept removed with the bot
+✓ bot gone: POST /test now 404
+✓ SIGINT → graceful stop (exit 0)
+✓ data dir lock released (/tmp/wao-accept2-data.hn7lYM/.lock gone)
+✓ port 18796 free after stop
+
+accept-m2: PASS (doctor clean, dsh+claude+codex probe×2 each with resume, switch dsh→claude→dsh, agents/ledger views, profile cleanup, SIGINT clean stop)
+```
+
+注：/test 按契约**不记台账**（试跑独立于引擎链），故 ledger 断言=0 行（探针隔离）；真实台账行增长
+（7 行、provider 序列 dsh,dsh,claude,claude,codex,codex,dsh）由 `npm run test:matrix` S3 证明。
+
+**关键实测事实**（真 CLI，供运行手册与 M3）：
+
+- T1：claude `--resume` **真续接**（随机暗号+控制组去混淆后 CONFIRMED）；resume 轮 `system/init`
+  **回显同 id**；thinking 块载荷在字段 `.thinking`（`.text` 空）——本机网关真实出现，映射必须按此取；
+  同 cwd 下 claude auto-memory **跨会话泄漏**（去混淆控制组暴露——M3 切换 runbook 素材）；codex
+  resume-of-resume **同 thread id** 且 prompt 恒走 stdin 可答。
+- T4：codex 0.166.0 **无 `plan_update`**——计划事件实为 `todo_list{text,completed}`（plan_update 仅作
+  对冲映射）；resume 子命令**拒 `-s`** → 续接腿改 `-c sandbox_mode="…"`；`-c` 字符串值需 **TOML 引号**；
+  rollout 首条 user 的 harness 注入块（`# AGENTS.md`/`<environment_context>`）需过滤。
+
+**未验证项（M2 显式申报）**：
+
+1. **真实企微通道下的切换体验**：矩阵用 reply-only 假适配器；真实通道的流式/推送在切换轮的表现 [M3，
+   DESIGN §12 逐 bot 切换时验证]。
+2. **claude/codex 真实锁冲突文案**：lock-conflict 仅 fake 层验证（真实占用进程下的 describeError 文案
+   未实测）[M3 统一验证，与 dsh 一并]。
+3. **反例 B 真实链路**：consumedSeq 反例 B 仍为单元级锁定（test/ledger/ledger.test.js），未进真 CLI 矩阵
+   （反例 A 已在 S3 真链路活体复证）。
+4. **accept-m2 切换要点仅两轮**（dsh→claude→dsh 各一轮探针），非全矩阵——完整切换语义（换模型原生续/
+   交接前缀/切回 delta+功能性召回）以 `npm run test:matrix` 为准。
+5. 真实企微端到端、Web UI、launchd（M1 §2 遗留）不变，见下节。
+
+**遗留 minors**：M2 各任务 deferred minors 总账见 `.superpowers/sdd/2026-11-06-wao-m2/progress.md`
+（要点：model-dependent 召回断言为已申报 flake 向量[网关漂移非回归]；roundtrip 探针 ask-present 不进
+判定[装饰性]；DESIGN §5.1/§321 旧表述勘误已记）。
+
+## 3. M1 未验证项（显式申报，M2 后仍有效部分加注）
 
 1. **真实企微长连接端到端**：channel-wecom 仅过 fake openws 契约 + e2e；真企微按 DESIGN §12
    在 M3 **逐 bot 串行切换**时验证（切换点=新系统首个 bot 连接成功；回滚顺序 §12.5）。
-2. **claude / codex provider**：M2 交付（probe 基线与 codex resume 专项已先行固化）。
+2. **claude / codex provider**：~~M2 交付~~ **已于 M2 交付**（见 §2；其未验证小项=真实锁冲突文案，M3 统一）。
 3. **Web UI**：M3（Shell + window.WAO SDK + ui-workbench + ui-office3d v2 + harness 截图流）。
 4. **launchd 托管 / 冷启动自愈演练**：M3（模板 + KeepAlive + 24h 内演练，DESIGN §12.4）。
 5. accept-m1 / smoke / probe 均为**本机**证据（magpie 网关路由）；换机换模型后 probe 基线漂移属预期流程。
@@ -84,16 +185,17 @@ phase④ 韧性终审修复）——按"诚实申报优先"未为凑数重构；
 > 同波修掉：切回增量回放在抢占窗口丢 delta、per-bot drain 缺失、fourPhase phase④ 韧性、
 > DESIGN §2.5 排序措辞勘误。未验证项 1-5 不变。
 
-## 3. M2 / M3 入口
+## 4. M3 入口（M2 已闭）
 
-- **范围与验收**：`docs/DESIGN.md` §14（里程碑）；M2=claude+codex 两 provider+history 页+同 provider
-  换模型+跨 provider 交接/切回（反例回归）；M3=Web UI+盲评清零+§12 逐 bot 上线+冷启动演练。
-- **任务级计划**：M1 的任务账本在 `.superpowers/sdd/2026-11-05-wao-m1/`（progress.md 是逐任务
-  审查记录 + deferred minors 总账）；M2 计划文件尚未立项，起点=DESIGN §14 M2 行 + 下述 minors。
-- **接线钉（前任务留给后续的义务）**：跨 turn 出站预算靠 adapter 限流兜底（T13 minor）、
-  30/min 限流已落（T17）；M2 需补 claude thinking 可得性验证（DESIGN §13）。
+- **范围与验收**：`docs/DESIGN.md` §14（里程碑）；M3=Web UI（Shell + window.WAO SDK + ui-workbench +
+  ui-office3d v2 + harness 截图流）+ 盲评清零 + §12 逐 bot 上线 + 冷启动演练。
+- **任务级计划**：M1 账本 `.superpowers/sdd/2026-11-05-wao-m1/`；**M2 账本
+  `.superpowers/sdd/2026-11-06-wao-m2/`**（progress.md=逐任务审查记录 + deferred minors 总账）；
+  M3 立项起点=DESIGN §14 M3 行 + 两账本未闭 minors。
+- **接线钉（前任务留给后续的义务）**：跨 turn 出站预算靠 adapter 限流兜底（T13 minor）、30/min 限流
+  已落（T17）；~~M2 需补 claude thinking 可得性验证~~ 已闭（T1 探针：`.thinking` 载荷真实出现）。
 
-## 4. 遗留 deferred-minors TOP 10（自 progress.md 各任务 minor 行，含影响评估）
+## 5. 遗留 deferred-minors TOP 10（M1，自 progress.md 各任务 minor 行，含影响评估）
 
 | # | 来源 | 内容 | 影响 |
 |---|---|---|---|
@@ -111,7 +213,7 @@ phase④ 韧性终审修复）——按"诚实申报优先"未为凑数重构；
 （T18 的「ensureProfileExists 真实引导未验证」已由本次 `accept-m1.sh` 覆盖：真 dsh 物化
 profile 成功并随 DELETE 清理。完整 minors 总账见 progress.md 各任务行。）
 
-## 5. 回滚 / 应急
+## 6. 回滚 / 应急
 
 - **本里程碑未接生产**：真实企微流量仍在旧系统 `wecom-bridge`（8791）+ `wecom-bots` 面板上，
   本仓库对生产零影响——直接 `Ctrl-C`（SIGINT 四阶段停机）即"下线"。
@@ -122,12 +224,17 @@ profile 成功并随 DELETE 清理。完整 minors 总账见 progress.md 各任�
 - M3 上线后的回滚顺序固定：先停新系统两 bot（防新旧互踢死循环）→ GUI enable 旧插件 → 验证
   8791 healthz →（可选）导出新系统台账（DESIGN §12.5）。
 
-## 6. 交接检查单
+## 7. 交接检查单
 
 ```sh
-npm test          # 255/255
-npm run contract -- --plugin plugins/provider-dsh --port dsh   # 11/11
-bash test/smoke-dsh.sh      # 真 dsh PASS
-bash test/accept-m1.sh      # 真 dsh 验收 PASS
-node src/index.js doctor    # 全 ✓
+npm test                                                        # 319/319
+npm run contract -- --plugin plugins/provider-dsh --port dsh     # 11/11
+npm run contract -- --plugin plugins/provider-claude --port claude  # 11/11 (M2)
+npm run contract -- --plugin plugins/provider-codex --port codex    # 11/11 (M2)
+npm run test:matrix       # 三家真 CLI 切换矩阵 6/6 (M2)
+bash test/smoke-dsh.sh    # 真 dsh PASS
+bash test/accept-m1.sh    # 真 dsh 验收 PASS
+bash test/accept-m2.sh    # 三家真 CLI 验收 PASS (M2)
+bash test/probe.sh --check  # 3/3 基线一致
+node src/index.js doctor  # 全 ✓
 ```

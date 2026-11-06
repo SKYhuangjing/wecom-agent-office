@@ -1,8 +1,9 @@
-# wecom-agent-office (wao) — 企微智能机器人办公室：微内核 + 插件（M1 交接版）
+# wecom-agent-office (wao) — 企微智能机器人办公室：微内核 + 插件（M2 交接版）
 
 > 前身：`wecom-bridge`（单 bot 数据面）+ `wecom-bots`（管理面板）。本仓库是重写：
 > **微内核 + 插件体系**，一切业务（引擎/企微通道/Agent provider/UI）皆插件。
-> M1 交付内核 + core-engine + channel-wecom + provider-dsh；真实企微切换在 M3（见 HANDOFF.md）。
+> M1 交付内核 + core-engine + channel-wecom + provider-dsh；M2 交付 provider-claude/codex（三家切换矩阵全绿）；
+> 真实企微切换在 M3（见 HANDOFF.md）。
 
 ---
 
@@ -19,6 +20,8 @@
 │                 timeline/语义进度；owns bots.json；注册 /api/*   │
 │  channel-wecom  企微长连接(单bot单连接)/流式回复/主动推送        │
 │  provider-dsh   每消息一个 dsh 子进程；per-bot profile 物化      │
+│  provider-claude  claude -p stream-json；--resume 续同一会话     │
+│  provider-codex  codex exec --json；resume 子命令续同 thread     │
 │  _template      channel/provider/page 三套可复制脚手架          │
 ├────────────────────────────────────────────────────────────────┤
 │ 一个 bot = channel × provider                                   │
@@ -33,6 +36,14 @@
 - 会话延续：chatKey → sessionId 缓存（`data/sessions/`），下一条消息带 `--session-id` 续跑。
 - 停机 = SIGINT/SIGTERM 触发四阶段（drain 补终帧 → 逆序拆插件 → 关监听 → 释放锁），不是裸 kill；
   每阶段在日志留一行（`wao: stopping (four-phase)` … `wao: stopped (lock released)`），见 `data/logs/wao.log`。
+
+三家 provider 一览（M2 起，同一 runner 契约：run 7 字段 / code 枚举 / readHistory 三件套）：
+
+| provider | 驱动方式 | 续接机制 | 副产物 |
+|---|---|---|---|
+| `dsh` | `dsh --json -` 子进程 | `--session-id` 同会话续跑 | per-bot profile 物化（`~/.dsh/profiles/<profile>/`，DELETE 随 bot 清理） |
+| `claude` | `claude -p --output-format stream-json --verbose` | `--resume <id>` 续同一 session（init 回显同 id） | 无（materializeConfig=null） |
+| `codex` | `codex exec --json --skip-git-repo-check -` | `exec resume <id>` 子命令续同 thread（全事件集：todo_list/文件修改/MCP/web_search…） | 无（materializeConfig=null） |
 
 ## 2. 快速开始
 
@@ -67,7 +78,7 @@ bash test/probe.sh --check         # dsh/claude/codex 事件序列 vs 已存基�
 ```sh
 # 建 bot (enabled:false 只存配置不连企微 —— M3 切换的推荐姿势)
 curl -X POST localhost:8792/api/bots -H 'content-type: application/json' -d '{...bot 记录...}'
-curl -X POST localhost:8792/api/bots/<id>/test    # 真 dsh 试跑(不进引擎链/不记台账)
+curl -X POST localhost:8792/api/bots/<id>/test    # 真跑该 bot 的 provider(不进引擎链/不记台账); 可选 body {sessionId} 续跑试
 curl -X POST localhost:8792/api/bots/<id>/toggle  # 上/下线
 curl -X PATCH localhost:8792/api/bots/<id> -d '{...}'   # 改配置(last-good: 失败保留旧配置)
 curl -X DELETE localhost:8792/api/bots/<id>       # 删除(连同 provider-dsh 物化的 profile)
@@ -105,6 +116,7 @@ curl -X POST localhost:8792/api/plugins/<id>/disable|enable   # 禁/启用某插
 | `bash test/smoke-dsh.sh` | **真 dsh**：两轮对话记忆（同 sessionId 续跑记暗号）+ 真 session 文件解码 | ~10s+ |
 | `npm run test:matrix` | **真 dsh+claude+codex 三家切换矩阵**（M2）：同 provider 换模型原生续 / 跨 provider 交接（含功能性召回）/ 切回 delta-only 重放 + API 级 `/test` sessionId 透传冒烟；文件名 `.realtest.js` 不进 `npm test` glob | ~2-4min |
 | `bash test/accept-m1.sh` | **真 dsh 验收**：真内核起服 → API 建 bot → /test 两轮 completed → profile 物化/删除 → SIGINT 锁释放 | ~15s |
+| `bash test/accept-m2.sh` | **真 dsh+claude+codex 验收**（M2）：doctor → 三 bot（enabled:false）各家 /test 两轮（round2 透传 `{sessionId}` 同 id 回显）→ PATCH dsh→claude→dsh 真切换两轮 → agents/ledger 视图 → DELETE+profile 清理 → SIGINT 锁释放 | ~2-3min |
 | `bash test/probe.sh` / `--check` | 三 CLI 事件序列基线固化/漂移检测（kill-resume、codex resume 专项） | 每 CLI ≤150s |
 
 真 CLI 套件不在 `npm test` 内（依赖本机 dsh/claude/codex/凭证）；CLI 缺失时 matrix/smoke/accept 明确 skip。
@@ -118,7 +130,8 @@ curl -X POST localhost:8792/api/plugins/<id>/disable|enable   # 禁/启用某插
   `code=lock-conflict` → 固定友好文案（"写锁被另一个进程占用…请稍后重试"）。
 - **单进程爆炸半径**：分级承诺（DESIGN §2.5）——装载失败可隔离、内核中介调用可归因；
   但一个 bot 的同步死循环/OOM 仍可能拖死全进程，靠 M3 launchd KeepAlive 拉活，不内置守护。
-- **claude/codex provider 未实现**（M2）；probe 基线已固化，升级 CLI 后 `probe.sh --check` 报漂移属预期流程。
+- **三家 provider 均已交付**（M2：dsh/claude/codex 契约 11/11×3、切换矩阵 6/6 真 CLI）；probe 基线已固化，
+  升级 CLI 后 `probe.sh --check` 报漂移属预期流程（对照 test/probe-baselines/ 重捕或修 runner）。
 
 ## 7. 目录地图
 
@@ -129,9 +142,11 @@ curl -X POST localhost:8792/api/plugins/<id>/disable|enable   # 禁/启用某插
 | `plugins/core-engine/` | 引擎/台账/会话缓存/timeline/进度/掩码中间件 + `/api` 业务路由（api.js engine.js bots.js ledger.js sessionCache.js timeline.js middleware.js progressor.js） |
 | `plugins/channel-wecom/` | 企微适配器（client.js 长连接 / adapter.js 流式·推送·欢迎语） |
 | `plugins/provider-dsh/` | dsh 驱动（runner.js 子进程+事件映射 / profiles.js per-bot profile 物化 / history.js 会话史读取） |
+| `plugins/provider-claude/` | claude 驱动（runner.js stream-json 解析+--resume / history.js ~/.claude/projects 读取） |
+| `plugins/provider-codex/` | codex 驱动（runner.js 全事件集+exec resume / history.js rollout 读取） |
 | `plugins/_template/` | channel / provider / page 三套脚手架（`_` 前缀=内核不扫描） |
 | `data/`（WAO_HOME） | bots.json / plugins.json(启用表) / ledger/*.jsonl / sessions/*.json / logs/wao.log / .lock |
-| `test/` | kernel·engine·ledger·provider 单测 / contract 契约套件 / e2e 六场景 + switch-matrix.realtest 三家切换矩阵（真 CLI，npm run test:matrix） / fake-bin 假 CLI / probe-baselines 基线 / probe.sh·smoke-dsh.sh·accept-m1.sh |
+| `test/` | kernel·engine·ledger·provider 单测 / contract 契约套件 / e2e 六场景 + switch-matrix.realtest 三家切换矩阵（真 CLI，npm run test:matrix） / fake-bin 假 CLI / probe-baselines 基线 / probe.sh·smoke-dsh.sh·accept-m1.sh·accept-m2.sh |
 | `docs/` | DESIGN.md（权威设计）· PLUGIN-DEV.md（插件开发契约） |
 
 > 交接 Do：改插件后跑对应测试+契约；动内核先读 DESIGN §2；升级 CLI 先 `probe.sh --check`。
