@@ -123,3 +123,54 @@
   - **Nit**：风格建议。
 - 最后一节给总体结论：12 条各 ✓/✗ 一览 + 你作为新接手者按 README 独立理解系统花了多久、
   哪一段文档没看懂（这是文档质量的直接证据）。
+
+---
+
+# M3 UI 盲评段（六任务，双轨：真控制台 + harness）
+
+> 由 M3-T7 盲评固化（当轮 52 截图逐读、零 P0/P1）。规则与 M1 段一致：**零实现上下文**，
+> 不读 `.superpowers/`、不翻 diff；以最终用户方式走；**逐字读你看到的每条文案**
+> （含空态、错误态、断连提示、长文本、计数提示）；发现项分级 Critical / Important /
+> Minor / Nit。双轨 = 真内核控制台为主，harness 假数据桩复现特定状态佐证。
+
+## 环境
+
+```sh
+cd /Users/sky/develop/workbuddy_workspace/wecom-agent-office
+D=$(mktemp -d /tmp/wao-ui-blind.XXXXXX); echo "$D"
+node src/index.js start --port 18794 --data-dir "$D/data" > "$D/server.log" 2>&1 &
+echo $! > "$D/server.pid"
+# 浏览器开 http://127.0.0.1:18794/（控制台 Shell + 六页导航）
+# 单页 harness（假数据桩，不动真数据）：http://127.0.0.1:18794/api/ui/ui-workbench/harness.html
+#   可带 ?page=<id> 与 ?state=empty|error；办公室 3D 的 harness 另有 ?dim=iso|2d ?phase=day|night
+#   （深浅主题由浏览器外观决定，截图流走 CDP 仿真；手测切系统外观即可）
+```
+
+## 任务清单（六条用户路径，每条给 ✓/✗ + 证据）
+
+1. **逐页读文案（六页 × 三态）**：`?page=workbench|bots|session|push|plugins|timeline`
+   逐页走。每页至少读到：正常态一段**长文本**（超长 bot 名/长轮次正文——看截断与换行）、
+   **空态**（`?state=empty`——空态该有一句说明而不是白板）、**错误态**（`?state=error` 或
+   kill 内核后刷新——断连横幅应为完整句「连接已断开——后台每 5 秒自动重试」，带重试按钮；
+   请求失败类是「加载…失败：<原因>」——两类文案不得混淆）。
+2. **建 bot（schema 动态表单）**：bots 页新建：选 provider/channel 后表单字段随
+   `/api/ports` schema 变化；正常保存成功；**secret 输入框不回显已存值**；脏输入各来一次——
+   缺 cwd、name 超 30 字（计数提示 n/30 + 超长被 API 拒并点名）、未知 provider、
+   非法 permission 枚举；编辑既有 bot 时不填 secret 保存 → 旧 secret 保留（PATCH 保留式回填）。
+3. **试跑**：对新建 bot 点试跑（`POST /api/bots/:id/test` 语义）→ 会话/工作台出现
+   completed 结果与 sessionId；试跑**不记台账**（台账页行数不涨）。
+4. **切 provider**：bots 页把该 bot 的 provider 切到另一家（如 dsh→claude）保存 →
+   bot 运行时重定向、无企微 attach（enabled:false 姿势）；切回后再试跑一次仍 completed。
+5. **禁用插件**：plugins 页禁用一个 provider 插件 → 其 bot 的工作台卡片出现**橙点 +
+   「provider 已不存在（插件被停用）」**类信号（灰字「离线」之外的第二信号）；重新启用 →
+   信号消失、试跑恢复。
+6. **办公室 3D 数据对应**：办公室 3D（iso/2d × 昼夜 `?dim= ?phase=`）里每个 bot 的
+   呈现（工位/灯效/状态气泡）与 `/api/agents` 的 status/progress **一一对应**：把某 bot
+   置 working（或改 harness `fake-data.js` 桩）→ 场景呈现随之变化；深浅两态与
+   2D/ISO 两视角都看一遍。
+
+## 报告格式
+
+- 同 M1 段：每任务一行 ✓/✗ + 证据（命令/操作 + 文案**原文粘贴**，不转述）+ 分级发现项；
+- 截图佐证：所见状态用 harness 参数复现（`?page=/?state=/?dim=/?phase=`）并贴图；
+- 总体结论：六条一览 + 作为新接手者哪一页/哪句文案与预期不符。

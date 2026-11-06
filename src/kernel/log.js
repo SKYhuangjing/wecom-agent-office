@@ -6,9 +6,20 @@ const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 };
 
 export function createLogger({ file = null, level = 'info', maxBytes = 10 * 1024 * 1024, keep = 5 } = {}) {
   let fd = null;
+  // Disk-full (ENOSPC) / permission failures must never throw into callers
+  // (M1 minor #3, hardened M3-T9): on any file-side failure the logger
+  // degrades to stderr-only and warns ONCE on stderr — the only channel left.
+  const degrade = (err) => {
+    if (fd != null) { try { closeSync(fd); } catch {} }
+    fd = null;
+    process.stderr.write(`${new Date().toISOString()} WARN [log] file logging degraded to stderr-only (${err?.code ?? err?.message ?? err})\n`);
+  };
   // mode applies at file CREATION only: the log carries secrets/turn content,
   // so it is born 0600 (DESIGN §3); rotated names inherit it via rename.
-  if (file) { mkdirSync(dirname(file), { recursive: true }); fd = openSync(file, 'a', 0o600); }
+  if (file) {
+    mkdirSync(dirname(file), { recursive: true });
+    try { fd = openSync(file, 'a', 0o600); } catch (err) { degrade(err); }
+  }
   const rotate = () => {
     if (fd == null) return;
     try { closeSync(fd); } catch {}
@@ -25,8 +36,10 @@ export function createLogger({ file = null, level = 'info', maxBytes = 10 * 1024
     const line = `${new Date().toISOString()} ${lvl.toUpperCase()} ${args.map(fmt).join(' ')}\n`;
     process.stderr.write(line);
     if (fd != null) {
-      writeSync(fd, line);
-      try { if (statSync(file).size > maxBytes) rotate(); } catch {}
+      try {
+        writeSync(fd, line);
+        if (statSync(file).size > maxBytes) rotate();
+      } catch (err) { degrade(err); }
     }
   };
   const api = {

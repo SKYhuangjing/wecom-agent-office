@@ -1,7 +1,8 @@
-# HANDOFF — wecom-agent-office 交接（M1：内核+插件体系+wecom+dsh ／ M2：三家 provider+切换矩阵）
+# HANDOFF — wecom-agent-office 交接（M1：内核+插件体系 ／ M2：三家 provider+切换矩阵 ／ M3：Web UI+运维+切换就绪）
 
 > 日期：2026-11-06 ｜ 分支 `build/m1-m3` ｜ Node v24.2.0（engines ≥20.10）
-> 权威设计：`docs/DESIGN.md`；插件契约：`docs/PLUGIN-DEV.md`；上手：`README.md`。
+> 权威设计：`docs/DESIGN.md`；插件契约：`docs/PLUGIN-DEV.md`；上手：`README.md`；
+> **生产切换：`docs/CUTOVER.md`**（runbook + `test/cutover.sh` 半自动脚本）。
 
 ## 1. M1 完成态总结
 
@@ -176,13 +177,110 @@ accept-m2: PASS (doctor clean, dsh+claude+codex probe×2 each with resume, switc
 （要点：model-dependent 召回断言为已申报 flake 向量[网关漂移非回归]；roundtrip 探针 ask-present 不进
 判定[装饰性]；DESIGN §5.1/§321 旧表述勘误已记）。
 
-## 3. M1 未验证项（显式申报，M2 后仍有效部分加注）
+## 3. M3 完成态总结（终版，2026-11-06）
 
-1. **真实企微长连接端到端**：channel-wecom 仅过 fake openws 契约 + e2e；真企微按 DESIGN §12
-   在 M3 **逐 bot 串行切换**时验证（切换点=新系统首个 bot 连接成功；回滚顺序 §12.5）。
-2. **claude / codex provider**：~~M2 交付~~ **已于 M2 交付**（见 §2；其未验证小项=真实锁冲突文案，M3 统一）。
-3. **Web UI**：M3（Shell + window.WAO SDK + ui-workbench + ui-office3d v2 + harness 截图流）。
-4. **launchd 托管 / 冷启动自愈演练**：M3（模板 + KeepAlive + 24h 内演练，DESIGN §12.4）。
+**交付清单**（任务账本 `.superpowers/sdd/2026-11-06-wao-m3/`，T1-T9）：
+
+- **Web UI 全量**：Shell + `window.WAO` SDK（SSE 桥/断连横幅）+ 内核静态托管
+  （`web/dist/` 与插件 `ui/`）+ ui-workbench 六页（机器人/会话/台账/时间线/插件/推送，
+  schema 动态表单、secret 不回显的保留式回填）+ ui-office3d v2（iso/2d × 昼夜，数据同源）
+  + harness 截图机制与 **21 张基线**（`test/ui-shot.sh`，改 UI 红线=重截对照）。
+- **盲评清零（T7）**：52 截图逐读，零 P0/P1；P2×5 修复复测（警告人话化/name≤30/
+  断连反馈/provider 失联橙点/时间线空态注记），commit `a1fd356`。
+- **运维加固（T6）**：launchd 模板+doctor 三态+真机验证（kickstart 冷启/kill-9 自愈）；
+  停机孤儿扫尾（SIGKILL 残留 CLI 子进程）；两条 M1 slipped minors 补回归
+  （pendingFinal 空 text 终帧残留、npm-test last-pid ENOENT flake）。
+- **切换就绪（T9，本波）**：`docs/CUTOVER.md`（前置终审清单/逐 bot 八步/丢消息声明/
+  冷启动演练/回滚固定顺序/已知边界注记）+ `test/cutover.sh`（baseline/stage1-main/
+  stage2-bot2/drill/rollback 五个幂等子命令，已用 fake openws+真内核 harness 全路径验证）；
+  README/HANDOFF 收口；**log ENOSPC 加固**（文件写失败静默降级 stderr-only+一次性 warn，
+  M1 minor #3 闭案，带 2 条单测）。
+
+**三里程碑一行表**：
+
+| 里程碑 | 交付 | 关键证据 |
+|---|---|---|
+| M1（closed `d04ffd8`） | 内核六件套 + core-engine（串行链/台账/会话缓存）+ channel-wecom + provider-dsh + 契约套件/三模板 | npm test 255/255；契约 11/11；accept-m1 PASS（真 dsh） |
+| M2（closed `bafd72d`） | provider-claude/codex（runner+history+resume）+ /test sessionId 透传 + 三家切换矩阵 + probe 扩展 | npm test 321/321；契约 11/11×3；matrix 6/6（真 CLI）；accept-m2 PASS |
+| M3（本波收口） | Web UI 六页+3D+21 基线 + 盲评清零 + launchd/孤儿扫尾运维 + CUTOVER runbook/脚本 + log 加固 | npm test **348/348**（T7 346 + log 加固 2）；ui-shot 21 张齐备；盲评 PASS 零 P0/P1；launchd 真机三态+kickstart/kill-9 自愈；cutover.sh harness 全路径（§下） |
+
+**运行手册**（日常自检——巡检表详见 README §3.1）：
+
+```sh
+curl -s localhost:8792/healthz     # ok:true + uptimeSec
+curl -s localhost:8792/api/agents  # 每 bot idle/working + channelState.state=online
+curl -s localhost:8792/api/state   # 插件全 active（failed→修后 /api/service/reload）
+node src/index.js doctor           # 全量自检（含 launchd 三态）
+```
+
+常见症状 → 动作：
+
+| 症状 | 动作 |
+|---|---|
+| healthz 不通 | `launchctl kickstart -k gui/$(id -u)/com.wecom-agent-office`；反复挂 → 看 launchd.err.log |
+| bot offline，reason=鉴权失败 | secret 失效/抄错 → PATCH 修正（password 缺省=保留已存值）→ toggle 重连（快速失败不风暴） |
+| bot offline，lastError=`kicked: 另一连接接管` | 旧桥复活或他处连了同 bot → 确认旧表已空+8791 已停（CUTOVER §2.4-2.6） |
+| provider 找不到（launchd 下静默失联） | plist PATH 漏 CLI bin 目录 → 修 plist → kickstart -k（reload 刷不掉环境） |
+| 回复慢（codex） | 探针 ~25s 属预期（/test 上限 60s）；真超时才排障 |
+| wao.log 断更（磁盘满） | 已加固不炸服务：stderr 仍全量；清盘后 kickstart -k 恢复文件日志 |
+| 换代码/升级插件 | kickstart -k（进程重启，唯一可信换码路径）；配置级变化才用 /api/service/reload |
+
+日志三层（排障从下往上）：
+
+```sh
+tail -50 <DATA_DIR>/logs/wao.log                          # 运行日志（生命周期/drain/orphan sweep）
+tail -50 <DATA_DIR>/logs/launchd.err.log                  # launchd 侧 stderr（进程崩溃类）
+launchctl print gui/$(id -u)/com.wecom-agent-office       # launchd 视角（退出码/重启计数）
+```
+
+**已知边界终版清单**（M3 终审 triage 全列——接受/已加固，不再挂账）：
+
+1. **SSE 背压/debounce**：内核 SSE 未做慢客户端背压（极端可占内存）；SSE 触发的
+   refetch 无 debounce（多页同订时突发重复拉取）。观测/资源面，非正确性问题。
+2. **env 回显面**：`providerConfig.env`/`configOverrides` 自由文本对象 GET **原样回显**
+   ——手填 secret 字面量会出现在响应与 UI；凭证一律走 `apiKeyEnv`（只存变量名）。
+3. **禁用插件顶层求值**：discover 阶段 import 会求值所有候选目录的模块顶层（含被
+   禁用插件）——带挂起顶层 await 的禁用插件可阻塞 boot/reload（src/index.js 注释声明）。
+4. **log ENOSPC**：~~未包 try~~ **已加固（本波）**——文件写失败（ENOSPC/EACCES/轮转
+   open 失败）静默降级 stderr-only + 一次性 warn，不再抛进调用方；代价=磁盘满期间
+   文件日志缺段（stderr 全量在）。
+5. **锁 adopt 竞态**：双实例同毫秒抢锁，第二个裸抛 EEXIST（非规范文案）；pid>int32
+   视为死锁不 adopt。触发罕见、方向无害（第二实例报错退出）。
+6. **单块超预算前缀**：单块超出站预算时 handoff 交接摘要前缀可超 maxChars，由通道
+   截断（截断优于丢帧）；低频。
+7. **warn/hard 窄窗**：10min 两阶段 warn/hard 定时器在终帧已发后的窄窗内仍可能多发
+   一行进度/心跳文案——观测层噪音，不影响终帧正确性。
+8. **shell 单错误面**：控制台 Shell 层只有一条全局错误文案位（不清除/覆盖语义弱），
+   多页面同时出错只显示其一。
+9. **真实锁冲突文案（闭案分析）**：dsh 真实锁冲突下的 describeError 文案仅 fake 层
+   验证（M2 申报）；闭案裁定——文案为固定友好句（「写锁被另一个进程占用…请稍后重试」），
+   不携带底层错误细节，真实占用场景最坏表现=同一句话，无误导面，**接受闭案**。
+10. **run/* 括号语义**：`run/start`…`run/end` SSE 帧与时间线括号=**bot 级忙碌窗口**
+    （idle→working→idle 转换发帧）：同 bot 并发多 chat 只有一对括号，非逐 run——
+    终审裁定为既定语义，UI/读者按 bot 级解读。
+
+**未验证项（M3 显式申报）**：
+
+1. **真实企微入站全链路直到用户首条消息**：切换后首条消息的流式回复（含会话延续）
+   =终验；连接 online 与出站 push 可自动验证，入站不可（CUTOVER §4/§6 注记 4）。
+2. **24h 检查点**：切换次日巡检（重启计数/两 bot online/台账增长/orphan sweep 残留），
+   命令同运行手册。
+3. **cutover.sh drill 子命令的真 launchd 路径**：harness 验证了 baseline/stage1/stage2/
+   断点续跑/rollback 全路径与 drill 的未装拒跑分支；drill 的 kickstart 自愈段未在真
+   launchd 上执行过（kickstart 语义本身 T6 已真机验证）。
+4. 交接波遗留小项：M1/M2 各未验证小项已闭或并入上表；真实锁冲突文案闭案见已知边界 #9。
+
+## 4. M1 未验证项（显式申报，M2/M3 后状态加注）
+
+1. **真实企微长连接端到端**：channel-wecom 仅过 fake openws 契约 + e2e；~~真企微按 DESIGN §12
+   在 M3 逐 bot 串行切换时验证~~ **切换就绪（M3 T9）：runbook `docs/CUTOVER.md`；终验=切换后
+   用户首条消息的回复**。
+2. **claude / codex provider**：~~M2 交付~~ **已于 M2 交付**（见 §2；其未验证小项=真实锁冲突文案，M3 闭案见 §3 已知边界 #9）。
+3. **Web UI**：~~M3（Shell + window.WAO SDK + ui-workbench + ui-office3d v2 + harness 截图流）~~
+   **已于 M3 交付**（§3：六页+3D+21 基线，盲评清零）。
+4. **launchd 托管 / 冷启动自愈演练**：~~M3（模板 + KeepAlive + 24h 内演练）~~ **模板+真机验证已交付**
+   （T6：doctor 三态/kickstart 冷启/kill-9 自愈）；生产安装与切换日演练按 CUTOVER §1/§4 执行，
+   24h 检查点待切换后。
 5. accept-m1 / smoke / probe 均为**本机**证据（magpie 网关路由）；换机换模型后 probe 基线漂移属预期流程。
 
 > M1 终审修复（2026-11-06，全分支评审 SHIP 附 4 项 Important）：评审点名的两条「设计已声明、
@@ -191,31 +289,23 @@ accept-m2: PASS (doctor clean, dsh+claude+codex probe×2 each with resume, switc
 > 同波修掉：切回增量回放在抢占窗口丢 delta、per-bot drain 缺失、fourPhase phase④ 韧性、
 > DESIGN §2.5 排序措辞勘误。未验证项 1-5 不变。
 
-## 4. M3 入口（M2 已闭）
+## 5. M3 入口（已闭）
 
-- **范围与验收**：`docs/DESIGN.md` §14（里程碑）；M3=Web UI（Shell + window.WAO SDK + ui-workbench +
-  ui-office3d v2 + harness 截图流）+ 盲评清零 + §12 逐 bot 上线 + 冷启动演练。
-- **任务级计划**：M1 账本 `.superpowers/sdd/2026-11-05-wao-m1/`；**M2 账本
-  `.superpowers/sdd/2026-11-06-wao-m2/`**（progress.md=逐任务审查记录 + deferred minors 总账）；
-  M3 立项起点=DESIGN §14 M3 行 + 两账本未闭 minors。
-- **接线钉（前任务留给后续的义务）**：跨 turn 出站预算靠 adapter 限流兜底（T13 minor）、30/min 限流
-  已落（T17）；~~M2 需补 claude thinking 可得性验证~~ 已闭（T1 探针：`.thinking` 载荷真实出现）。
-- **两条滑档的 M1 minors 点名入 M3**（M2 终审点名，勿再滑）：**pendingFinal 空 text 终帧残留回归**
-  （M1-T17 minor，§5 #7 约定「M2 provider 齐后加回归」未兑现——M3 三家 provider 在位后补该回归）；
-  **npm-test last-pid ENOENT 偶发 flake 根因**（§2 脚注向量：runner/claude-runner 两个 timeout 用例
-  假 CLI last-pid 未落盘瞬时失败，复跑即绿——M3 查清落盘竞态或让用例对 ENOENT 容错）。
+M3 已交付并收口（§3）。原入口段所列范围（UI/盲评/§12 切换/冷启动演练）全部落地；
+两条 M1 slipped minors（pendingFinal 空 text 终帧残留回归、npm-test last-pid ENOENT
+flake）已随 M3-T6 修复带回归。后续入口=执行 `docs/CUTOVER.md`。
 
-## 5. 遗留 deferred-minors TOP 10（M1，自 progress.md 各任务 minor 行，含影响评估）
+## 6. 遗留 deferred-minors TOP 10（M1，自 progress.md 各任务 minor 行，含影响评估）
 
 | # | 来源 | 内容 | 影响 |
 |---|---|---|---|
 | 1 | T5 | fourPhase 的 reloadFn 拒绝时跳过 phase④（afterAllActivated）——**已修（2026-11-06 终审修复：try/finally，phase④ 必跑且拒绝照常上抛，lifecycle.test 回归）** | reload 半途失败时 bots 不重挂，表现为全 offline；重启可恢复。触发条件罕见（reload 本身抛错） |
 | 2 | T7 | disabled 插件的模块**顶层仍被求值**（discover 阶段 import） | 一个带挂起顶层 await 的禁用插件可阻塞 boot/reload；代码已诚实注释，M2 可考虑把 manifest 读取与激活 import 分离 |
-| 3 | T1 | log writeSync/轮转 openSync 未包 try（ENOSPC 抛） | 磁盘满时日志写入可能抛进调用方；上线前（M3）建议包 try |
+| 3 | T1 | log writeSync/轮转 openSync 未包 try（ENOSPC 抛）——**已修（M3-T9：静默降级 stderr-only+一次性 warn，单测×2）** | ~~磁盘满时日志写入可能抛进调用方~~ 修复后磁盘满期间文件日志缺段（stderr 全量在） |
 | 4 | T2 | 锁 adopt 竞态窗口裸抛 EEXIST（非规范文案）；pid>int32 视为死锁不 adopt | 双实例同毫秒抢锁才触发（第二个实例报错退出，无害方向）；pid 回绕在 macOS 上不现实 |
 | 5 | T4 | SSE 背压未处理；/healthz 非 GET 404（可辩护） | 慢 SSE 客户端可占内存；M3 做 UI 时一并处理 |
 | 6 | T13 | warn/hard 定时器窄窗竞态：final 已发后仍可能触发一次 | 观测层多余一行进度/心跳文案，不影响终帧正确性；T19 e2e 未复现 |
-| 7 | T17 | 空 text 终帧失败会永驻 pendingFinal（观测残留） | 极端：模型空回复时该 chat 的"在跑"状态不清；M2 provider 齐后加回归 |
+| 7 | T17 | 空 text 终帧失败会永驻 pendingFinal（观测残留）——**已修（M3-T6 slipped-minor 回归补齐）** | 极端：模型空回复时该 chat 的"在跑"状态不清 |
 | 8 | T19 | sendToCurrent 发最新连接（依赖测试顺序）；enter_chat true 方向未过真企微 | 诊断用途的推送定向；A4 true 方向随 M3 真企微验证 |
 | 9 | T9 | 单块超预算时 handoff 前缀可超 maxChars | 交接摘要可能超长被通道截断（截断优于丢帧）；低频 |
 | 10 | T8 | PLUGIN-DEV §9 未提 disabled 顶层求值 caveat（与 #2 同源，文档面） | 文档同步问题，M2 顺手补一行 |
@@ -223,7 +313,7 @@ accept-m2: PASS (doctor clean, dsh+claude+codex probe×2 each with resume, switc
 （T18 的「ensureProfileExists 真实引导未验证」已由本次 `accept-m1.sh` 覆盖：真 dsh 物化
 profile 成功并随 DELETE 清理。完整 minors 总账见 progress.md 各任务行。）
 
-## 6. 回滚 / 应急
+## 7. 回滚 / 应急
 
 - **本里程碑未接生产**：真实企微流量仍在旧系统 `wecom-bridge`（8791）+ `wecom-bots` 面板上，
   本仓库对生产零影响——直接 `Ctrl-C`（SIGINT 四阶段停机）即"下线"。
@@ -231,13 +321,15 @@ profile 成功并随 DELETE 清理。完整 minors 总账见 progress.md 各任�
 - data/ 损坏应急：`bots.json` 坏行→loadBots 容错为空表（bot 全 offline 不崩）；ledger 坏尾→
   torn-tail 封口（T9）；锁死锁（持有者 pid 活但僵死）→ 手动 `rm -rf data/.lock`（stale-holder
   路径本可自动 adopt，仅 pid 被误报活时需要人工）。
-- M3 上线后的回滚顺序固定：先停新系统两 bot（防新旧互踢死循环）→ GUI enable 旧插件 → 验证
-  8791 healthz →（可选）导出新系统台账（DESIGN §12.5）。
+- M3 上线后的回滚顺序固定（详版含命令与断言：`docs/CUTOVER.md` §5 / `test/cutover.sh rollback`）：
+  ① 新服 disable 两 bot（或 launchctl unload——必须先做，防新旧互踢死循环）→ ② DSH GUI enable
+  旧插件（自动拉起旧桥）→ ③ 验证 8791 healthz 两 bot connected → ④ 恢复旧 bots.json 归档件
+  →（可选）导出新系统台账（DESIGN §12.5）。
 
-## 7. 交接检查单
+## 8. 交接检查单
 
 ```sh
-npm test                                                        # 321/321
+npm test                                                        # 348/348
 npm run contract -- --plugin plugins/provider-dsh --port dsh     # 11/11
 npm run contract -- --plugin plugins/provider-claude --port claude  # 11/11 (M2)
 npm run contract -- --plugin plugins/provider-codex --port codex    # 11/11 (M2)
@@ -246,5 +338,7 @@ bash test/smoke-dsh.sh    # 真 dsh PASS
 bash test/accept-m1.sh    # 真 dsh 验收 PASS
 bash test/accept-m2.sh    # 三家真 CLI 验收 PASS (M2)
 bash test/probe.sh --check  # 3/3 基线一致
+bash test/ui-shot.sh      # 21 张 UI 截图基线齐备 (M3)
 node src/index.js doctor  # 全 ✓
+# 生产切换：docs/CUTOVER.md（bash test/cutover.sh baseline|stage1-main|stage2-bot2|drill|rollback 逐步）
 ```

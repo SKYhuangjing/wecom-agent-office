@@ -1,9 +1,10 @@
-# wecom-agent-office (wao) — 企微智能机器人办公室：微内核 + 插件（M2 交接版）
+# wecom-agent-office (wao) — 企微智能机器人办公室：微内核 + 插件（M3 交接版 · 生产就绪）
 
 > 前身：`wecom-bridge`（单 bot 数据面）+ `wecom-bots`（管理面板）。本仓库是重写：
 > **微内核 + 插件体系**，一切业务（引擎/企微通道/Agent provider/UI）皆插件。
-> M1 交付内核 + core-engine + channel-wecom + provider-dsh；M2 交付 provider-claude/codex（三家切换矩阵全绿）；
-> 真实企微切换在 M3（见 HANDOFF.md）。
+> M1 交付内核 + core-engine + channel-wecom + provider-dsh；M2 交付 provider-claude/codex
+> （三家切换矩阵全绿）；M3 交付 Web UI（工作台六页 + 办公室 3D，21 张截图基线）+
+> 无人值守运维（launchd）。**生产切换 runbook：`docs/CUTOVER.md`**。
 
 ---
 
@@ -195,7 +196,7 @@ launchctl print gui/$(id -u)/com.wecom-agent-office | head -30   # launchd 视�
 
 | 命令 | 内容 | 时长 |
 |---|---|---|
-| `npm test` | 344 用例：内核/loader/engine/ledger/provider（dsh/claude/codex 剖析）+ web 基建（静态托管/穿越拒绝/uiPlugins/SSE 桥）+ e2e 六场景（fake ws + fake-dsh 全链路）+ ops（孤儿扫尾：单元 + 真服务进程 SIGINT e2e） | ~40s |
+| `npm test` | 348 用例：内核（含 log ENOSPC 降级）/loader/engine/ledger/provider（dsh/claude/codex 剖析）+ web 基建（静态托管/穿越拒绝/uiPlugins/SSE 桥）+ e2e 六场景（fake ws + fake-dsh 全链路）+ ops（孤儿扫尾：单元 + 真服务进程 SIGINT e2e） | ~40s |
 | `npm run contract -- --plugin plugins/provider-dsh --port dsh` | provider 端口契约 11/11（真子进程语义） | 秒级 |
 | `npm run contract` | _template 参考实现（4 pass + 7 skip，skip=需真 CLI 的组） | 秒级 |
 | `bash test/smoke-dsh.sh` | **真 dsh**：两轮对话记忆（同 sessionId 续跑记暗号）+ 真 session 文件解码 | ~10s+ |
@@ -209,10 +210,12 @@ launchctl print gui/$(id -u)/com.wecom-agent-office | head -30   # launchd 视�
 
 ## 6. 已知边界（诚实申报）
 
-- **Web UI 页面未齐**：M3 T1 已交付 Shell+SDK+`window.WAO`+内核静态托管+harness 截图机制（含
-  `_template/page` demo）；workbench 五页与办公室 3D 是 M3 T2-T4，当前控制台在无页面插件时显示内置空态。
-- **真实企微未接**：channel-wecom 只过了 fake openws 契约与 e2e；生产切换按 DESIGN §12 逐 bot
-  串行切换（M3），切换前旧系统 wecom-bridge 继续服役。
+- **Web UI 已齐（M3）**：工作台六页（机器人/会话/台账/时间线/插件/推送）+ 办公室 3D
+  （iso/2d × 昼夜），浅深两态 21 张 harness 截图基线提交在 `test/ui-shots/`（改 UI 红线：
+  必须重截对照）；盲评清零（无 P0/P1，P2×5 修复复测）。
+- **真实企微未接（切换就绪待执行）**：channel-wecom 只过了 fake openws 契约与 e2e；
+  生产切换按 `docs/CUTOVER.md` 逐 bot 串行执行（runbook + 半自动脚本 `test/cutover.sh`），
+  切换前旧系统 wecom-bridge 继续服役。
 - **锁冲突无 claim-live**：前身"GUI 占锁→界面认领"协议 M1 未实现；dsh 会话被占 →
   `code=lock-conflict` → 固定友好文案（"写锁被另一个进程占用…请稍后重试"）。
 - **单进程爆炸半径**：分级承诺（DESIGN §2.5）——装载失败可隔离、内核中介调用可归因；
@@ -233,8 +236,8 @@ launchctl print gui/$(id -u)/com.wecom-agent-office | head -30   # launchd 视�
 | `plugins/provider-codex/` | codex 驱动（runner.js 全事件集+exec resume / history.js rollout 读取） |
 | `plugins/_template/` | channel / provider / page 三套脚手架（`_` 前缀=内核不扫描） |
 | `data/`（WAO_HOME） | bots.json / plugins.json(启用表) / ledger/*.jsonl / sessions/*.json / logs/wao.log / .lock |
-| `test/` | kernel·engine·ledger·provider 单测 / contract 契约套件 / e2e 六场景 + switch-matrix.realtest 三家切换矩阵（真 CLI，npm run test:matrix） / fake-bin 假 CLI / probe-baselines 基线 / probe.sh·smoke-dsh.sh·accept-m1.sh·accept-m2.sh |
-| `docs/` | DESIGN.md（权威设计）· PLUGIN-DEV.md（插件开发契约）· launchd.plist（无人值守模板，§3.1） |
+| `test/` | kernel·engine·ledger·provider 单测 / contract 契约套件 / e2e 六场景 + switch-matrix.realtest 三家切换矩阵（真 CLI，npm run test:matrix） / fake-bin 假 CLI / probe-baselines 基线 / probe.sh·smoke-dsh.sh·accept-m1.sh·accept-m2.sh·ui-shot.sh / cutover.sh（生产切换半自动脚本，docs/CUTOVER.md §7） |
+| `docs/` | DESIGN.md（权威设计）· PLUGIN-DEV.md（插件开发契约）· CUTOVER.md（生产切换 runbook）· BLIND-REVIEW-CHECKLIST.md（盲评清单，含 UI 段）· launchd.plist（无人值守模板，§3.1） |
 
 > 交接 Do：改插件后跑对应测试+契约；动内核先读 DESIGN §2；升级 CLI 先 `probe.sh --check`。
 > Don't：别双实例（锁会拒，但别绕）；别手改 data/ 运行中文件（API 有 last-good 语义）；别在插件间 import。
