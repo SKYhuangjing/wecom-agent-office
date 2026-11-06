@@ -4,7 +4,7 @@
 // crash across two React copies); esbuild only transforms JSX (factory h)
 // and bundles sdk.js alongside.
 const React = globalThis.React;
-const { useState, useEffect, useCallback } = React;
+const { useState, useEffect, useCallback, useRef } = React;
 const h = React.createElement; // JSX factory (build.mjs --jsx-factory=h)
 import { api, initSdk, useAgents, useTimeline, useSSE } from './sdk.js';
 import { avatar, avatarUrl } from './avatar.js';
@@ -24,7 +24,7 @@ const registerPage = (desc) => {
 // (not the contract, but cheap to survive) still sees it.
 const WAO = {
   React, h,
-  useState, useEffect, useCallback,
+  useState, useEffect, useCallback, useRef,
   api, useAgents, useTimeline, useSSE,
   // 「头像即化身」(redesign P1): avatar(seed,{size,mood}) → inline SVG, seeded
   // by botId so the same face appears everywhere; avatarUrl is the data: form

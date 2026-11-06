@@ -1,18 +1,15 @@
 <!doctype html>
-<!-- ui-office3d harness (M3 T4 截图工作流, kernel-hosted same-origin):
-     renders the office with FAKE agents + timeline. Query knobs for
-     deterministic screenshots (both also work on the real console page):
-       ?dim=2d            top-down projection (default isometric)
-       ?phase=day|dawn|dusk|night   lock the day-phase clock
-       ?state=empty|error boundary baselines — empty office / 服务断联的
-                         fetch 失败文案 (test/ui-shot.sh 用)
-     Then, per the 改 UI 红线:
+<!-- ui-office3d harness (Magpie): FAKE agents. Query knobs:
+       ?dim=2d|iso|3d     view mode (default iso)
+       ?scene=office|…    3D theme id
+       ?quality=low|medium|high
+       ?state=empty|error boundary baselines
+     Screenshots (example):
        CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
        "$CHROME" --headless=new --disable-gpu --window-size=1280,800 \
-         --screenshot=office-light-day.png \
-         http://127.0.0.1:8792/api/ui/ui-office3d/harness.html?phase=day
-       "$CHROME" ... --force-dark-mode --screenshot=office-dark-night.png \
-         ".../harness.html?phase=night"   (etc: ×dim=2d for the 2D pair) -->
+         --screenshot=office-iso.png \
+         http://127.0.0.1:8792/api/ui/ui-office3d/harness.html
+       …/harness.html?dim=2d  ·  …/harness.html?dim=3d&scene=office -->
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
@@ -27,8 +24,6 @@
   <script type="module">
     import { makeWAOStub } from '/assets/harness-lib/wao-stub.js';
     import { FAKE, FAKE_TIMELINE } from './fake-data.js';
-    // ?state=empty|error — boundary baselines (test/ui-shot.sh); error uses
-    // the SDK's real offline copy so the shot matches a server-down browser.
     const state = new URLSearchParams(location.search).get('state');
     const fake = state === 'empty' ? { agents: [], timeline: [] }
       : state === 'error' ? {

@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ofShade, ofMix, ofSeed, phaseAt, buildNav, OfScene }
-  from '../../plugins/ui-office3d/ui/ofscene.js';
+  from '../../plugins/ui-office3d/ui/legacy/ofscene.js';
 
 const stubCanvas = (w = 1280, h = 800) => ({
   width: 0, height: 0, style: {},

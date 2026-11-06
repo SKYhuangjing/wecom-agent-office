@@ -3,7 +3,8 @@
 #
 # 一条命令产出全部页面插件 harness 基线截图到 test/ui-shots/（提交进库）：
 #   - ui-workbench 六页（workbench/bots/session/push/plugins/timeline）× 浅/深
-#   - ui-office3d  iso/2d × 浅/深（浅锁 phase=day，深锁 phase=night——昼夜相位成对）
+#   - ui-office3d  Magpie iso/2d × 浅/深
+#   - ui-office-studio 白棚 × 浅
 #   - template-page demo × 浅（脚手架示例）
 #   - 边界基线 ×4：workbench 空态/错误态、office 空态/错误态（浅色）
 #
@@ -135,12 +136,14 @@ for page in workbench bots session push plugins timeline; do
   done
 done
 
-echo "· ui-office3d iso/2d × 浅(day)/深(night)"
+echo "· ui-office3d Magpie iso/2d × 浅/深"
 for theme in light dark; do
-  phase=day; [ "$theme" = dark ] && phase=night
-  shot "ui-office3d-iso" "$theme" 5500 "api/ui/ui-office3d/harness.html?phase=$phase"
-  shot "ui-office3d-2d" "$theme" 5500 "api/ui/ui-office3d/harness.html?dim=2d&phase=$phase"
+  shot "ui-office3d-iso" "$theme" 5500 "api/ui/ui-office3d/harness.html?dim=iso"
+  shot "ui-office3d-2d" "$theme" 5500 "api/ui/ui-office3d/harness.html?dim=2d"
 done
+
+echo "· ui-office-studio 白棚 × 浅"
+shot "ui-office-studio" light 4000 "api/ui/ui-office-studio/harness.html"
 
 echo "· template-page demo"
 shot "template-page-demo" light 2200 "api/ui/template-page/harness.html"
@@ -151,7 +154,7 @@ shot "ui-workbench-workbench-error" light 2600 "api/ui/ui-workbench/harness.html
 shot "ui-office3d-iso-empty" light 4000 "api/ui/ui-office3d/harness.html?state=empty"
 shot "ui-office3d-iso-error" light 4000 "api/ui/ui-office3d/harness.html?state=error"
 
-# ---- 校验：21 张基线全部存在且 ≥5KB ----------------------------------------
+# ---- 校验：22 张基线全部存在且 ≥5KB ----------------------------------------
 # 注意：set -u 下 $VAR 紧跟全角字符（如「）」）会被当成变量名一部分，
 # 因此这里一律用 ${VAR} 括起来。
 EXPECTED="
@@ -171,6 +174,7 @@ ui-office3d-iso-light
 ui-office3d-iso-dark
 ui-office3d-2d-light
 ui-office3d-2d-dark
+ui-office-studio-light
 template-page-demo-light
 ui-workbench-workbench-empty-light
 ui-workbench-workbench-error-light
@@ -191,4 +195,4 @@ if [ "$fails" -gt 0 ]; then
   echo "✗ $fails 张基线不合格（${OUT_DIR}）" >&2
   exit 1
 fi
-echo "✓ 21 张基线齐备 → $OUT_DIR"
+echo "✓ 22 张基线齐备 → $OUT_DIR"

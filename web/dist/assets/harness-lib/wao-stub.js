@@ -47,6 +47,7 @@ export function makeWAOStub(fakeData = {}) {
   const WAO = {
     React, h: React.createElement,
     useState: React.useState, useEffect: React.useEffect, useCallback: React.useCallback,
+    useRef: React.useRef, React,
     api, useAgents, useTimeline, useSSE,
     avatar, avatarUrl,
     registerPage: (desc) => { pages.push(desc); },
