@@ -76,6 +76,23 @@ curl -s localhost:8792/api/agents  # 每 bot: status/progress/todayTurns/连接�
 bash test/probe.sh --check         # dsh/claude/codex 事件序列 vs 已存基线(漂移→diff+exit 1)
 ```
 
+**`wao tui`——终端运维仪表盘**（在服务所在机器上跑，`--port/--data-dir` 同 `wao start`）：
+2s 轮询 `/api/agents` + 尾随 `data/logs/wao.log`（非本机则明说「日志需本机」），把上面这排
+curl 大多变成按键。断连显示红条并保留最后名册、每 2s 自动重试；写操作全部走确认行，广播
+（真实发送到企微）有第二道确认；与 Web 控制台走同一 API 面。零依赖（node 自带 readline +
+ANSI），`q`/Ctrl-C 完整还原终端。终端帧样例：`test/tui/shots/`（ascii 存档）；全键位 pty
+验收：`bash test/tui/accept-keys.sh`。
+
+| 键 | 作用 |
+|---|---|
+| `↑↓` / 空格 | 选员工 / 调休·返岗确认（y 执行 n 取消） |
+| `t` | 岗前测试（默认探针「回复：收到」，结果窗 ↑↓ 滚动、esc 关闭） |
+| `b` | 广播：从台账选目标会话 → 输入内容 → y 二次确认 → `POST /api/send` |
+| `l` | 日志窗 5 行 ↔ 半屏切换 |
+| `n` | 简版入职向导（姓名→岗位→cwd→botId→Secret→摘要 y，落库 `enabled:false` 调休态） |
+| `e` | 打开 Web 控制台（失败降级为可复制 URL 的通知行） |
+| `q` / Ctrl-C | 退出（还原终端） |
+
 常用操作（回环 HTTP，POST 为主）：
 
 ```sh

@@ -1,0 +1,22 @@
+# wao tui 终端帧存档 — l 日志半屏切换（预算一半给日志窗）
+# 目标: http://127.0.0.1:8792（生产，只读巡检） · 终端 100x30 · 2026-11-07
+# 采集: script(1) pty 实跑 + 剥 ANSI 取末帧（test/tui/accept-keys.sh 同源逻辑）
+
+WAO 公司 │ ⏰ 06:51:31 │ 在岗 2/2 │ 今日工单 0
+────────────────────────────────────────────────────────────────────────────────────────────────────
+▸ Sky 分身  [待命] dsh·wecom  今日0轮
+  Sky 分身 2  [待命] dsh·wecom  今日0轮
+2026-11-06T18:03:06.387Z INFO [core-engine] connecting wss://openws.work.weixin.qq.com ...
+2026-11-06T18:03:06.453Z INFO [core-engine] engine: bot bot2 attached
+2026-11-06T18:03:06.454Z WARN [core-engine] core-engine: bot bot2 accepts messages from ANY user (allowedUsers is empty)
+2026-11-06T18:03:06.454Z INFO [core-engine] state stopped -> connecting
+2026-11-06T18:03:06.454Z INFO [core-engine] connecting wss://openws.work.weixin.qq.com ...
+2026-11-06T18:03:06.462Z INFO wao up: 10 plugins on http://127.0.0.1:8792 (data: /Users/sky/develop/workbuddy_workspace/wecom-agent-office/data)
+2026-11-06T18:03:06.462Z INFO wao v0.1.0 listening on http://127.0.0.1:8792 (pid 84270, data /Users/sky/develop/workbuddy_workspace/wecom-agent-office/data)
+2026-11-06T18:03:06.587Z INFO [core-engine] websocket open, sending subscribe
+2026-11-06T18:03:06.591Z INFO [core-engine] websocket open, sending subscribe
+2026-11-06T18:03:06.787Z INFO [core-engine] subscribed to WeCom bot OK
+2026-11-06T18:03:06.787Z INFO [core-engine] state connecting -> online
+2026-11-06T18:03:06.802Z INFO [core-engine] subscribed to WeCom bot OK
+2026-11-06T18:03:06.802Z INFO [core-engine] state connecting -> online
+↑↓选择 空格:调休/返岗 t:岗前测试 b:广播 l:日志 n:入职 e:浏览器 q:退出
