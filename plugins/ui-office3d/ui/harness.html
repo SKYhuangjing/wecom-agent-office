@@ -1,0 +1,33 @@
+<!doctype html>
+<!-- ui-office3d harness (M3 T4 截图工作流, kernel-hosted same-origin):
+     renders the office with FAKE agents + timeline. Query knobs for
+     deterministic screenshots (both also work on the real console page):
+       ?dim=2d            top-down projection (default isometric)
+       ?phase=day|dawn|dusk|night   lock the day-phase clock
+     Then, per the 改 UI 红线:
+       CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+       "$CHROME" --headless=new --disable-gpu --window-size=1280,800 \
+         --screenshot=office-light-day.png \
+         http://127.0.0.1:8792/api/ui/ui-office3d/harness.html?phase=day
+       "$CHROME" ... --force-dark-mode --screenshot=office-dark-night.png \
+         ".../harness.html?phase=night"   (etc: ×dim=2d for the 2D pair) -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>harness · ui-office3d</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <div id="root"></div>
+  <script src="/vendor/react.umd.js"></script>
+  <script src="/vendor/react-dom.umd.js"></script>
+  <script type="module">
+    import { makeWAOStub } from '/assets/harness-lib/wao-stub.js';
+    import { FAKE, FAKE_TIMELINE } from './fake-data.js';
+    const stub = makeWAOStub({ agents: FAKE.agents, timeline: FAKE_TIMELINE });
+    const office = (await import('./index.js')).default;
+    stub.render(office, document.getElementById('root'));
+  </script>
+</body>
+</html>
