@@ -17,6 +17,7 @@ import { zstdCompressSync } from 'node:zlib';
 // Computed locally (not imported from provider.contract.js) to avoid a
 // module cycle: the contract suite imports PROFILES from here.
 const FAKE_CLAUDE = fileURLToPath(new URL('../fake-bin/fake-claude.js', import.meta.url));
+const FAKE_CODEX = fileURLToPath(new URL('../fake-bin/fake-codex.js', import.meta.url));
 
 // claude's project-dir slugging (verified against real sessions — see
 // plugins/provider-claude/history.js header): every non-alphanumeric → '-'.
@@ -107,6 +108,59 @@ export const PROFILES = {
       claudeBin: wrapBin(mode, fakeHome),
       cwd,
       claudeConfigDir: join(cwd, 'claude-home'),
+    }),
+  },
+
+  // plugins/provider-codex (M2 Task 4) — all groups, mirroring the dsh/claude
+  // profiles: fake-codex injected via codexBin wrapper + codexHome pointed
+  // INSIDE the group's tmp cwd (the runner injects $CODEX_HOME with it, and
+  // readHistory walks its sessions/ tree) so history never touches the real
+  // ~/.codex. Session files use codex 0.166.0's real rollout layout:
+  // <codexHome>/sessions/<YYYY>/<MM>/<DD>/rollout-<ts>-<sessionId>.jsonl with
+  // {timestamp, ordinal, type, payload} lines (format discovered from the
+  // files real codex wrote — see plugins/provider-codex/history.js header).
+  codex: {
+    note: 'full contract against fake-codex via codexBin wrapper injection',
+    // ok-mode final text; codex resumes via the `exec resume` SUBCOMMAND (the
+    // profile's resumeArg check greps last-argv for '<arg> <sid>')
+    expect: { okFinalText: () => '答案文本', resumeArg: 'exec resume' },
+    fakeCli: true,
+    events: true,
+    history: true,
+    // which fake CLI the suite's wrapBin execs (codex has its own fake)
+    fakeBin: FAKE_CODEX,
+    // codexHome is derived the same way makeRunnerArgs derives it, so the
+    // corrupt/huge fixtures land exactly where the reader looks.
+    historyPath: (cwd, sessionId) =>
+      join(cwd, 'codex-home', 'sessions', '2026', '11', '06', `rollout-2026-11-06T00-00-00-${sessionId}.jsonl`),
+    // Oversized-history fixture writer — codex's REAL on-disk rollout format:
+    // JSONL of {timestamp, ordinal, type, payload} lines with 2500
+    // user/assistant response_item/message turns, plus the noise line types
+    // real codex interleaves (session_meta / turn_context / event_msg /
+    // token_usage_record / reasoning) and the harness-injected first user
+    // message (AGENTS.md + environment_context blocks) the reader filters.
+    hugeHistory: async (path) => {
+      const ts = (o) => new Date(100 + o).toISOString();
+      const lines = [
+        { timestamp: ts(0), ordinal: 0, type: 'session_meta', payload: { session_id: 'huge', id: 'huge', cwd: '/w' } },
+        { timestamp: ts(0), ordinal: 1, type: 'response_item', payload: { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'You are Codex' }] } },
+        { timestamp: ts(0), ordinal: 2, type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '# AGENTS.md instructions <INSTRUCTIONS>…</INSTRUCTIONS>' }, { type: 'input_text', text: '<environment_context>\n<cwd>/w</cwd>\n</environment_context>' }] } },
+      ];
+      let ordinal = 3;
+      for (let i = 0; i < 2500; i++) {
+        lines.push({ timestamp: ts(ordinal), ordinal: ordinal++, type: 'turn_context', payload: { cwd: '/w', sandbox: 'read-only' } });
+        lines.push({ timestamp: ts(ordinal), ordinal: ordinal++, type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `问题 ${i}` }] } });
+        lines.push({ timestamp: ts(ordinal), ordinal: ordinal++, type: 'response_item', payload: { type: 'reasoning', summary: [], encrypted_content: 'gTM-' } });
+        lines.push({ timestamp: ts(ordinal), ordinal: ordinal++, type: 'event_msg', payload: { type: 'item_completed', item: { id: `item_${i}`, type: 'agent_message', text: `回答 ${i}` } } });
+        lines.push({ timestamp: ts(ordinal), ordinal: ordinal++, type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: `回答 ${i}` }] } });
+        lines.push({ timestamp: ts(ordinal), ordinal: ordinal++, type: 'token_usage_record', payload: { info: { total_token_usage: { input_tokens: 1, output_tokens: 1 } } } });
+      }
+      writeFileSync(path, lines.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    },
+    makeRunnerArgs: ({ cwd, mode, fakeHome, wrapBin }) => ({
+      codexBin: wrapBin(mode, fakeHome),
+      cwd,
+      codexHome: join(cwd, 'codex-home'),
     }),
   },
 };
