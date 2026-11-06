@@ -251,6 +251,11 @@ test('GET /api/ports lists channels/providers with their schemas; GET /api/bots 
   const provIds = ports.providers.map((p) => p.id);
   assert.ok(provIds.includes('fakeprov') && provIds.includes('dsh'), `fake + repo providers listed: ${provIds}`);
   assert.ok(ports.providers.every((p) => Array.isArray(p.configSchema)), 'every provider carries a configSchema array');
+  // M3 T3: each port names its REGISTERING plugin — the plugin-manager page
+  // maps plugin disable → affected bots through owner (port id ≠ plugin id).
+  assert.equal(ports.channels.find((c) => c.id === 'fakechan').owner, 'channel-fake');
+  assert.equal(ports.providers.find((p) => p.id === 'fakeprov').owner, 'provider-fake');
+  assert.equal(ports.providers.find((p) => p.id === 'dsh').owner, 'provider-dsh');
 
   const list = await (await get('/api/bots')).json();
   const b1 = list.bots.find((b) => b.id === 'b1');

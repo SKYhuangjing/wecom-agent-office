@@ -39,9 +39,9 @@ test('_template scaffolds boot active through createKernel: provider, channel, p
   const list = (await (await fetch(url('/api/plugins'))).json()).plugins;
   // Ordering: non-core peers, no deps, default order 10 → id lexicographic.
   assert.deepEqual(list, [
-    { id: 'template-channel', type: 'channel', version: '0.1.0', status: 'active' },
-    { id: 'template-page', type: 'ui', version: '0.1.0', status: 'active' },
-    { id: 'template-provider', type: 'provider', version: '0.1.0', status: 'active' },
+    { id: 'template-channel', name: 'Template Channel', type: 'channel', version: '0.1.0', status: 'active' },
+    { id: 'template-page', name: 'Template Page', type: 'ui', version: '0.1.0', status: 'active' },
+    { id: 'template-provider', name: 'Template Provider', type: 'provider', version: '0.1.0', status: 'active' },
   ]);
   const state = await (await fetch(url('/api/state'))).json();
   assert.equal(state.plugins.filter((p) => p.status === 'active').length, 3);
@@ -122,9 +122,9 @@ test('plugins.json enabled:false on all three ids: 0 active, ports unregistered'
   const body = await (await fetch(`http://127.0.0.1:${k.http.port}/api/plugins`)).json();
   // Disabled plugins are LISTED with status 'disabled' (they stay re-enableable)
   assert.deepEqual(body.plugins, [
-    { id: 'template-channel', type: 'channel', version: '0.1.0', status: 'disabled' },
-    { id: 'template-page', type: 'ui', version: '0.1.0', status: 'disabled' },
-    { id: 'template-provider', type: 'provider', version: '0.1.0', status: 'disabled' },
+    { id: 'template-channel', name: 'Template Channel', type: 'channel', version: '0.1.0', status: 'disabled' },
+    { id: 'template-page', name: 'Template Page', type: 'ui', version: '0.1.0', status: 'disabled' },
+    { id: 'template-provider', name: 'Template Provider', type: 'provider', version: '0.1.0', status: 'disabled' },
   ]);
   assert.equal(k.portRegistry.getProvider('template'), undefined);
   assert.equal(k.portRegistry.getChannel('template'), undefined);

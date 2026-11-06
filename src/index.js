@@ -108,10 +108,11 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
   // could be mid-mutating. Disabled plugins are LISTED (status 'disabled')
   // rather than omitted — the UI must be able to show what to re-enable.
   const pluginList = () => [
-    ...lastLoad.active.map(({ id, type, version }) => ({ id, type, version, status: 'active' })),
+    ...lastLoad.active.map(({ id, name, type, version }) => ({ id, name, type, version, status: 'active' })),
     // The loader's error copy attributes with an id prefix; the entry carries
     // `id` right beside it, so the prefix is stripped here — "stray: failed —
-    // stray: import failed" reads the id twice; once is enough.
+    // stray: import failed" reads the id twice; once is enough. A failed
+    // import may leave no readable manifest: name stays null then.
     ...lastLoad.failed.map(({ id, error }) => ({
       id, status: 'failed',
       error: typeof error === 'string' && error.startsWith(`${id}: `) ? error.slice(id.length + 2) : error,
@@ -159,7 +160,7 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
     knownPluginIds = new Set(found.filter(({ id }) => id != null).map(({ id }) => id));
     lastDisabled = found
       .filter(({ id }) => id != null && !enabled(id))
-      .map(({ id, manifest }) => ({ id, type: manifest?.type, version: manifest?.version }));
+      .map(({ id, manifest }) => ({ id, name: manifest?.name ?? null, type: manifest?.type, version: manifest?.version }));
     const dirs = found.filter(({ id, dir: d }) => enabled(id ?? basename(d))).map((f) => f.dir);
     const pluginConfig = {};
     for (const { id } of found) if (id != null && enabled(id)) pluginConfig[id] = table[id]?.options ?? {};

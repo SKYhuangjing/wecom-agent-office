@@ -288,15 +288,20 @@ async function toggleBotHandler({ res, m, state }) {
 
 // Registry view for the UI's schema-driven forms (M3 T2): which channels and
 // providers are live, each with the schema that validates its config block.
-// Ports registry entries are {impl, owner} wrappers; a bare-lifecycle test
-// without ports yields empty lists, not a 500.
+// `owner` (the REGISTERING plugin's id, M3 T3) lets the plugin-manager page
+// compute which bots a provider/channel plugin disable would take offline —
+// port ids need not match their owning plugin's id (fake-shot registers
+// channel 'fakec'). Ports registry entries are {impl, owner} wrappers; a
+// bare-lifecycle test without ports yields empty lists, not a 500.
 async function portsHandler({ res, state }) {
-  const channels = [...(state.ports?.channel?.entries() ?? [])].map(([id, { impl } = {}]) => ({
+  const channels = [...(state.ports?.channel?.entries() ?? [])].map(([id, { impl, owner } = {}]) => ({
     id,
+    owner: owner ?? null,
     accountSchema: Array.isArray(impl?.accountSchema) ? impl.accountSchema : [],
   }));
-  const providers = [...(state.ports?.provider?.entries() ?? [])].map(([id, { impl } = {}]) => ({
+  const providers = [...(state.ports?.provider?.entries() ?? [])].map(([id, { impl, owner } = {}]) => ({
     id,
+    owner: owner ?? null,
     configSchema: Array.isArray(impl?.configSchema) ? impl.configSchema : [],
   }));
   sendJson(res, 200, { channels, providers });

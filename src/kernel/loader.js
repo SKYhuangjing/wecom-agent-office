@@ -294,7 +294,7 @@ export async function activateAll({
       }
       plugin.status = 'active';
       activeIds.add(manifest.id);
-      active.push({ id: manifest.id, type: manifest.type, version: manifest.version, status: 'active' });
+      active.push({ id: manifest.id, name: manifest.name ?? null, type: manifest.type, version: manifest.version, status: 'active' });
     } catch (err) {
       failed.push({
         id: manifest.id,

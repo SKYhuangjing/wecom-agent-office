@@ -1,10 +1,76 @@
-// Harness fake data (M3 T2 截图工作流): the exact shapes the pages consume —
+// Harness fake data (M3 T2/T3 截图工作流): the exact shapes the pages consume —
 // /api/agents summaries, sanitized /api/bots records (account.secret 刻意缺席:
 // 编辑器不回显 secret, 这是红线), /api/ports with the REAL schema shapes
 // copied from channel-wecom + provider-dsh/claude/codex so the form rendering
 // is exercised against production schema text. The stub's api() is
-// method-blind (keyed by path only) — '/api/bots' branches on body presence:
-// GET (no body) → the list, anything with a body → a saved-record echo.
+// method-blind (keyed by path only, query included) — '/api/bots' branches on
+// body presence: GET (no body) → the list, anything with a body → a saved-
+// record echo. T3 adds ledger rows (chat-list source for session+push), a
+// native session history, the kernel plugin list and timeline rows.
+const now = Date.now();
+const minAgo = (m) => now - m * 60_000;
+
+export const FAKE_LEDGER = [
+  {
+    seq: 1, at: minAgo(180), chatKey: 'wecom:group:G1', channel: 'wecom', chatKind: 'group',
+    chatid: 'G1', userid: 'zhangsan', user: '帮我看下今天的构建为什么失败',
+    assistant: '构建失败原因是单测 hanging_test 超时，我已把超时上限调到 60s 并重跑通过。',
+    provider: 'dsh', sessionId: 'sess-a1b2c3d4', ok: true, reason: 'completed', tokens: null, cost: null,
+  },
+  {
+    seq: 2, at: minAgo(120), chatKey: 'wecom:group:G1', channel: 'wecom', chatKind: 'group',
+    chatid: 'G1', userid: 'zhangsan', user: '继续跑一遍全量',
+    assistant: '', provider: 'dsh', sessionId: 'sess-a1b2c3d4', ok: false, reason: 'interrupted', tokens: null, cost: null,
+  },
+  {
+    seq: 3, at: minAgo(90), chatKey: 'wecom:group:G1', channel: 'wecom', chatKind: 'group',
+    chatid: 'G1', userid: 'zhangsan', user: '再试一次，只跑受影响的用例',
+    assistant: '正在定位受影响用例……（超时前部分输出）', provider: 'dsh', sessionId: 'sess-a1b2c3d4',
+    ok: false, reason: 'timeout', tokens: null, cost: null,
+  },
+  {
+    seq: 4, at: minAgo(40), chatKey: 'wecom:single:lisi', channel: 'wecom', chatKind: 'single',
+    chatid: 'lisi', userid: 'lisi', user: '帮我总结本周周报',
+    assistant: '本周完成：台账页、推送页与时间线页的开发与自测；遗留：盲评两条例外。',
+    provider: 'dsh', sessionId: 'sess-9f8e7d6c', ok: true, reason: 'completed', tokens: null, cost: null,
+  },
+];
+
+export const FAKE_SESSION = {
+  turns: [
+    { user: '帮我看下今天的构建为什么失败', assistant: '构建失败原因是单测 hanging_test 超时，我已把超时上限调到 60s 并重跑通过。', at: minAgo(180) },
+    { user: '继续跑一遍全量', assistant: '（该轮被新消息打断，无完整输出）', at: minAgo(120) },
+    { user: '再试一次，只跑受影响的用例', assistant: '正在定位受影响用例……（超时前部分输出）', at: minAgo(90) },
+  ],
+  truncated: true,
+  warnings: [],
+};
+
+export const FAKE_PLUGINS = [
+  { id: 'core-engine', name: 'Core Engine', type: 'core', version: '0.1.0', status: 'active' },
+  { id: 'channel-wecom', name: 'Channel WeCom', type: 'channel', version: '0.1.0', status: 'active' },
+  { id: 'provider-dsh', name: 'Provider DSH', type: 'provider', version: '0.1.0', status: 'active' },
+  { id: 'provider-claude', name: 'Provider Claude', type: 'provider', version: '0.1.0', status: 'active' },
+  { id: 'provider-codex', name: 'Provider Codex', type: 'provider', version: '0.1.0', status: 'disabled' },
+  { id: 'ui-workbench', name: 'UI Workbench', type: 'ui', version: '0.1.0', status: 'active' },
+  { id: 'ui-office3d', name: 'UI Office 3D', type: 'ui', version: '0.1.0', status: 'active' },
+  { id: 'progressor-emoji', name: 'Progressor Emoji', type: 'progressor', version: '0.1.0', status: 'failed', error: 'import failed: Unexpected token \'export\'' },
+];
+
+// Chronological (oldest-first), matching the /api/timeline contract the page
+// reverses for newest-on-top — the stub serves the array verbatim.
+export const FAKE_TIMELINE = [
+  { botId: 'main-bot', chatKey: 'wecom:group:G1', kind: 'run_start', text: '', at: minAgo(12) },
+  { botId: 'main-bot', chatKey: 'wecom:group:G1', kind: 'thinking', text: '先看 CI 日志定位失败用例，再对照昨天的改动范围判断是否回归。', at: minAgo(12) + 4000 },
+  { botId: 'main-bot', chatKey: 'wecom:group:G1', kind: 'tool', text: '读取 ci-logs/latest.txt', at: minAgo(12) + 9000 },
+  { botId: 'main-bot', chatKey: 'wecom:group:G1', kind: 'step', text: '', at: minAgo(12) + 15000 },
+  { botId: 'main-bot', chatKey: 'wecom:group:G1', kind: 'turn', text: '帮我看下今天的构建为什么失败 → 构建失败原因是单测 hanging_test 超时，我已把超时上限调到 60s 并重跑通过。', at: minAgo(11) },
+  { botId: 'main-bot', chatKey: 'wecom:group:G1', kind: 'run_end', text: '', at: minAgo(11) + 1000 },
+  { botId: 'bot-2', chatKey: 'wecom:single:wangwu', kind: 'run_start', text: '', at: minAgo(9) },
+  { botId: 'bot-2', chatKey: 'wecom:single:wangwu', kind: 'tool', text: '检索 schedule.json 第 41-80 行', at: minAgo(9) + 5000 },
+  { botId: 'bot-2', chatKey: 'wecom:single:wangwu', kind: 'thinking', text: '这份周报要覆盖 M3 的六个页面插件交付，按页罗列风险与验证方式。', at: minAgo(3) },
+].sort((a, b) => a.at - b.at);
+
 export const FAKE = {
   agents: [
     {
@@ -38,6 +104,7 @@ export const FAKE = {
     channels: [
       {
         id: 'wecom',
+        owner: 'channel-wecom',
         accountSchema: [
           { key: 'botId', label: '机器人 ID', type: 'string', required: true },
           { key: 'secret', label: '机器人 Secret', type: 'password', required: true },
@@ -48,6 +115,7 @@ export const FAKE = {
     providers: [
       {
         id: 'dsh',
+        owner: 'provider-dsh',
         configSchema: [
           { key: 'cwd', label: '工作目录（agent 作业目录，也是沙箱 workspaceRoot）', type: 'string', required: true },
           { key: 'profile', label: 'dsh profile 名（默认 wecom-<botId>）', type: 'string' },
@@ -63,6 +131,7 @@ export const FAKE = {
       },
       {
         id: 'claude',
+        owner: 'provider-claude',
         configSchema: [
           { key: 'cwd', label: '工作目录（claude 按其 realpath 定位会话历史）', type: 'string', required: true },
           { key: 'model', label: '模型 {model, baseURL?, apiKey?, apiKeyEnv?}（baseURL→ANTHROPIC_BASE_URL，apiKey→ANTHROPIC_AUTH_TOKEN 或 apiKeyEnv）', type: 'object' },
@@ -77,6 +146,7 @@ export const FAKE = {
       },
       {
         id: 'codex',
+        owner: 'provider-codex',
         configSchema: [
           { key: 'cwd', label: '工作目录（codex 作业目录，也是会话 rollout 的归属）', type: 'string', required: true },
           { key: 'model', label: '模型 {model}（→ -m；网关 baseURL 走 configOverrides 的 openai_base_url=…）', type: 'object' },
@@ -97,6 +167,13 @@ const echoBot = (base) => (body) => ({
   bot: { ...base, ...(body && typeof body === 'object' ? body : {}) },
 });
 
+// enable/disable echoes flip the one plugin (four-phase reload is kernel
+// behavior; the harness only needs the list shape the page re-renders from).
+const flipPlugin = (id) => () => ({
+  ok: true,
+  plugins: FAKE_PLUGINS.map((p) => (p.id === id ? { ...p, status: p.status === 'active' ? 'disabled' : 'active' } : p)),
+});
+
 export const FAKE_API = {
   '/api/ports': FAKE.ports,
   // Method-blind branch: GET (no body) → list; POST/PATCH (body) → saved echo.
@@ -114,4 +191,13 @@ export const FAKE_API = {
     code: 'error', finalText: '', sessionId: null, events: 0,
     errorText: 'provider claude 已禁用（插件停用或加载失败）',
   }),
+  // —— T3 pages ————————————————————————————————————————————————
+  '/api/ledger?bot=main-bot': FAKE_LEDGER,
+  '/api/ledger?bot=bot-2': [],
+  '/api/session?bot=main-bot&session=sess-a1b2c3d4': FAKE_SESSION,
+  '/api/send': () => ({ ok: true }),
+  '/api/plugins': { plugins: FAKE_PLUGINS },
+  '/api/plugins/provider-codex/enable': flipPlugin('provider-codex'),
+  '/api/plugins/provider-claude/disable': flipPlugin('provider-claude'),
+  '/api/service/reload': () => ({ ok: true }),
 };

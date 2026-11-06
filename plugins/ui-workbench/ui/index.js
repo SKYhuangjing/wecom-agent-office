@@ -7,8 +7,12 @@
 // side-effect free. Later tasks append pages to PAGES; nothing else changes.
 import list from './list.js';
 import bots from './bots.js';
+import session from './session.js';
+import push from './push.js';
+import plugins from './plugins.js';
+import timeline from './timeline.js';
 
-const PAGES = [list, bots];
+const PAGES = [list, bots, session, push, plugins, timeline];
 
 for (const page of PAGES) globalThis.WAO?.registerPage?.(page);
 

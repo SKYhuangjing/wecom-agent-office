@@ -98,7 +98,7 @@ test('plugins.json enabled:false filters the dir at boot and on reload; disabled
   const url = base(k);
   // Disabled = listed with status 'disabled' (UI must show what to re-enable)
   assert.deepEqual((await (await fetch(url('/api/state'))).json()).plugins, [
-    { id: 'p-x', type: 'core', version: '1.0.0', status: 'disabled' },
+    { id: 'p-x', name: null, type: 'core', version: '1.0.0', status: 'disabled' },
   ]);
 
   // Re-enable through plugins.json → the four-phase reload (driven here via
@@ -106,14 +106,14 @@ test('plugins.json enabled:false filters the dir at boot and on reload; disabled
   writeFileSync(join(dataDir, 'plugins.json'), JSON.stringify({ plugins: { 'p-x': { enabled: true } } }));
   assert.deepEqual(await (await fetch(url('/api/service/reload'), { method: 'POST' })).json(), { ok: true });
   const list = (await (await fetch(url('/api/plugins'))).json()).plugins;
-  assert.deepEqual(list, [{ id: 'p-x', type: 'core', version: '1.0.0', status: 'active' }]);
+  assert.deepEqual(list, [{ id: 'p-x', name: null, type: 'core', version: '1.0.0', status: 'active' }]);
 
   // Disable again → listed as disabled on the next reload (table is re-read).
   writeFileSync(join(dataDir, 'plugins.json'), JSON.stringify({ plugins: { 'p-x': { enabled: false } } }));
   const r = await k.reload();
   assert.deepEqual(r, { active: [], failed: [] });
   assert.deepEqual((await (await fetch(url('/api/state'))).json()).plugins, [
-    { id: 'p-x', type: 'core', version: '1.0.0', status: 'disabled' },
+    { id: 'p-x', name: null, type: 'core', version: '1.0.0', status: 'disabled' },
   ]);
 });
 
@@ -141,7 +141,7 @@ test('POST /api/plugins/:id/enable|disable flips the table, reloads, and survive
   assert.equal(resp.status, 200);
   let body = await resp.json();
   assert.equal(body.ok, true);
-  assert.deepEqual(body.plugins, [{ id: 'p-core-like', type: 'core', version: '1.0.0', status: 'disabled' }]);
+  assert.deepEqual(body.plugins, [{ id: 'p-core-like', name: null, type: 'core', version: '1.0.0', status: 'disabled' }]);
   assert.equal((await fetch(url('/p-core-like'))).status, 404);
   assert.equal((await fetch(url('/healthz'))).status, 200);
 
@@ -149,7 +149,7 @@ test('POST /api/plugins/:id/enable|disable flips the table, reloads, and survive
   resp = await fetch(url('/api/plugins/p-core-like/enable'), { method: 'POST' });
   assert.equal(resp.status, 200);
   body = await resp.json();
-  assert.deepEqual(body.plugins, [{ id: 'p-core-like', type: 'core', version: '1.0.0', status: 'active' }]);
+  assert.deepEqual(body.plugins, [{ id: 'p-core-like', name: null, type: 'core', version: '1.0.0', status: 'active' }]);
   assert.equal(await (await fetch(url('/p-core-like'))).text(), 'hi');
   const table = JSON.parse(readFileSync(join(dataDir, 'plugins.json'), 'utf8'));
   assert.equal(table.plugins['p-core-like'].enabled, true);

@@ -214,3 +214,56 @@ test('full chain: fake provider run emits agent/progress that reaches the SSE cl
     assert.equal(agents.agents[0].todayTurns, 1);
   } finally { await conn.close(); }
 });
+
+// M3 T3: run/* + ledger/turn emitters. One fake-chain run must push the
+// three frames onto the wire IN ORDER — run/start (idle→working transition)
+// before ledger/turn (recordTurn, carrying the row's seq) before run/end
+// (working→idle) — because useTimeline keys its refresh nudge off exactly
+// these topics. The same transitions stamp run_start/run_end rows into the
+// timeline ring (GET /api/timeline brackets the run).
+test('full chain: one run pushes run/start → ledger/turn → run/end SSE frames in order', async () => {
+  const fakeDir = mkdtempSync(join(tmpdir(), 'wao-web-fake-'));
+  dirs.push(fakeDir);
+  writeFakeChain(fakeDir);
+  const k = await start([fakeDir, templateRoot, join(repoRoot, 'plugins')]);
+  const conn = await connectSse(k);
+  try {
+    const created = await fetch(`http://127.0.0.1:${k.http.port}/api/bots`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'b1', name: 'B1', channel: 'fakec', provider: 'fakep', account: {}, providerConfig: { cwd: '/tmp' } }),
+    });
+    assert.equal(created.status, 200, await created.text());
+    const fired = await fetch(`http://127.0.0.1:${k.http.port}/api/fake/fire`, { method: 'POST' });
+    assert.equal(fired.status, 200);
+    await conn.readUntil((b) => b.includes('event: run/end'), 5000);
+    const idx = (topic) => conn.buf.indexOf(`event: ${topic}`);
+    const iStart = idx('run/start');
+    const iTurn = idx('ledger/turn');
+    const iEnd = idx('run/end');
+    assert.ok(iStart !== -1, `run/start frame present in ${JSON.stringify(conn.buf)}`);
+    assert.ok(iTurn !== -1, `ledger/turn frame present in ${JSON.stringify(conn.buf)}`);
+    assert.ok(iEnd !== -1, `run/end frame present in ${JSON.stringify(conn.buf)}`);
+    assert.ok(iStart < iTurn && iTurn < iEnd, `frame order run/start→ledger/turn→run/end (${iStart}/${iTurn}/${iEnd})`);
+    // Payloads: bot-identified, run frames carry the chatKey, ledger/turn
+    // carries the journaled row's seq and reason.
+    const frame = (topic, from) => {
+      const at = conn.buf.indexOf(`data: `, from);
+      const nl = conn.buf.indexOf('\n', at);
+      return JSON.parse(conn.buf.slice(at + 'data: '.length, nl));
+    };
+    assert.deepEqual(frame('run/start', iStart), { botId: 'b1', chatKey: 'chat-1' });
+    const turnPayload = frame('ledger/turn', iTurn);
+    assert.equal(turnPayload.botId, 'b1');
+    assert.equal(turnPayload.chatKey, 'chat-1');
+    assert.equal(turnPayload.reason, 'completed');
+    assert.equal(typeof turnPayload.seq, 'number');
+    assert.deepEqual(frame('run/end', iEnd), { botId: 'b1', chatKey: 'chat-1' });
+    // The same transitions bracket the run in the timeline ring.
+    const tl = await (await fetch(`http://127.0.0.1:${k.http.port}/api/timeline?bot=b1`)).json();
+    const kinds = tl.map((r) => r.kind);
+    assert.ok(kinds.includes('run_start') && kinds.includes('run_end'), `timeline brackets the run: ${JSON.stringify(kinds)}`);
+    assert.ok(kinds.indexOf('run_start') < kinds.indexOf('turn'), 'run_start row precedes the turn row');
+    assert.ok(kinds.indexOf('turn') < kinds.indexOf('run_end'), 'run_end row follows the turn row');
+  } finally { await conn.close(); }
+});

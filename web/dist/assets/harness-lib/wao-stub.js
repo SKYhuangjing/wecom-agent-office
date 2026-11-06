@@ -19,9 +19,13 @@ export function makeWAOStub(fakeData = {}) {
 
   // api(): deterministic fake responder. fakeData.api[path] may be a value or
   // a (body) => value function; returning a rejected promise exercises error
-  // states. Unknown paths reject — silence would hide a typo'd path.
+  // states. Lookup is exact-path first, then path-without-query — pages build
+  // real query strings (bot=/chat=/session=), and a faked page state should
+  // not have to enumerate every encoding of them. Unknown paths reject —
+  // silence would hide a typo'd path.
   const api = (path, body) => {
-    const stubbed = fakeData.api?.[path];
+    const table = fakeData.api ?? {};
+    const stubbed = table[path] ?? table[String(path).split('?')[0]];
     if (stubbed !== undefined) {
       return typeof stubbed === 'function' ? Promise.resolve().then(() => stubbed(body)) : Promise.resolve(stubbed);
     }

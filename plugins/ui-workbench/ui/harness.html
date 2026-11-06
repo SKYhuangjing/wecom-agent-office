@@ -1,13 +1,13 @@
 <!doctype html>
-<!-- ui-workbench harness (M3 T2 截图工作流, kernel-hosted same-origin):
-     ?page=workbench (default) renders 工作台, ?page=bots renders Bot 管理.
-     Swap fake-data.js entries for the state you want to screenshot (empty
-     list, offline bot with a reason, save-error state...), then:
+<!-- ui-workbench harness (M3 T2/T3 截图工作流, kernel-hosted same-origin):
+     ?page=workbench (default) renders 工作台; also bots / session / push /
+     plugins / timeline. Swap fake-data.js entries for the state you want to
+     screenshot (empty ledger, offline bot, failed plugin, push error...), then:
        chrome --headless=new --disable-gpu --screenshot=list-light.png \
          --window-size=1280,800 http://127.0.0.1:8792/api/ui/ui-workbench/harness.html
-       chrome ... --screenshot=bots-light.png \
-         http://127.0.0.1:8792/api/ui/ui-workbench/harness.html?page=bots
-     and again with --force-dark-mode for the dark pair. -->
+       chrome ... --screenshot=session-light.png \
+         http://127.0.0.1:8792/api/ui/ui-workbench/harness.html?page=session
+     and again with --force-dark-mode for the dark pair of each page. -->
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
@@ -21,9 +21,9 @@
   <script src="/vendor/react-dom.umd.js"></script>
   <script type="module">
     import { makeWAOStub } from '/assets/harness-lib/wao-stub.js';
-    import { FAKE, FAKE_API } from './fake-data.js';
-    const stub = makeWAOStub({ agents: FAKE.agents, api: FAKE_API });
-    const index = await import('./index.js'); // registers workbench + bots via the collector
+    import { FAKE, FAKE_API, FAKE_TIMELINE } from './fake-data.js';
+    const stub = makeWAOStub({ agents: FAKE.agents, timeline: FAKE_TIMELINE, api: FAKE_API });
+    const index = await import('./index.js'); // registers all six pages via the collector
     const wanted = new URLSearchParams(location.search).get('page');
     const page = [index.default, ...stub.pages].find((p) => p.id === wanted) ?? index.default;
     stub.render(page, document.getElementById('root'));

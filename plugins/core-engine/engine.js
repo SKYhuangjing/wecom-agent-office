@@ -319,6 +319,10 @@ export async function defaultRunTurn(bot, msg, ac) {
       sessionId: result?.sessionId || sessionId || '',
       ok: reason === 'completed', reason, tokens: null, cost: null,
     });
+    // UI bridge (§8 SSE ledger/turn): the row is durable — announce it right
+    // after the append so session/timeline pages can refetch immediately
+    // instead of waiting for the next poll.
+    engine.emit?.('ledger/turn', { botId: bot.id, chatKey, seq, reason });
     if (pendingSwitchBack != null && result != null) {
       // The runner really consumed the replayed delta: advance to exactly
       // what was delivered and flip `current` — rule 2's advance below then
@@ -837,7 +841,14 @@ export class Engine {
     this._runs.set(key, { ac, botId });
     if (!this._progress.has(botId)) this.setProgress(botId, null, 'run');
     // idle→working transition (this bot's first live run): one status frame.
-    if (!wasWorking) this.emit?.('agent/status', { botId, ...this._statusOf(botId) });
+    if (!wasWorking) {
+      this.emit?.('agent/status', { botId, ...this._statusOf(botId) });
+      // UI bridge (§8 SSE run/*): same transition, run-scoped frame. The
+      // timeline row marks the boundary in the local ring (kind run_start,
+      // DESIGN §3 closed kind set) so the timeline page shows run brackets.
+      this.emit?.('run/start', { botId, chatKey: key });
+      this.timeline?.push({ botId, chatKey: key, kind: 'run_start', text: '' });
+    }
   }
 
   // Compare-and-delete (invariant 3): remove the registration ONLY when the
@@ -852,6 +863,10 @@ export class Engine {
       this._progress.delete(run.botId); // bot's last live turn ended: no stale progress line
       // working→idle transition (the bot's last live turn settled).
       this.emit?.('agent/status', { botId: run.botId, ...this._statusOf(run.botId) });
+      // UI bridge (§8 SSE run/*): run-scoped counterpart of run/start; the
+      // timeline row closes the bracket in the local ring.
+      this.emit?.('run/end', { botId: run.botId, chatKey: key });
+      this.timeline?.push({ botId: run.botId, chatKey: key, kind: 'run_end', text: '' });
     }
   }
 

@@ -192,8 +192,8 @@ test('activateAll: failure isolation across import/validate/dependency-gate; sat
     log: s.log,
   });
   assert.deepEqual(res.active, [
-    { id: 'ok-core', type: 'core', version: '1.0.0', status: 'active' },
-    { id: 'ok-chan', type: 'channel', version: '1.0.0', status: 'active' },
+    { id: 'ok-core', name: null, type: 'core', version: '1.0.0', status: 'active' },
+    { id: 'ok-chan', name: null, type: 'channel', version: '1.0.0', status: 'active' },
   ]);
   const byId = Object.fromEntries(res.failed.map((f) => [f.id, f.error]));
   assert.match(byId['broken-import'], /^broken-import: import failed: /);
@@ -212,7 +212,7 @@ test('activateAll: duplicate id across dirs — first stays active, duplicate fa
   writePlugin(two, pluginJs("{ id: 'dup', type: 'core', version: '2.0.0' }"));
   const s = setup();
   const res = await activateAll({ dirs: [one, two], lifecycle: s.lifecycle, log: s.log });
-  assert.deepEqual(res.active, [{ id: 'dup', type: 'core', version: '1.0.0', status: 'active' }]);
+  assert.deepEqual(res.active, [{ id: 'dup', name: null, type: 'core', version: '1.0.0', status: 'active' }]);
   assert.equal(res.failed.length, 1);
   assert.equal(res.failed[0].id, 'dup');
   assert.match(res.failed[0].error, /already registered/);
@@ -230,7 +230,7 @@ test('activateAll: rewritten plugin.js with bumped mtime re-imports fresh across
   utimesSync(join(dir, 'plugin.js'), later, later);
   const s2 = setup();
   const res = await activateAll({ dirs: [dir], lifecycle: s2.lifecycle, log: s2.log });
-  assert.deepEqual(res.active, [{ id: 'p', type: 'core', version: '1.0.1', status: 'active' }]);
+  assert.deepEqual(res.active, [{ id: 'p', name: null, type: 'core', version: '1.0.1', status: 'active' }]);
 });
 
 test('activateAll: dependency cycle quarantines every member with an explicit error', async (t) => {
