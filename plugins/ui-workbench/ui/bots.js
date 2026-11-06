@@ -211,6 +211,7 @@ export default {
       editor = h(Wizard, {
         WAO, ports, existingIds: roster,
         onDone: () => { setSelected(null); void reload(); },
+        onCreated: () => { void reload(); }, // roster refreshes behind the success page
         onOpenFile: (id) => { void reload().then(() => setSelected(id)); },
       });
     } else if (draft == null) {

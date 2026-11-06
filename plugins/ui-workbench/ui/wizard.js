@@ -17,7 +17,7 @@ const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 
 const errorLines = (message) => String(message ?? '').split('; ').filter((s) => s.trim() !== '');
 
-export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile }) => {
+export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated }) => {
   const { h, useState } = WAO;
   ensurePageStyle();
   const [step, setStep] = useState(0);
@@ -82,6 +82,7 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile }) => {
         allowedUsers: allowed, provider: draft.provider, providerConfig: providerConfig.values,
       });
       setDone(resp?.bot ?? { ...draft });
+      onCreated?.(); // refresh the roster behind the success page
     } catch (err) {
       setSubmitErrors(errorLines(err?.message).length > 0 ? errorLines(err.message) : [String(err?.message ?? err)]);
     } finally {
