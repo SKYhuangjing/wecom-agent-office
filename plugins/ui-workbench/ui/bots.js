@@ -10,6 +10,10 @@ import { HANDOFF_KEY } from './list.js';
 
 const STATUS_LABEL = { working: '工作中', idle: '空闲', offline: '离线' };
 
+// Blind-review P2-2: name 上限 30 字（与服务端 validateBot 的 'name 太长（≤30 字）'
+// 同一条规则）；入口 maxlength 挡住超长输入，计数提示让上限可见。
+const NAME_MAX = 30;
+
 // The kernel joins validation errors with '; ' and api() surfaces exactly
 // that message — split it back into bullet lines for the inline error box.
 const errorLines = (message) => String(message ?? '').split('; ').filter((s) => s.trim() !== '');
@@ -238,9 +242,12 @@ export default {
         h('div', { className: 'wb-field' },
           h('label', null, '名称', h('span', { className: 'wb-req' }, ' *')),
           h('input', {
-            className: 'wb-input', value: draft.name, placeholder: '展示名，如「主号机器人」',
+            className: 'wb-input', value: draft.name, maxLength: NAME_MAX,
+            placeholder: '展示名，如「主号机器人」',
             onChange: (e) => setDraft({ ...draft, name: e.target.value }),
-          })),
+          }),
+          h('span', { className: `wb-counter${draft.name.length > NAME_MAX ? ' over' : ''}` },
+            `${draft.name.length} / ${NAME_MAX}`)),
         h('div', { className: 'wb-check' },
           h('input', {
             type: 'checkbox', checked: draft.enabled !== false,

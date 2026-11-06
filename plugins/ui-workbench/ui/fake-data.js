@@ -43,7 +43,9 @@ export const FAKE_SESSION = {
     { user: '再试一次，只跑受影响的用例', assistant: '正在定位受影响用例……（超时前部分输出）', at: minAgo(90) },
   ],
   truncated: true,
-  warnings: [],
+  // 盲评 P2-1 基线：provider 的原生英文警告（session file not found: <绝对路径>），
+  // 页面渲染时应映射成人话（只保留文件名）。
+  warnings: ['session file not found: /Users/sky/work/main/.dsh/sessions/rollout-2026-11-05-no-such-session.jsonl'],
 };
 
 export const FAKE_PLUGINS = [
@@ -85,6 +87,13 @@ export const FAKE = {
       progress: null, todayTurns: 0, users: 0, chats: 0,
       reason: 'provider claude 已禁用（插件停用或加载失败）',
     },
+    {
+      // 盲评 P2-4 基线：已停用 + provider 插件（codex，见 FAKE_PLUGINS）已停用的
+      // bot——无离线 reason，卡片靠 providerMissing 橙点给出信号。
+      id: 'bot-3', name: '归档机器人', enabled: false, status: 'offline',
+      provider: 'codex', channel: 'wecom', providerMissing: true,
+      progress: null, todayTurns: 0, users: 0, chats: 0, reason: null,
+    },
   ],
   bots: [
     {
@@ -98,6 +107,12 @@ export const FAKE = {
       account: { botId: '1000003' },
       provider: 'claude',
       providerConfig: { cwd: '/Users/sky/work/bot2', progressCoT: true },
+    },
+    {
+      id: 'bot-3', name: '归档机器人', enabled: false, channel: 'wecom',
+      account: { botId: '1000004' },
+      provider: 'codex',
+      providerConfig: { cwd: '/Users/sky/work/bot3' },
     },
   ],
   ports: {
@@ -194,6 +209,7 @@ export const FAKE_API = {
   // —— T3 pages ————————————————————————————————————————————————
   '/api/ledger?bot=main-bot': FAKE_LEDGER,
   '/api/ledger?bot=bot-2': [],
+  '/api/ledger?bot=bot-3': [],
   '/api/session?bot=main-bot&session=sess-a1b2c3d4': FAKE_SESSION,
   '/api/send': () => ({ ok: true }),
   '/api/plugins': { plugins: FAKE_PLUGINS },

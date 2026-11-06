@@ -86,6 +86,9 @@ export function validateBot(bot, { channels, providers } = {}) {
   const errors = [];
   if (typeof bot.id !== 'string' || bot.id === '') errors.push('id is required');
   if (typeof bot.name !== 'string' || bot.name === '') errors.push('name is required');
+  // Blind-review P2-2: the editor caps name at 30 chars, but the API is the
+  // authority — a curl'd 31-char name is rejected, not silently stored.
+  else if (bot.name.length > 30) errors.push('name 太长（≤30 字）');
   const channel = lookup(channels, bot.channel);
   if (channel == null) errors.push(`unknown channel: ${JSON.stringify(bot.channel ?? null)}`);
   const provider = lookup(providers, bot.provider);

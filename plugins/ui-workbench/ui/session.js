@@ -5,10 +5,22 @@
 // reachable by typing a sessionId or clicking one on a ledger turn. Export
 // hands the whole bot ledger to the browser as Markdown (GET /api/export).
 import { ensurePageStyle } from './style.js';
+import { bannerText } from './list.js';
 
 const REASON_LABEL = { completed: '完成', interrupted: '被打断', timeout: '超时', error: '错误' };
 
 const fmtTime = (at) => (Number.isFinite(at) && at > 0 ? new Date(at).toLocaleString('zh-CN', { hour12: false }) : '—');
+
+// P2-1: providers report a missing session file as the raw English string
+// `session file not found: <绝对路径>` — map it to operator copy keeping only
+// the file NAME (the full path is machine detail). Unknown warnings pass
+// through verbatim, never swallowed.
+const humanizeWarning = (w) => {
+  const m = /^session file not found: (.*)$/.exec(String(w));
+  if (m == null) return String(w);
+  const name = m[1].split(/[\\/]/).filter(Boolean).pop() ?? m[1];
+  return `本地会话文件不存在（可能已被清理或在其他机器产生）：${name}`;
+};
 
 // Distinct chats from the bot's rows, most recent activity first — the
 // selection source for both this page and the push page's chatKey picker.
@@ -142,7 +154,7 @@ export default {
     if (agentsError != null) {
       return h('div', { className: 'page' },
         h('h2', null, '会话'),
-        h('div', { className: 'error' }, `加载机器人列表失败：${agentsError}`));
+        h('div', { className: 'error' }, bannerText('加载机器人列表失败：', agentsError)));
     }
     if (agents.length === 0) {
       return h('div', { className: 'page' },
@@ -192,7 +204,7 @@ export default {
         nativeError != null ? h('div', { className: 'error', style: { marginTop: 12 } }, `读取原生会话失败：${nativeError}`) : null,
         native != null ? h('div', { className: 'wb-turns' },
           native.truncated ? h('div', { className: 'wb-truncated-note' }, '会话较长，仅显示最近部分轮次。') : null,
-          native.warnings.map((w, i) => h('div', { key: i, className: 'wb-truncated-note' }, `警告：${w}`)),
+          native.warnings.map((w, i) => h('div', { key: i, className: 'wb-truncated-note' }, `警告：${humanizeWarning(w)}`)),
           native.turns.length === 0 && native.warnings.length === 0
             ? h('div', { className: 'wb-empty' }, h('p', null, '该会话没有可读的轮次记录。'))
             : native.turns.map(nativeTurn)) : null);

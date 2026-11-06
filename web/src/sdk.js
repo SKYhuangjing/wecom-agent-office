@@ -51,10 +51,33 @@ const subscribers = new Set(); // { match(name), cb(name, data) }
 let source = null;
 let connectRef = 0;
 
+// —— 停服盲窗 (blind-review P2-3) ————————————————————————————————————————
+// While the server is DOWN, EventSource errors fire immediately but the 5s
+// poll's fetch may not have failed yet — that gap showed a stale, healthy-looking
+// page. Registered hooks (useAgents/useTimeline) get the disconnect copy the
+// moment the pipe drops; recovery needs no extra wiring: EventSource retries on
+// its own and the still-running 5s poll clears/heals the error on success.
+const DISCONNECT_TEXT = '连接已断开——后台每 5 秒自动重试';
+const disconnectSubs = new Set();
+const sseDown = () => {
+  for (const fn of [...disconnectSubs]) {
+    try { fn(); } catch { /* a broken page must not kill the pipe */ }
+  }
+};
+// useDisconnect(cb): SSE 管道断开时立刻回调（cb 只需置错误态，恢复交给轮询）。
+export function useDisconnect(cb) {
+  if (R == null) return;
+  R.useEffect(() => {
+    disconnectSubs.add(cb);
+    return () => disconnectSubs.delete(cb);
+  }, []);
+}
+
 const ensureSSE = () => {
   connectRef++;
   if (source != null) return;
   source = new EventSource('/api/events');
+  source.onerror = sseDown;
   const dispatch = (ev) => {
     let data = ev.data;
     try { data = JSON.parse(ev.data); } catch { /* forward raw */ }
@@ -112,6 +135,7 @@ export function useAgents() {
     return () => clearInterval(timer);
   }, [refresh]);
   useSSE(['agent/progress', 'agent/status', 'plugin/lifecycle'], refresh);
+  useDisconnect(() => setError(DISCONNECT_TEXT));
   return { agents, error };
 }
 
@@ -137,5 +161,6 @@ export function useTimeline(botId = null, windowMin = 30) {
     return () => clearInterval(timer);
   }, [refresh]);
   useSSE(['run/start', 'run/end', 'agent/progress'], refresh);
+  useDisconnect(() => setError(DISCONNECT_TEXT));
   return { rows, error };
 }

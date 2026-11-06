@@ -5,6 +5,7 @@
 // This page sends REAL messages: no dry-run, no confirmation shortcut.
 import { ensurePageStyle } from './style.js';
 import { chatsOf } from './session.js';
+import { bannerText } from './list.js';
 
 const MAX_CHARS = 4000;
 
@@ -69,7 +70,7 @@ export default {
     if (agentsError != null) {
       return h('div', { className: 'page' },
         h('h2', null, '推送'),
-        h('div', { className: 'error' }, `加载机器人列表失败：${agentsError}`));
+        h('div', { className: 'error' }, bannerText('加载机器人列表失败：', agentsError)));
     }
     if (agents.length === 0) {
       return h('div', { className: 'page' },

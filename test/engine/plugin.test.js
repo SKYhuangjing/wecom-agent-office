@@ -460,6 +460,24 @@ test('invalid bot records → 400 with field-level errors', async () => {
   assert.deepEqual(loadBots(join(dataDir, 'bots.json')).bots.map((b) => b.id), ['b1'], 'nothing invalid persisted');
 });
 
+// Blind-review P2-2: the editor caps name at 30 chars — the API enforces the
+// SAME rule (拒绝优于静默), on both create and rename.
+test('bot name over 30 chars → 400 with field error on POST and PATCH', async () => {
+  const long = '名'.repeat(31);
+  const resp = await post('/api/bots', { ...BOT_B1, id: 'namecap', name: long });
+  assert.equal(resp.status, 400);
+  const body = await resp.json();
+  assert.ok(body.errors.includes('name 太长（≤30 字）'), JSON.stringify(body.errors));
+  // rename to an oversized name is rejected too; the stored name is untouched
+  const p = await patch('/api/bots/b1', { name: long });
+  assert.equal(p.status, 400);
+  assert.match((await p.json()).error, /name 太长/);
+  assert.equal(loadBots(join(dataDir, 'bots.json')).bots[0].name, '一号机器人');
+  // boundary: exactly 30 chars passes (and is cleaned up right away)
+  assert.equal((await post('/api/bots', { ...BOT_B1, id: 'namecap30', name: '字'.repeat(30) })).status, 200);
+  assert.equal((await fetch(url('/api/bots/namecap30'), { method: 'DELETE' })).status, 200);
+});
+
 test('reconcile: provider disabled via plugins.json + reload → bot offline with reason; re-enable → back', async () => {
   // The kernel-native POST /api/plugins/:id/disable does not exist yet (DESIGN
   // §8, later milestone); the four-phase reload through the enable table is
@@ -501,6 +519,29 @@ test('reconcile (direct): plugin/lifecycle with a changed port registry detaches
   agents = await agentsOf();
   assert.equal(agents[0].status, 'idle');
   assert.equal(agents[0].reason, null);
+});
+
+// Blind-review P2-4: a DISABLED bot whose provider plugin vanished has no
+// offline reason (never attached) — /api/agents must still flag the missing
+// port so the list card can hint「provider 已不存在（插件被停用）」.
+test('agents carry providerMissing when the provider/channel port is gone; healthy bots say false', async () => {
+  assert.equal((await agentsOf())[0].providerMissing, false, 'healthy bot: no missing-port flag');
+  assert.equal((await post('/api/bots/b1/toggle')).status, 200); // disable → the P2 blind spot
+  const reg = kernel.portRegistry;
+  const entry = reg.provider.get('fakeprov');
+  reg.provider.delete('fakeprov');
+  kernel.events.emit('plugin/lifecycle', {});
+  let agents = await agentsOf();
+  assert.equal(agents[0].enabled, false);
+  assert.equal(agents[0].providerMissing, true, 'disabled bot with a vanished provider is flagged');
+
+  reg.provider.set('fakeprov', entry);
+  kernel.events.emit('plugin/lifecycle', {});
+  assert.equal((await post('/api/bots/b1/toggle')).status, 200); // restore enabled + attached
+  agents = await agentsOf();
+  assert.equal(agents[0].enabled, true);
+  assert.equal(agents[0].status, 'idle');
+  assert.equal(agents[0].providerMissing, false);
 });
 
 test('end-to-end message through the engine service feeds ledger/export/timeline/agents + /api/send', async () => {

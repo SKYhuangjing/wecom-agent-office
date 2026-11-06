@@ -14,6 +14,8 @@ const CSS = `
 .wb-sub { color: var(--muted); font-size: 12px; }
 .wb-progress { color: var(--muted); font-size: 13px; min-height: 20px; overflow-wrap: anywhere; }
 .wb-reason { color: var(--bad); font-size: 12px; overflow-wrap: anywhere; }
+/* P2-4: provider/channel 端口已消失的 bot 卡片角标（title 说明原因） */
+.wb-dot-warn { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--warn); }
 .wb-stats {
   display: flex; gap: 18px; font-size: 13px; color: var(--muted);
   border-top: 1px dashed var(--line); padding-top: 8px;

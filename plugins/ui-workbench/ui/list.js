@@ -10,6 +10,12 @@ const STATUS_LABEL = { working: '工作中', idle: '空闲', offline: '离线' }
 // {action, id} here before flipping the hash; the bots page consumes it once.
 export const HANDOFF_KEY = 'wao-workbench-handoff';
 
+// P2-3: the SDK's SSE-disconnect error is a complete sentence
+// （连接已断开——后台每 5 秒自动重试）— it must not get a「加载 X 失败」prefix
+// on top. Request failures keep the prefixed「加载 X 失败：<原因>」shape.
+export const bannerText = (prefix, error) =>
+  (String(error ?? '').startsWith('连接已断开') ? String(error) : `${prefix}${error}`);
+
 export const goBots = (action, id) => {
   try {
     sessionStorage.setItem(HANDOFF_KEY, JSON.stringify({ action, id }));
@@ -38,7 +44,7 @@ const WorkbenchInner = ({ WAO, retry }) => {
   if (error != null) {
     return h('div', { className: 'page' },
       h('h2', null, '工作台'),
-      h('div', { className: 'error' }, `加载机器人列表失败：${error}`),
+      h('div', { className: 'error' }, bannerText('加载机器人列表失败：', error)),
       h('div', { className: 'wb-toolbar' },
         h('button', { className: 'wb-btn wb-btn-primary', onClick: retry }, '重试'),
         h('span', { className: 'wb-hint' }, '后台仍会每 5 秒自动重试')),
@@ -73,6 +79,12 @@ const WorkbenchInner = ({ WAO, retry }) => {
               h('div', { className: 'wb-name' }, a.name ?? a.id),
               h('div', { className: 'wb-sub' }, `${a.provider ?? '?'} · ${a.channel ?? '?'} · ${a.id}`)),
             badge,
+            // P2-4: enabled bots already carry an offline reason, but a DISABLED
+            // bot whose provider/channel plugin vanished had no signal at all —
+            // the orange dot names it (title) beyond the gray 已停用 state.
+            a.providerMissing === true ? h('span', {
+              className: 'wb-dot-warn', title: 'provider 已不存在（插件被停用）',
+            }) : null,
             h('label', {
               className: 'wb-switch',
               title: a.enabled === false ? '已停用——点击启用（保存后立即连接）' : '已启用——点击停用（在跑任务补完终帧后断开）',

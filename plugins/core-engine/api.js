@@ -189,6 +189,12 @@ async function agentsHandler({ res, state }) {
     let chan = null;
     try { chan = typeof adapter?.status === 'function' ? adapter.status() : null; } catch { chan = null; }
     const chanStopped = chan?.state === 'stopped';
+    // Blind-review P2-4: enabled bots get an offline reason when a port
+    // vanishes, but a DISABLED bot was never attached — no reason, no signal.
+    // Flag the missing provider/channel port so the list card can hint it
+    // beyond the gray 已停用 state (the plugin was likely disabled).
+    const providerMissing = state.ports?.getProvider?.(bot.provider) == null
+      || state.ports?.getChannel?.(bot.channel) == null;
     return {
       id: bot.id, name: bot.name, enabled: bot.enabled !== false,
       provider: bot.provider, channel: bot.channel,
@@ -197,6 +203,7 @@ async function agentsHandler({ res, state }) {
       todayTurns, users, chats, turns: rows.length,
       reason: state.offlineReason(bot.id) ?? (chanStopped ? (chan.lastError ?? 'channel stopped') : null),
       channelState: chan == null ? null : { state: chan.state ?? null, lastError: chan.lastError ?? null },
+      providerMissing,
     };
   });
   sendJson(res, 200, { agents });

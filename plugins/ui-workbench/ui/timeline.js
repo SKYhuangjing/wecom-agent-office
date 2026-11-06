@@ -4,6 +4,7 @@
 // coding (run_start 蓝 / step 灰 / tool 紫 / thinking 青 / turn 绿 / run_end
 // 蓝灰), the bot picker an 全部+per-bot choice, the window 5/15/30 minutes.
 import { ensurePageStyle } from './style.js';
+import { bannerText } from './list.js';
 
 const KIND_LABEL = { run_start: 'run 开始', step: '步骤', tool: '工具', thinking: '思考', turn: '轮次', run_end: 'run 结束' };
 const WINDOWS = [5, 15, 30]; // minutes
@@ -47,11 +48,12 @@ export default {
           onChange: (e) => setWindowMin(Number(e.target.value)),
         }, WINDOWS.map((w) => h('option', { key: w, value: String(w) }, `最近 ${w} 分钟`))),
         h('span', { className: 'wb-hint' }, `${rows.length} 条事件，每 5 秒自动刷新`)),
-      agentsError != null ? h('div', { className: 'error', style: { marginTop: 12 } }, `加载机器人列表失败：${agentsError}`) : null,
-      error != null ? h('div', { className: 'error', style: { marginTop: 12 } }, `加载时间线失败：${error}`) : null,
+      agentsError != null ? h('div', { className: 'error', style: { marginTop: 12 } }, bannerText('加载机器人列表失败：', agentsError)) : null,
+      error != null ? h('div', { className: 'error', style: { marginTop: 12 } }, bannerText('加载时间线失败：', error)) : null,
       newestFirst.length === 0 && error == null
         ? h('div', { className: 'wb-empty' },
-            h('p', null, '窗口内暂无事件——机器人空闲，或最近的活动已超出所选时间窗。'))
+            h('p', null, '窗口内暂无事件——机器人空闲，或最近的活动已超出所选时间窗。'),
+            h('p', null, '重启后时间线从零开始（内存环形缓冲）——历史轮次请看台账。'))
         : h('ul', { className: 'wb-tl' }, newestFirst.map((r, i) => h('li', {
             key: `${r.at}-${i}`,
             className: 'wb-tl-row',
