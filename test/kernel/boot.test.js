@@ -242,6 +242,12 @@ test('EADDRINUSE boot rejects with the second-instance message and releases its 
 test('stop() resolves within the close timeout when a client is wedged mid-request', { timeout: 8000 }, async () => {
   const k = await start(dataDirWith(null), [emptyPluginsDir()]);
   const sock = net.connect({ port: k.http.port, host: '127.0.0.1' });
+  // forceClose() destroys the server side mid-request: depending on whether the
+  // kernel still had the partial write buffered, the client sees FIN or RST —
+  // and events.once(sock, 'close') REJECTS on a preceding 'error' (ECONNRESET).
+  // Observe the error and wait for 'close' with plain-listener semantics, which
+  // fire in both the FIN and RST paths.
+  sock.on('error', () => {});
   await once(sock, 'connect');
   // Incomplete request (no blank line): the server keeps waiting for headers,
   // so the socket stays non-idle and an unbounded server.close() would hang.
@@ -249,10 +255,10 @@ test('stop() resolves within the close timeout when a client is wedged mid-reque
   const began = Date.now();
   await assert.doesNotReject(k.stop({ closeTimeoutMs: 300 }));
   assert.ok(Date.now() - began < 4000, 'stop resolves via the bounded close, not by hanging');
-  const closed = await Promise.race([
-    once(sock, 'close').then(() => true),
-    new Promise((r) => setTimeout(() => r(false), 1000)),
-  ]);
+  const closed = await new Promise((resolve) => {
+    sock.once('close', () => resolve(true));
+    setTimeout(() => resolve(false), 1000);
+  });
   assert.equal(closed, true, 'the wedged connection is destroyed once the timeout fires');
 });
 
