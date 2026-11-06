@@ -19,7 +19,7 @@ import { Timeline } from './timeline.js';
 import { createProgressor } from './progressor.js';
 import { maskOutbound } from './middleware.js';
 import { loadBots, revalidateAll, validateBot } from './bots.js';
-import { createApi } from './api.js';
+import { companyOps, createApi } from './api.js';
 
 const isBotRecord = (bot) => bot != null && typeof bot === 'object' && typeof bot.id === 'string' && bot.id !== '';
 
@@ -253,5 +253,11 @@ export default {
       get doc() { return doc; },
     };
     ctx.http.register({ prefix: '/api', handler: createApi({ getState: () => state }) });
+    // Company operations for the mcp-gateway plugin (W1 T2): the same api.js
+    // functions the /api routes call, brokered through the service container
+    // (no plugin-to-plugin imports, no HTTP self-calls). Null at teardown —
+    // the container has no unregister, same pattern as the 'engine' stub.
+    services.register('companyOps', companyOps(state));
+    ctx.effect(() => { services.register('companyOps', null); });
   },
 };

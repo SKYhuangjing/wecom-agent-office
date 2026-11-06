@@ -27,6 +27,7 @@ const BODY_LIMIT_BYTES = 256 * 1024;
 const PARSE_ERROR = -32700;
 const INVALID_REQUEST = -32600;
 const METHOD_NOT_FOUND = -32601;
+const INVALID_PARAMS = -32602;
 const INTERNAL_ERROR = -32603;
 const SESSION_REQUIRED = -32002;
 
@@ -169,7 +170,20 @@ export function createMcpHandler({ version, listTools = () => [], callTool = nul
       }
       if (msg.method === 'tools/call') {
         if (callTool == null) return rpcError(res, msg.id, METHOD_NOT_FOUND, 'tools/call is not implemented yet (tool surface arrives with T2)');
-        return rpcResult(res, msg.id, await callTool(msg.params ?? {}), echo);
+        let result;
+        try {
+          result = await callTool(msg.params ?? {});
+        } catch (err) {
+          // Tool-LAYER protocol failures (unknown tool name, unshaped params)
+          // carry their own JSON-RPC code; everything else stays the generic
+          // internal error. Business failures never land here — the tool
+          // surface reports those as isError results so Agents can read them.
+          if (Number.isInteger(err?.jsonRpcCode)) {
+            return rpcError(res, msg.id, err.jsonRpcCode, err?.message ?? 'invalid params', echo);
+          }
+          throw err;
+        }
+        return rpcResult(res, msg.id, result, echo);
       }
       return rpcError(res, msg.id, METHOD_NOT_FOUND, `unknown method: ${msg.method}`);
     } catch (err) {

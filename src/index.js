@@ -281,14 +281,13 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
       if (m == null) return json(res, 404, { error: 'not found' });
       let id = m[1];
       try { id = decodeURIComponent(id); } catch { /* keep raw */ }
-      if (!knownPluginIds.has(id)) return json(res, 404, { error: `unknown plugin: ${id}` });
-      const file = join(dir, 'plugins.json');
-      const doc = readJson(file) ?? {};
-      const plugins = { ...((doc != null && typeof doc === 'object' && !Array.isArray(doc)) ? doc.plugins : {}) };
-      plugins[id] = { ...plugins[id], enabled: m[2] === 'enable' };
-      writeJson(file, { ...(doc ?? {}), plugins });
       // Reload chains with any in-flight one; the response carries the NEW list.
-      return reload().then(() => json(res, 200, { ok: true, plugins: pluginList() }));
+      return setPluginEnabled(id, m[2] === 'enable')
+        .then((plugins) => json(res, 200, { ok: true, plugins }))
+        .catch((err) => {
+          if (err?.status === 404) return json(res, 404, { error: err.message });
+          throw err; // shell-attributed 500, unchanged
+        });
     },
   });
 
@@ -312,6 +311,33 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
     reloadChain = link.then(() => {}, () => {});
     return link;
   };
+
+  // Plugin enable/disable as ONE operation (W1 T2): flips the enable table in
+  // plugins.json (atomic read-modify-write, other options preserved) and
+  // drives the four-phase reload. Both the kernel-native /api/plugins/:id
+  // route and the mcp-gateway department_toggle tool call this same function
+  // — no duplicated logic, no HTTP self-calls. Unknown plugin → status-404
+  // error (the route turns it into its historical 404 shape).
+  const setPluginEnabled = async (id, enabled) => {
+    if (!knownPluginIds.has(id)) {
+      const err = new Error(`unknown plugin: ${id}`);
+      err.status = 404;
+      throw err;
+    }
+    const file = join(dir, 'plugins.json');
+    const doc = readJson(file) ?? {};
+    const plugins = { ...((doc != null && typeof doc === 'object' && !Array.isArray(doc)) ? doc.plugins : {}) };
+    plugins[id] = { ...plugins[id], enabled };
+    writeJson(file, { ...(doc ?? {}), plugins });
+    await reload();
+    return pluginList();
+  };
+
+  // Kernel operations published to plugins through the service container
+  // (same broker as 'ports'/'paths', W1 T2): mcp-gateway's list_departments /
+  // department_toggle / company_state tools consume these. Read per call by
+  // the consumer, so a reload's fresh closures are always current.
+  services.register('kernelOps', { plugins: pluginList, setPluginEnabled, uptimeSec });
 
   let stopped = false;
   const stop = async ({ closeTimeoutMs = 5000 } = {}) => {

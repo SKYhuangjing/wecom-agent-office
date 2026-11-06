@@ -221,44 +221,71 @@ const drainBotOf = async (state, botId) => {
 
 // —— route handlers ({ req, res, m, searchParams, state }) ——————————————————
 
-async function agentsHandler({ res, state }) {
+// —— 公司操作层（W1 T2 refactor）—————————————————————————————————————
+// Every HTTP handler's business core lives in a *Op function taking plain
+// inputs and returning the exact response body (throwing httpError shapes
+// for failures). The HTTP handlers below are thin: parse req → call op →
+// sendJson. companyOps(state) publishes the SAME operations (plus sanitize
+// and the read-only botDetail aggregate) for the mcp-gateway plugin through
+// the services container — one source of company logic, two faces (REST and
+// MCP tools), zero HTTP self-calls. HTTP behavior is byte-identical: same
+// bodies, same error statuses/messages, same ordering.
+
+// One roster row — shared by GET /api/agents, companyOps.agents and the
+// get_employee tool aggregate (single extraction point so the three cannot
+// drift).
+function botRow(state, bot) {
   const midnight = new Date();
   midnight.setHours(0, 0, 0, 0);
-  const agents = state.doc.bots.filter(isObject).map((bot) => {
-    const st = state.engine.status(bot.id);
-    const rows = state.ledgerFor(bot.id).ledger.turns();
-    const todayTurns = rows.filter((r) => (r.at ?? 0) >= midnight.getTime()).length;
-    const users = new Set(rows.map((r) => r.userid).filter(Boolean)).size;
-    const chats = new Set(rows.map((r) => r.chatKey).filter(Boolean)).size;
-    // 连接态 (§8): a terminal 'stopped' adapter (subscribe 鉴权失败, kicked)
-    // means the bot cannot receive — report offline with the adapter's
-    // lastError as the reason (DESIGN §4 凭证错误快速失败: bot 标 error).
-    const adapter = state.adapterFor(bot.id);
-    let chan = null;
-    try { chan = typeof adapter?.status === 'function' ? adapter.status() : null; } catch { chan = null; }
-    const chanStopped = chan?.state === 'stopped';
-    // Blind-review P2-4: enabled bots get an offline reason when a port
-    // vanishes, but a DISABLED bot was never attached — no reason, no signal.
-    // Flag the missing provider/channel port so the list card can hint it
-    // beyond the gray 已停用 state (the plugin was likely disabled).
-    const providerMissing = state.ports?.getProvider?.(bot.provider) == null
-      || state.ports?.getChannel?.(bot.channel) == null;
-    return {
-      id: bot.id, name: bot.name, enabled: bot.enabled !== false,
-      provider: bot.provider, channel: bot.channel,
-      status: st.status === 'offline' || chanStopped ? 'offline' : st.status,
-      running: st.running, progress: st.progress,
-      todayTurns, users, chats, turns: rows.length,
-      reason: state.offlineReason(bot.id) ?? (chanStopped ? (chan.lastError ?? 'channel stopped') : null),
-      channelState: chan == null ? null : { state: chan.state ?? null, lastError: chan.lastError ?? null },
-      providerMissing,
-    };
-  });
-  sendJson(res, 200, { agents });
+  const st = state.engine.status(bot.id);
+  const rows = state.ledgerFor(bot.id).ledger.turns();
+  const todayTurns = rows.filter((r) => (r.at ?? 0) >= midnight.getTime()).length;
+  const users = new Set(rows.map((r) => r.userid).filter(Boolean)).size;
+  const chats = new Set(rows.map((r) => r.chatKey).filter(Boolean)).size;
+  // 连接态 (§8): a terminal 'stopped' adapter (subscribe 鉴权失败, kicked)
+  // means the bot cannot receive — report offline with the adapter's
+  // lastError as the reason (DESIGN §4 凭证错误快速失败: bot 标 error).
+  const adapter = state.adapterFor(bot.id);
+  let chan = null;
+  try { chan = typeof adapter?.status === 'function' ? adapter.status() : null; } catch { chan = null; }
+  const chanStopped = chan?.state === 'stopped';
+  // Blind-review P2-4: enabled bots get an offline reason when a port
+  // vanishes, but a DISABLED bot was never attached — no reason, no signal.
+  // Flag the missing provider/channel port so the list card can hint it
+  // beyond the gray 已停用 state (the plugin was likely disabled).
+  const providerMissing = state.ports?.getProvider?.(bot.provider) == null
+    || state.ports?.getChannel?.(bot.channel) == null;
+  return {
+    id: bot.id, name: bot.name, enabled: bot.enabled !== false,
+    provider: bot.provider, channel: bot.channel,
+    status: st.status === 'offline' || chanStopped ? 'offline' : st.status,
+    running: st.running, progress: st.progress,
+    todayTurns, users, chats, turns: rows.length,
+    reason: state.offlineReason(bot.id) ?? (chanStopped ? (chan.lastError ?? 'channel stopped') : null),
+    channelState: chan == null ? null : { state: chan.state ?? null, lastError: chan.lastError ?? null },
+    providerMissing,
+  };
 }
 
-async function createBotHandler({ req, res, state }) {
-  const bot = await readBody(req);
+function agentsOp(state) {
+  return { agents: state.doc.bots.filter(isObject).map((bot) => botRow(state, bot)) };
+}
+
+// Read-only single-bot aggregate for the MCP get_employee tool (no HTTP
+// route): the roster row PLUS the masked full record and the 入职 stamp.
+// maskedBotEcho keeps object-typed credential-shaped values as '__MASKED__'
+// and sendJson-side sanitize semantics are applied by callers that serialize.
+function botDetailOp(state, id) {
+  const bot = findBot(state, id);
+  if (bot == null) throw httpError(404, 'bot not found');
+  return { bot: maskedBotEcho(state, bot), ...botRow(state, bot), createdAt: bot.createdAt ?? null };
+}
+
+async function agentsHandler({ res, state }) {
+  sendJson(res, 200, agentsOp(state));
+}
+
+async function createBotOp(state, bot) {
   if (!isObject(bot)) throw httpError(400, 'bot record must be a JSON object');
   if (typeof bot.id === 'string' && state.doc.bots.some((b) => isObject(b) && b.id === bot.id)) {
     throw httpError(400, `bot id already exists: ${bot.id}`);
@@ -273,13 +300,16 @@ async function createBotHandler({ req, res, state }) {
   state.doc.bots.push(bot);
   saveBots(state.botsFile, state.doc);
   if (bot.enabled !== false) state.attach(bot);
-  sendJson(res, 200, { bot: maskedBotEcho(state, bot) });
+  return { bot: maskedBotEcho(state, bot) };
 }
 
-async function patchBotHandler({ req, res, m, state }) {
-  const bot = findBot(state, idOf(m));
+async function createBotHandler({ req, res, state }) {
+  sendJson(res, 200, await createBotOp(state, await readBody(req)));
+}
+
+async function patchBotOp(state, id, patchBody) {
+  const bot = findBot(state, id);
   if (bot == null) throw httpError(404, 'bot not found');
-  const patchBody = await readBody(req);
   if (!isObject(patchBody)) throw httpError(400, 'patch body must be a JSON object');
   // createdAt is registry truth (mirrors createBotHandler's refusal): a patch
   // body carrying it is rejected, never silently merged into the 工牌.
@@ -311,11 +341,17 @@ async function patchBotHandler({ req, res, m, state }) {
     state.detach(bot.id, 're-attach after update');
     state.attach(bot);
   }
-  sendJson(res, 200, { bot: maskedBotEcho(state, bot) });
+  return { bot: maskedBotEcho(state, bot) };
 }
 
-async function deleteBotHandler({ res, m, state }) {
-  const bot = findBot(state, idOf(m));
+async function patchBotHandler({ req, res, m, state }) {
+  const id = idOf(m);
+  if (findBot(state, id) == null) throw httpError(404, 'bot not found'); // 404 wins over body-parse errors, as before
+  sendJson(res, 200, await patchBotOp(state, id, await readBody(req)));
+}
+
+async function deleteBotOp(state, id) {
+  const bot = findBot(state, id);
   if (bot == null) throw httpError(404, 'bot not found');
   await drainBotOf(state, bot.id); // §8: settle the bot's chain before the record (and adapter) go
   state.detach(bot.id, 'deleted');
@@ -333,11 +369,15 @@ async function deleteBotHandler({ res, m, state }) {
   }
   state.doc.bots.splice(state.doc.bots.indexOf(bot), 1);
   saveBots(state.botsFile, state.doc);
-  sendJson(res, 200, { ok: true });
+  return { ok: true };
 }
 
-async function toggleBotHandler({ res, m, state }) {
-  const bot = findBot(state, idOf(m));
+async function deleteBotHandler({ res, m, state }) {
+  sendJson(res, 200, await deleteBotOp(state, idOf(m)));
+}
+
+async function toggleBotOp(state, id) {
+  const bot = findBot(state, id);
   if (bot == null) throw httpError(404, 'bot not found');
   bot.enabled = bot.enabled === false; // absent = true (DESIGN §3 record shape)
   saveBots(state.botsFile, state.doc);
@@ -346,7 +386,11 @@ async function toggleBotHandler({ res, m, state }) {
     await drainBotOf(state, bot.id); // a disabled runtime waits out its chain first
     state.detach(bot.id, 'bot disabled');
   }
-  sendJson(res, 200, { bot: maskedBotEcho(state, bot) });
+  return { bot: maskedBotEcho(state, bot) };
+}
+
+async function toggleBotHandler({ res, m, state }) {
+  sendJson(res, 200, await toggleBotOp(state, idOf(m)));
 }
 
 // Registry view for the UI's schema-driven forms (M3 T2): which channels and
@@ -356,7 +400,7 @@ async function toggleBotHandler({ res, m, state }) {
 // port ids need not match their owning plugin's id (fake-shot registers
 // channel 'fakec'). Ports registry entries are {impl, owner} wrappers; a
 // bare-lifecycle test without ports yields empty lists, not a 500.
-async function portsHandler({ res, state }) {
+function portsOp(state) {
   const channels = [...(state.ports?.channel?.entries() ?? [])].map(([id, { impl, owner } = {}]) => ({
     id,
     owner: owner ?? null,
@@ -367,7 +411,11 @@ async function portsHandler({ res, state }) {
     owner: owner ?? null,
     configSchema: Array.isArray(impl?.configSchema) ? impl.configSchema : [],
   }));
-  sendJson(res, 200, { channels, providers });
+  return { channels, providers };
+}
+
+async function portsHandler({ res, state }) {
+  sendJson(res, 200, portsOp(state));
 }
 
 // Full bot records for the CRUD editor (M3 T2). sendJson's sanitize strips
@@ -377,8 +425,12 @@ async function portsHandler({ res, state }) {
 // object-typed fields the echo additionally MASKS sensitive-looking string
 // values (maskedBotEcho): a hand-filled secret literal in env/model never
 // displays, and the '__MASKED__' round-trip PATCHes back as "unchanged".
+function listBotsOp(state) {
+  return { bots: state.doc.bots.filter(isObject).map((b) => maskedBotEcho(state, b)) };
+}
+
 async function listBotsHandler({ res, state }) {
-  sendJson(res, 200, { bots: state.doc.bots.filter(isObject).map((b) => maskedBotEcho(state, b)) });
+  sendJson(res, 200, listBotsOp(state));
 }
 
 // Probe run: the provider runner DIRECTLY — no channel, no engine chain, no
@@ -391,14 +443,13 @@ async function listBotsHandler({ res, state }) {
 // bot, not just watch a sessionId echo). A body is not required; absent/empty
 // sessionId keeps the historical fresh-probe contract (accept-m1.sh relies on
 // it) and absent/empty prompt keeps the default one.
-async function testBotHandler({ req, res, m, state }) {
-  const bot = findBot(state, idOf(m));
+async function testBotOp(state, id, reqBody) {
+  const bot = findBot(state, id);
   if (bot == null) throw httpError(404, 'bot not found');
   const port = state.ports?.getProvider?.(bot.provider);
   if (port == null || typeof port.createRunner !== 'function') {
     throw httpError(400, `provider ${bot.provider} unavailable`);
   }
-  const reqBody = await readBody(req);
   if (!isObject(reqBody)) throw httpError(400, 'test body must be a JSON object');
   let sessionId = null;
   if (reqBody.sessionId !== undefined && reqBody.sessionId !== null) {
@@ -448,15 +499,23 @@ async function testBotHandler({ req, res, m, state }) {
         : String(result?.error ?? 'run failed');
     } catch { body.errorText = String(result?.error ?? 'run failed'); }
   }
-  sendJson(res, 200, body);
+  return body;
+}
+
+async function testBotHandler({ req, res, m, state }) {
+  const id = idOf(m);
+  if (findBot(state, id) == null) throw httpError(404, 'bot not found'); // 404 wins over body errors, as before
+  sendJson(res, 200, await testBotOp(state, id, await readBody(req)));
+}
+
+function ledgerOp(state, { bot, chat }) {
+  if (bot == null || bot === '') throw httpError(400, 'bot is required');
+  if (findBot(state, bot) == null) throw httpError(404, 'bot not found');
+  return state.ledgerFor(bot).ledger.turns(chat ? { chatKey: chat } : {});
 }
 
 async function ledgerHandler({ res, searchParams, state }) {
-  const botId = searchParams.get('bot');
-  if (botId == null || botId === '') throw httpError(400, 'bot is required');
-  if (findBot(state, botId) == null) throw httpError(404, 'bot not found');
-  const chat = searchParams.get('chat');
-  sendJson(res, 200, state.ledgerFor(botId).ledger.turns(chat ? { chatKey: chat } : {}));
+  sendJson(res, 200, ledgerOp(state, { bot: searchParams.get('bot'), chat: searchParams.get('chat') }));
 }
 
 // Native session drill-down: readHistory lives on the RUNNER (provider port
@@ -494,25 +553,31 @@ async function exportHandler({ res, searchParams, state }) {
   res.end(rows.length > 0 ? `${md}\n` : '');
 }
 
-async function timelineHandler({ res, searchParams, state }) {
-  const bot = searchParams.get('bot') || undefined;
-  if (bot !== undefined && findBot(state, bot) == null) throw httpError(404, 'bot not found');
-  const windowParam = searchParams.get('window');
-  let windowMs;
-  if (windowParam != null && windowParam !== '') {
-    windowMs = Number(windowParam);
-    if (!Number.isFinite(windowMs) || windowMs < 0) throw httpError(400, 'window must be a non-negative number (ms)');
-  }
-  sendJson(res, 200, state.timeline.get({ botId: bot, windowMs }));
+function timelineOp(state, { bot, windowMs }) {
+  const botId = bot || undefined;
+  if (botId !== undefined && findBot(state, botId) == null) throw httpError(404, 'bot not found');
+  return state.timeline.get({ botId, windowMs });
 }
+
+async function timelineHandler({ res, searchParams, state }) {
+  sendJson(res, 200, timelineOp(state, { bot: searchParams.get('bot'), windowMs: windowOf(searchParams) }));
+}
+
+// window query param parsing (ms) — shared by the HTTP handler; the MCP tool
+// passes an already-numeric windowMs.
+const windowOf = (searchParams) => {
+  const windowParam = searchParams.get('window');
+  if (windowParam == null || windowParam === '') return undefined;
+  const windowMs = Number(windowParam);
+  if (!Number.isFinite(windowMs) || windowMs < 0) throw httpError(400, 'window must be a non-negative number (ms)');
+  return windowMs;
+};
 
 // Server-initiated push (§8). The chatRef handed to the adapter IS the raw
 // chatKey string — adapters parse their OWN addressing (channel port contract,
 // §4; T17 implements the wecom 'wecom:group:X' → {chatid,chatType} parse).
 // The engine/API never hardcode one channel's addressing scheme.
-async function sendHandler({ req, res, state }) {
-  const body = await readBody(req);
-  const { botId, chatKey, content } = isObject(body) ? body : {};
+async function sendOp(state, { botId, chatKey, content }) {
   if (typeof botId !== 'string' || botId === '') throw httpError(400, 'botId is required');
   if (typeof chatKey !== 'string' || chatKey === '') throw httpError(400, 'chatKey is required');
   if (typeof content !== 'string' || content === '') throw httpError(400, 'content is required');
@@ -520,7 +585,13 @@ async function sendHandler({ req, res, state }) {
   const adapter = state.adapterFor(botId);
   if (adapter == null || typeof adapter.push !== 'function') throw httpError(409, 'bot is offline');
   await adapter.push(chatKey, content);
-  sendJson(res, 200, { ok: true });
+  return { ok: true };
+}
+
+async function sendHandler({ req, res, state }) {
+  const body = await readBody(req);
+  const { botId, chatKey, content } = isObject(body) ? body : {};
+  sendJson(res, 200, await sendOp(state, { botId, chatKey, content }));
 }
 
 const ROUTES = [
@@ -538,6 +609,30 @@ const ROUTES = [
   ['GET', /^\/timeline$/, timelineHandler],
   ['POST', /^\/send$/, sendHandler],
 ];
+
+// companyOps(state) (W1 T2): the company operations the mcp-gateway plugin
+// consumes through the services container — the SAME functions the HTTP
+// routes above call, so REST and MCP tools can never drift. `sanitize` rides
+// along so the MCP face applies the identical §8 secret scrub sendJson does.
+// plugin.js registers the built object as the 'companyOps' service and nulls
+// it at teardown (the container has no unregister — same pattern as 'engine').
+export function companyOps(state) {
+  return {
+    sanitize,
+    agents: () => agentsOp(state),
+    botDetail: (id) => botDetailOp(state, id),
+    bots: () => listBotsOp(state),
+    ports: () => portsOp(state),
+    createBot: (bot) => createBotOp(state, bot),
+    patchBot: (id, patchBody) => patchBotOp(state, id, patchBody),
+    deleteBot: (id) => deleteBotOp(state, id),
+    toggleBot: (id) => toggleBotOp(state, id),
+    testBot: (id, body) => testBotOp(state, id, body),
+    ledger: ({ bot, chat }) => ledgerOp(state, { bot, chat }),
+    timeline: ({ bot, windowMs }) => timelineOp(state, { bot, windowMs }),
+    send: ({ botId, chatKey, content }) => sendOp(state, { botId, chatKey, content }),
+  };
+}
 
 // createApi({ getState }) → async http handler. getState is re-read on every
 // request: after a reload the plugin instance (doc, engine, adapters) is new,

@@ -85,12 +85,18 @@ test('initialize version negotiation: unknown client version gets the server val
   assert.equal(body.result.protocolVersion, '2025-06-18');
 });
 
-test('tools/list with session: empty roster shape + session header echoed', async () => {
+test('tools/list with session: full 13-tool roster shape + session header echoed', async () => {
   const { sessionId } = await initialize();
   const r = await rpc({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, { 'mcp-session-id': sessionId });
   assert.equal(r.status, 200);
   assert.equal(r.headers.get('mcp-session-id'), sessionId);
-  assert.deepEqual(r.body.result, { tools: [] });
+  const tools = r.body.result.tools;
+  assert.ok(Array.isArray(tools) && tools.length === 13, `13 tools shipped (T2), got ${tools?.length}`);
+  for (const t of tools) {
+    assert.equal(typeof t.name, 'string', 'tool name');
+    assert.equal(typeof t.description, 'string', 'tool description');
+    assert.equal(t.inputSchema.type, 'object', 'inputSchema is a JSON Schema object');
+  }
 });
 
 test('session gating: request without session → -32002; unknown session id → -32002', async () => {
@@ -106,17 +112,29 @@ test('session gating: request without session → -32002; unknown session id →
   assert.equal(unknown.body.error.code, -32002);
 });
 
-test('unknown method → -32601; tools/call before the T2 surface → -32601', async () => {
+test('unknown method → -32601; tools/call unknown tool → -32602 (T2 surface)', async () => {
   const { sessionId } = await initialize();
   const unknown = await rpc({ jsonrpc: '2.0', id: 5, method: 'resources/list' }, { 'mcp-session-id': sessionId });
   assert.equal(unknown.body.error.code, -32601);
   assert.equal(unknown.body.id, 5);
 
-  const call = await rpc(
-    { jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'list_employees', arguments: {} } },
+  // Unknown tool name is a PARAMS-level protocol error: -32602, not -32601.
+  const badTool = await rpc(
+    { jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'no_such_tool', arguments: {} } },
     { 'mcp-session-id': sessionId },
   );
-  assert.equal(call.body.error.code, -32601);
+  assert.equal(badTool.body.error.code, -32602);
+  assert.equal(badTool.body.id, 6);
+
+  // A KNOWN tool still answers as a result even when the engine behind it is
+  // absent (this boot loads only mcp-gateway): isError result, HTTP 200.
+  const noEngine = await rpc(
+    { jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'list_employees', arguments: {} } },
+    { 'mcp-session-id': sessionId },
+  );
+  assert.equal(noEngine.body.error, undefined, 'business failure stays inside the result');
+  assert.equal(noEngine.body.result.isError, true);
+  assert.match(noEngine.body.result.content[0].text, /不可用/);
 });
 
 test('protocol errors ride HTTP 200: bad JSON -32700, shape violations -32600', async () => {
@@ -230,7 +248,7 @@ test('two concurrent sessions stay isolated: distinct ids, each echoes its own',
 
   const viaA = await rpc({ jsonrpc: '2.0', id: 10, method: 'tools/list' }, { 'mcp-session-id': a.sessionId });
   assert.equal(viaA.headers.get('mcp-session-id'), a.sessionId);
-  assert.deepEqual(viaA.body.result, { tools: [] });
+  assert.equal(viaA.body.result.tools.length, 13);
 
   const viaB = await rpc({ jsonrpc: '2.0', id: 11, method: 'tools/list' }, { 'mcp-session-id': b.sessionId });
   assert.equal(viaB.headers.get('mcp-session-id'), b.sessionId);
