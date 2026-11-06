@@ -14,7 +14,7 @@
 //
 // Page contract: no build, no JSX, SDK from window.WAO; imports stay inside
 // this ui/ directory. Harness params: ?dim=2d, ?phase=day|dawn|dusk|night.
-import { OfScene, buildNav, ofShade, ofMix, ofSeed, ofHue } from './ofscene.js';
+import { OfScene, buildNav, ofShade, ofMix, ofSeed, ofHue, PHASE_LOCK_MID } from './ofscene.js';
 
 // —— layout (ported coordinates — proven collision-free) —————————————————
 const ROOM = { W: 16, D: 12, WALL: 3.1 };
@@ -231,9 +231,8 @@ export class OfficeScene extends OfScene {
   }
   paintSunMoon(ph) {
     const g = this.g;
-    const c = this.phaseLock != null
-      ? { night: 0.95, dawn: 0.23, day: 0.51, dusk: 0.79 }[this.phaseLock]
-      : this.clock;
+    // same clock phaseInfo() reports — read the engine's table, never a copy
+    const c = this.phaseLock != null ? PHASE_LOCK_MID[this.phaseLock] : this.clock;
     const dayness = ph.phase === 'day' ? 1 : ph.phase === 'night' ? 0 : 0.5;
     if (dayness > 0.15) { // sun rides an arc across the day band
       const t = Math.min(1, Math.max(0, (c - 0.25) / 0.5));
@@ -390,7 +389,7 @@ export class OfficeScene extends OfScene {
       const s = this.surf();
       for (let i = 0; i < 2; i++) {
         const x = 2.5 + i * 1.2;
-        this.sofaUnit(x, 11.35, 1.2, 0.35, 10.55, 0.8, 'n', s);
+        this.sofaUnit(x, 11.35, 1.2, 0.35, x, 10.55, 'n', s);
       }
       this.seatedWorkers(1);
     });
@@ -427,15 +426,15 @@ export class OfficeScene extends OfScene {
     }
     return out;
   }
-  sofaUnit(x, y, w, d, bx, by, face, s) {
-    // backrest + seat + armrest trio (repainted from the port's sofa boxes)
-    if (face === 'e') {
-      this.box(x, y, 0, w, d, 0.95, s.sofaArm); // outer shell/back
-      this.box(x + w * 0.42, by, 0, w * 0.58, d, 0.42, s.sofaSeat); // seat cushion
-    } else {
-      this.box(x, y, 0, w, d, 0.95, s.sofaArm);
-      this.box(x, by, 0, w, d * 0.5, 0.42, s.sofaSeat);
-    }
+  // One sofa unit = backrest shell + seat cushion. (x,y,w,d) is the
+  // backrest rect; (cx,cy) is the cushion origin — the cushion extends 0.8
+  // toward the sitter from it (v1 geometry: south cushions sit at y=10.55 in
+  // front of the y=11.35 backrest; west cushions at x=0.7 east of the x=0.35
+  // backrest). Params were originally mis-wired (dead bx/by) — T4 review fix.
+  sofaUnit(x, y, w, d, cx, cy, face, s) {
+    this.box(x, y, 0, w, d, 0.95, s.sofaArm); // backrest against the wall
+    if (face === 'e') this.box(cx, cy, 0, 0.8, d, 0.42, s.sofaSeat);
+    else this.box(cx, cy, 0, w, 0.8, 0.42, s.sofaSeat);
   }
   sofaSlot(w) {
     if (w.kind === 'act' && w.slot >= ACTS.length) return w.slot - ACTS.length;
@@ -1103,7 +1102,7 @@ export default {
               h('p', null, '空的办公室 — 去 Bot 管理创建一个机器人，它就会搬进来 🤖')))
         : null,
       overflow > 0
-        ? h('div', { className: 'of-queue' }, `ⓘ ${overflow} 位工作中的机器人在排队等工位（工位共 ${DESKS.length} 个）`)
+        ? h('div', { className: 'of-queue' }, `ⓘ 工位共 ${DESKS.length} 个，${overflow} 位工作中的机器人在门口排队/室内走动`)
         : null,
       h('div', { className: 'of-hint' }, '拖拽平移 · 滚轮缩放 · 按 0 复位 · 点击小人查看详情'),
       selAgent ? (() => {

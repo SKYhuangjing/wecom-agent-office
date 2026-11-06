@@ -81,7 +81,7 @@ test('BFS nav: routes around a wall, respects docks via their approach point', (
   const p = nav2.path([1, 1], [6, 1]);
   assert.notEqual(p.length, 0);
   for (const [x, y] of p) assert.ok(nav2.freeAt(x, y), `waypoint ${x},${y} inside a wall`);
-  assert.ok(p.every(([x]) => x < 3 || x > 4 || y > 4), 'path crosses through the gap only');
+  assert.ok(p.every(([x, y]) => x < 3 || x > 4 || y > 4), 'path crosses through the gap only');
   // docked destination: corridor runs to the APPROACH, final leg steps into
   // the dock; starting FROM a dock walks out through the approach first
   const q = nav2.path([6, 5], [1, 1]);
