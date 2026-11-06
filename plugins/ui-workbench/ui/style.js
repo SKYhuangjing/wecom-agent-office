@@ -313,6 +313,14 @@ const CSS = `
 }
 @keyframes wb-toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
 @media (prefers-reduced-motion: reduce) { .wb-toast { animation: none; } }
+
+/* —— P5 收口：窄屏（shell 侧栏折顶时，双栏布局也收成单列） ———————————— */
+@media (max-width: 900px) {
+  .wb-crud { grid-template-columns: 1fr; }
+  .wb-side { flex-direction: row; flex-wrap: wrap; }
+  .wb-side-item { width: auto; }
+  .wb-grid { grid-template-columns: 1fr; }
+}
 `;
 
 export function ensurePageStyle() {

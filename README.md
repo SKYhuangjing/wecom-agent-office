@@ -170,7 +170,7 @@ launchctl print gui/$(id -u)/com.wecom-agent-office | head -30   # launchd 视�
   静态资源来自 `web/dist/`（**产物已提交**，运行与测试都不需要构建）；改 `web/src/{shell.jsx,sdk.js,styles.css}`
   或 `web/index.html` 后 `npm i && node web/build.mjs` 重建并提交 dist。
 - **页面插件契约（硬性）**：无构建 ES Module、禁 JSX/bare import，React/SDK 一律从注入的
-  `WAO` 取（`h/useState/useEffect/useCallback/api/useAgents/useTimeline/useSSE/registerPage`）。
+  `WAO` 取（`h/useState/useEffect/useCallback/api/useAgents/useTimeline/useSSE/avatar/avatarUrl/registerPage`）。
   manifest 声明 `ui: './ui'` → 内核托管 `/api/ui/<id>/` 并进 `/api/state.uiPlugins`。细节与
   harness 模板见 `docs/PLUGIN-DEV.md` §5.4，参照实现 `plugins/_template/page/`。
 - **harness 截图（改 UI 红线：必须截图验证）**：每页面插件 `ui/harness.html` 用
@@ -196,11 +196,48 @@ launchctl print gui/$(id -u)/com.wecom-agent-office | head -30   # launchd 视�
   单张手工截图时深色可加 `--force-dark-mode`；模板页 demo 需 `WAO_PLUGINS_PATH`
   指向 `plugins/_template`（脚本已自动带上）。
 
+### 4.2 公司话 UI（company-metaphor 重设计）
+
+产品比喻是「**一家你独自经营的公司**」：你雇的每位同事是一个 bot。UI 主层一律
+公司话，技术词收进 tooltip / 副标题（双层语言，运维不歧义）；后果说明保持诚实
+（如「转岗仅文本问答对迁移」这类事实不减，只换语气）。
+
+**公司话 ↔ 技术词对照表**：
+
+| 公司话 | 技术词 |
+|---|---|
+| 入职 / 办理入职 | 新建 bot（POST /api/bots） |
+| 离职 / 办结离职手续 | 删除 bot（DELETE /api/bots/:id） |
+| 调休 / 返岗 | 停用 / 启用（toggle，enabled=false/true） |
+| 技能岗位 / 岗位部门（DSH·Claude·Codex 工程师） | provider（dsh / claude / codex） |
+| 工位 | 工作目录 cwd |
+| 门禁名单 | allowedUsers |
+| 工牌激活 / 工牌凭证 | 填企微机器人凭证（channel account） |
+| 岗前测试 | 试跑（POST /api/bots/:id/test） |
+| 工单 | 一轮对话（ledger turn） |
+| 工作汇报 | 进度行（progress.line） |
+| 工作日志 | 时间线（/api/timeline） |
+| 工作档案 / 原生档案 | 台账 ledger / provider 原生会话 |
+| 广播站 / 播音员 | 服务端主动推送 / 发送者 bot |
+| 后勤部门 / 部门重组 | 插件 / 四阶段重载（reload） |
+| 状态：工作中 / 待命 / 休假 | working / idle / offline(+disabled) |
+| 工牌号 | bot id（同时是化身 seed——同 id 全站同脸） |
+
+**文案原则**：① 主层公司话、技术词进 tooltip/副标题；② 状态词只用
+工作中/待命/休假三档，原因（reason）照实说；③ 危险操作（办离职、部门重组）
+必须列后果清单并要求显式确认（离职输姓名）；④ 「真实送达企微」「仅文本问答对
+迁移」「不进引擎链、不记台账」这类后果/边界说明一个字不减。化身（DiceBear
+notionists，CC0，全离线打包进 shell）由 `WAO.avatar(botId,{size,mood})` 出内联
+SVG，同一工牌号在办公室/卡片/列表/日志行/工牌上都是同一张脸；打卡钟页头（活钟 ·
+在岗 N/M · 今日工单 X）全站可见。可达性：全站 focus-visible 焦点环、
+prefers-reduced-motion 全关动画（画布动画由 ofscene 的 reduced 标志接管）、
+≤900px 侧栏折顶。
+
 ## 5. 测试矩阵
 
 | 命令 | 内容 | 时长 |
 |---|---|---|
-| `npm test` | 348 用例：内核（含 log ENOSPC 降级）/loader/engine/ledger/provider（dsh/claude/codex 剖析）+ web 基建（静态托管/穿越拒绝/uiPlugins/SSE 桥）+ e2e 六场景（fake ws + fake-dsh 全链路）+ ops（孤儿扫尾：单元 + 真服务进程 SIGINT e2e） | ~40s |
+| `npm test` | 353 用例：内核（含 log ENOSPC 降级）/loader/engine（含 createdAt 服务端落戳）/ledger/provider（dsh/claude/codex 剖析）+ web 基建（静态托管/穿越拒绝/uiPlugins/SSE 桥）+ e2e 六场景（fake ws + fake-dsh 全链路）+ ops（孤儿扫尾：单元 + 真服务进程 SIGINT e2e） | ~40s |
 | `npm run contract -- --plugin plugins/provider-dsh --port dsh` | provider 端口契约 11/11（真子进程语义） | 秒级 |
 | `npm run contract` | _template 参考实现（4 pass + 7 skip，skip=需真 CLI 的组） | 秒级 |
 | `bash test/smoke-dsh.sh` | **真 dsh**：两轮对话记忆（同 sessionId 续跑记暗号）+ 真 session 文件解码 | ~10s+ |

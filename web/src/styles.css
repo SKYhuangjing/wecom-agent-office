@@ -150,3 +150,33 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .badge-working { animation: none; }
 }
+
+/* —— P5 收口：可达性与窄屏 ———————————————————————————————————————————— */
+/* 全站焦点环：键盘走到哪里都看得见 */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* reduced-motion：CSS 动画全关（画布动画由 ofscene 的 reduced 标志接管），
+   功能照常可用 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+/* ≤900px 窄屏：侧栏折成顶部横条，主区收窄内边距 */
+@media (max-width: 900px) {
+  .shell { flex-direction: column; }
+  .sidebar {
+    width: auto; flex-direction: row; align-items: center; gap: 2px;
+    overflow-x: auto; border-right: none; border-bottom: 1px solid var(--line);
+    padding: 8px 12px;
+  }
+  .brand { padding: 0 12px 0 0; flex: none; }
+  .brand-text .brand-sub { display: none; }
+  .nav-item { flex: none; padding: 6px 10px; }
+  .main { padding: 12px 14px 20px; }
+}
