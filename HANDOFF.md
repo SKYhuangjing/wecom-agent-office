@@ -83,6 +83,8 @@
 | 文档 | 内容 |
 |---|---|
 | [DESIGN.md](docs/DESIGN.md) | v3 权威设计（微内核+万物皆插件+consumedSeq+§12 切换） |
+| [ROADMAP.md](docs/ROADMAP.md) | 路线图：已交付/进行中/待启动/**搁置项+解冻条件** |
+| [PROVIDER-RESEARCH.md](docs/PROVIDER-RESEARCH.md) | 第五 provider 调研底稿：候选总览+CodeBuddy(WorkBuddy CLI)深潜+搁置裁定 |
 | [OFFICE-STUDIO-SPEC.md](docs/OFFICE-STUDIO-SPEC.md) | 办公室白棚工位重做：资产管线 + 热区交互（方向已定） |
 | [README.md](README.md) | 运行/开发/测试矩阵/**公司话对照表**/运维节 |
 | [CUTOVER.md](docs/CUTOVER.md) + `test/cutover.sh` | 切换 runbook 与幂等子命令（baseline/stage/drill/rollback） |
