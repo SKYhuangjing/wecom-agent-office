@@ -349,9 +349,12 @@ test('S5 API smoke: real kernel, three enabled:false bots, /test round 2 {sessio
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  // profile omitted for the dsh bot → the plugin default wecom-<botId>. The
+  // id lives OUTSIDE the try: the finally's belt cleanup references it, and a
+  // try-scoped binding would ReferenceError there (swallowed by the adjacent
+  // catch) — dead code exactly on the mid-loop failure path it exists for.
+  const DSH_API_ID = ['m2t6-api-dsh', 'dsh'].join('-');
   try {
-    // profile omitted for the dsh bot → the plugin default wecom-<botId>
-    const DSH_API_ID = ['m2t6-api-dsh', 'dsh'].join('-');
     const cases = [
       { id: DSH_API_ID, provider: 'dsh', providerConfig: { cwd: join(apiData, 'dsh'), dshBin: 'dsh', nodeBin: process.execPath, permission: 'workspace-write' } },
       { id: 'm2t6-api-claude', provider: 'claude', providerConfig: { cwd: join(apiData, 'claude') } },
