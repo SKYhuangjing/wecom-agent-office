@@ -48,4 +48,17 @@ cpSync(join(webDir, 'vendor'), join(dist, 'vendor'), { recursive: true });
 mkdirSync(join(dist, 'assets', 'harness-lib'), { recursive: true });
 cpSync(join(webDir, 'harness-lib'), join(dist, 'assets', 'harness-lib'), { recursive: true });
 
-console.log('web: built dist (app.js + app.css + index.html + vendor + harness-lib)');
+// 「头像即化身」(redesign P1): bundle the DiceBear avatar into an ESM lib the
+// harness stub imports same-origin (./avatar-lib.js), so harness screenshots
+// show the same faces production does — fully offline, no CDN.
+await build({
+  entryPoints: [join(webDir, 'src', 'avatar.js')],
+  bundle: true,
+  minify: true,
+  format: 'esm',
+  outfile: join(dist, 'assets', 'harness-lib', 'avatar-lib.js'),
+  logLevel: 'info',
+  target: ['es2022'],
+});
+
+console.log('web: built dist (app.js + avatar-lib.js + app.css + index.html + vendor + harness-lib)');

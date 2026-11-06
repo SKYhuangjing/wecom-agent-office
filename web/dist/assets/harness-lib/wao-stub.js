@@ -10,6 +10,11 @@
 //     progress: { line: '🔧 修复测试' } } ] });
 //   const mod = await import('./index.js');
 //   stub.render(mod.default, document.getElementById('root'));
+//
+// avatar/avatarUrl (redesign P1) come from the esbuild-bundled DiceBear lib
+// (./avatar-lib.js, built by web/build.mjs) so harness faces == production
+// faces, offline.
+import { avatar, avatarUrl } from './avatar-lib.js';
 
 export function makeWAOStub(fakeData = {}) {
   const React = globalThis.React;
@@ -43,6 +48,7 @@ export function makeWAOStub(fakeData = {}) {
     React, h: React.createElement,
     useState: React.useState, useEffect: React.useEffect, useCallback: React.useCallback,
     api, useAgents, useTimeline, useSSE,
+    avatar, avatarUrl,
     registerPage: (desc) => { pages.push(desc); },
   };
   globalThis.window.WAO = WAO;

@@ -1,32 +1,58 @@
-/* WAO console base theme (M3 T1): tokens only — pages build on these.
-   Dark/light follow prefers-color-scheme (no JS theme toggle in T1). */
+/* WAO console base theme — company-metaphor design system (redesign P1).
+   Tokens only for the shell chrome; pages build on the same var(--*) set.
+   Light/dark follow prefers-color-scheme. 软插画 2.5D 拟人 direction:
+   warm paper tones, cards 12 / controls 8 radius, single soft shadow,
+   the provider trio is the ONLY accent family, data/ids in mono. */
 :root {
   color-scheme: light dark;
-  --bg: #f6f7f9;
-  --panel: #ffffff;
-  --ink: #1c2430;
-  --muted: #66717f;
-  --line: #e3e7ec;
-  --accent: #2563eb;
+  --bg: #f3f2ee;            /* 暖纸底 */
+  --panel: #ffffff;         /* surface */
+  --panel-2: #faf9f6;       /* nested surface (输入、表头) */
+  --ink: #232a2c;
+  --muted: #6b7573;
+  --line: #e4e2dc;
+  --accent: #3d5a80;        /* 交互主色＝dsh 墨蓝（同族，见 --pv-dsh） */
   --accent-ink: #ffffff;
-  --ok: #16803c;
-  --warn: #b45309;
-  --bad: #b91c1c;
-  --bad-bg: #fee2e2;
+  /* provider 色系（唯一 accent，编码真实身份） */
+  --pv-dsh: #3d5a80;
+  --pv-claude: #e07856;
+  --pv-codex: #2e9e8f;
+  --pv-unknown: #6b7573;
+  /* 状态 */
+  --st-idle: #8fa39b;       /* 待命 灰绿 */
+  --st-offline: #c46a6a;
+  --warn: #d9a441;
+  --ok: #2e9e8f;
+  --bad: #c46a6a;
+  --bad-bg: color-mix(in srgb, #c46a6a 12%, transparent);
+  --shadow: 0 8px 24px rgb(35 42 44 / .08);
+  --shadow-lift: 0 12px 32px rgb(35 42 44 / .14);
+  --r-card: 12px;
+  --r-ctl: 8px;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #10151c;
-    --panel: #1a222c;
-    --ink: #e8edf3;
-    --muted: #8b97a5;
-    --line: #2c3644;
-    --accent: #60a5fa;
-    --accent-ink: #0b1220;
-    --ok: #4ade80;
-    --warn: #fbbf24;
-    --bad: #f87171;
-    --bad-bg: #451a1a;
+    --bg: #1d2422;
+    --panel: #262e2c;
+    --panel-2: #222a28;
+    --ink: #e8eae6;
+    --muted: #9aa5a2;
+    --line: #333d3a;
+    --accent: #8faecf;
+    --accent-ink: #10161c;
+    --pv-dsh: #8faecf;
+    --pv-claude: #e8917a;
+    --pv-codex: #57b8aa;
+    --pv-unknown: #9aa5a2;
+    --st-idle: #8fa39b;
+    --st-offline: #d98c8c;
+    --warn: #e0b566;
+    --ok: #57b8aa;
+    --bad: #d98c8c;
+    --bad-bg: color-mix(in srgb, #d98c8c 16%, transparent);
+    --shadow: 0 8px 24px rgb(0 0 0 / .3);
+    --shadow-lift: 0 12px 32px rgb(0 0 0 / .4);
   }
 }
 
@@ -40,26 +66,60 @@ body {
 
 .shell { display: flex; min-height: 100vh; }
 .sidebar {
-  width: 200px; flex: none; padding: 16px 10px;
+  width: 208px; flex: none; padding: 16px 10px;
   background: var(--panel); border-right: 1px solid var(--line);
   display: flex; flex-direction: column; gap: 4px;
 }
-.brand { font-weight: 700; padding: 0 10px 12px; letter-spacing: .02em; }
+.brand {
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 8px 14px;
+}
+.brand-face {
+  width: 34px; height: 34px; flex: none; border-radius: 50%;
+  border: 2px solid var(--line); background: var(--panel-2);
+  overflow: hidden;
+}
+.brand-face svg { display: block; width: 100%; height: 100%; }
+.brand-text { min-width: 0; }
+.brand-name { font-weight: 700; letter-spacing: .02em; line-height: 1.2; }
+.brand-sub { font-size: 11px; color: var(--muted); letter-spacing: .04em; }
 .nav-item {
-  display: flex; align-items: center; gap: 8px;
-  padding: 7px 10px; border-radius: 8px;
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 10px; border-radius: var(--r-ctl);
   color: var(--ink); text-decoration: none;
 }
-.nav-item:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.nav-item.active { background: var(--accent); color: var(--accent-ink); }
-.nav-icon { width: 1.2em; text-align: center; }
+.nav-item:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }
+.nav-item.active { background: var(--ink); color: var(--bg); }
+.nav-icon { width: 1.3em; text-align: center; }
 
-.main { flex: 1; padding: 24px 28px; min-width: 0; }
+.main { flex: 1; padding: 18px 28px 28px; min-width: 0; }
+
+/* —— 打卡钟页头（全站可见）：活钟 · 在岗 N/M · 今日工单 X ————————————— */
+.clockbar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--r-card); padding: 8px 10px;
+  box-shadow: var(--shadow);
+  margin: 0 0 16px;
+}
+.clock-item {
+  display: inline-flex; align-items: baseline; gap: 7px;
+  padding: 4px 12px; border-radius: 999px;
+  border: none; background: none; color: var(--ink);
+  font: inherit; text-decoration: none; cursor: pointer;
+}
+.clock-item:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }
+.clock-label { font-size: 12px; color: var(--muted); }
+.clock-num { font-weight: 700; font-variant-numeric: tabular-nums; }
+.clock-sep { color: var(--line); user-select: none; }
+.clock-capsule { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+
 .page h2 { margin: 0 0 8px; }
 .muted { color: var(--muted); }
 .error {
   color: var(--bad); background: var(--bad-bg);
-  padding: 8px 12px; border-radius: 8px; margin: 0 0 12px;
+  padding: 8px 12px; border-radius: var(--r-ctl); margin: 0 0 12px;
 }
 /* Per-plugin load-error row + its own retry (known-boundaries wave 2026-11-06) */
 .shell-error { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -72,12 +132,21 @@ body {
 
 .card-list { list-style: none; margin: 12px 0; padding: 0; display: grid; gap: 10px; }
 .card {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-card);
   padding: 12px 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  box-shadow: var(--shadow);
 }
 .badge {
   font-size: 12px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line);
 }
-.badge-working { color: var(--ok); border-color: var(--ok); }
-.badge-idle { color: var(--muted); }
-.badge-offline { color: var(--bad); border-color: var(--bad); }
+/* 工作中＝provider 色脉动（--pv 由卡片按岗位注入）；待命＝灰绿；离线＝offline 红 */
+.badge-working { color: var(--pv, var(--accent)); border-color: var(--pv, var(--accent)); animation: wao-pulse 1.8s ease-in-out infinite; }
+.badge-idle { color: var(--st-idle); border-color: var(--st-idle); }
+.badge-offline { color: var(--st-offline); border-color: var(--st-offline); }
+@keyframes wao-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--pv, var(--accent)) 40%, transparent); }
+  50% { box-shadow: 0 0 0 4px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .badge-working { animation: none; }
+}

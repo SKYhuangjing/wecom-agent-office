@@ -7,6 +7,7 @@ const React = globalThis.React;
 const { useState, useEffect, useCallback } = React;
 const h = React.createElement; // JSX factory (build.mjs --jsx-factory=h)
 import { api, initSdk, useAgents, useTimeline, useSSE } from './sdk.js';
+import { avatar, avatarUrl } from './avatar.js';
 
 // Page registry: discovered uiPlugins (dynamic import) + runtime
 // registerPage() callers (harness/dynamic pages). One shape for both.
@@ -25,6 +26,10 @@ const WAO = {
   React, h,
   useState, useEffect, useCallback,
   api, useAgents, useTimeline, useSSE,
+  // 「头像即化身」(redesign P1): avatar(seed,{size,mood}) → inline SVG, seeded
+  // by botId so the same face appears everywhere; avatarUrl is the data: form
+  // for canvas drawing (office). DiceBear notionists, fully offline.
+  avatar, avatarUrl,
   registerPage,
 };
 globalThis.WAO = WAO;
@@ -44,9 +49,40 @@ const PageView = ({ mod }) => {
 };
 
 const EmptyState = () => h('div', { className: 'page' },
-  h('h2', null, '无页面插件'),
+  h('h2', null, '公司还没有开门'),
   h('p', { className: 'muted' }, '当前内核没有声明 ui 目录的活跃插件。装一个页面插件或检查 plugins.json 启停表。'),
 );
+
+// 打卡钟页头（redesign P1）：当前时刻（活钟）· 在岗 N/M · 今日工单 X。
+// 三个数字都是链接——时刻与工单去看工作日志，在岗去看工作台；useAgents
+// 与页面共用同一条 SSE 管道，这里只是多一个订阅者。
+const pad2 = (n) => String(n).padStart(2, '0');
+const PunchClock = () => {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const { agents } = useAgents();
+  const enabled = agents.filter((a) => a.enabled !== false);
+  const onDuty = enabled.filter((a) => a.status === 'working' || a.status === 'idle');
+  const todayOrders = agents.reduce((sum, a) => sum + (a.todayTurns ?? 0), 0);
+  const clock = `${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
+  const link = (hash, title, ...children) => h('a', { className: 'clock-item', href: `#/${hash}`, title }, ...children);
+  return h('div', { className: 'clockbar', role: 'status' },
+    link('timeline', '去看看大家今天做了什么',
+      h('span', { className: 'clock-num', style: { fontFamily: 'var(--mono)' } }, clock),
+      h('span', { className: 'clock-label' }, '打卡钟')),
+    h('span', { className: 'clock-sep', 'aria-hidden': 'true' }, '·'),
+    link('workbench', `${onDuty.length} 位同事在岗（共 ${enabled.length} 位在职）`,
+      h('span', { className: 'clock-num' }, `${onDuty.length}/${enabled.length}`),
+      h('span', { className: 'clock-label' }, '在岗')),
+    h('span', { className: 'clock-sep', 'aria-hidden': 'true' }, '·'),
+    link('workbench', `今天累计 ${todayOrders} 张工单`,
+      h('span', { className: 'clock-num clock-capsule' }, todayOrders),
+      h('span', { className: 'clock-label' }, '今日工单')),
+  );
+};
 
 const Shell = () => {
   const [list, setList] = useState(() => [...pages.values()]);
@@ -118,10 +154,18 @@ const Shell = () => {
 
   return h('div', { className: 'shell' },
     h('nav', { className: 'sidebar' },
-      h('div', { className: 'brand' }, 'WAO Console'),
+      h('div', { className: 'brand', title: 'WAO Console · 一家你独自经营的公司' },
+        h('span', {
+          className: 'brand-face',
+          dangerouslySetInnerHTML: { __html: avatar('wao-owner', { size: 34 }) },
+        }),
+        h('span', { className: 'brand-text' },
+          h('div', { className: 'brand-name' }, '一人公司'),
+          h('div', { className: 'brand-sub' }, 'WAO Console'))),
       sorted.length > 0 ? sorted.map(nav) : h('div', { className: 'nav-item muted' }, '（无页面）'),
     ),
     h('main', { className: 'main' },
+      h(PunchClock),
       error != null ? h('p', { className: 'error' }, error) : null,
       [...loadErrors.entries()].map(([id, msg]) => h('p', { key: id, className: 'error shell-error' },
         `加载页面插件 ${id} 失败：${msg} `,
