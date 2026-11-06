@@ -11,7 +11,16 @@
 // to declare capabilities.
 import { join } from 'node:path';
 import { writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { zstdCompressSync } from 'node:zlib';
+
+// Computed locally (not imported from provider.contract.js) to avoid a
+// module cycle: the contract suite imports PROFILES from here.
+const FAKE_CLAUDE = fileURLToPath(new URL('../fake-bin/fake-claude.js', import.meta.url));
+
+// claude's project-dir slugging (verified against real sessions — see
+// plugins/provider-claude/history.js header): every non-alphanumeric → '-'.
+const projectDirName = (cwd) => String(cwd ?? '').replace(/[^a-zA-Z0-9]/g, '-');
 
 export const PROFILES = {
   // plugins/_template/provider — the reference implementation the suite must
@@ -61,6 +70,44 @@ export const PROFILES = {
         zstdCompressSync(Buffer.from(jsonl.slice(i * chunk, (i + 1) * chunk), 'utf8')))));
     },
     makeRunnerArgs: ({ cwd, mode, fakeHome, wrapBin }) => ({ dshBin: wrapBin(mode, fakeHome), cwd }),
+  },
+
+  // plugins/provider-claude (M2 Task 2) — all groups, mirroring the dsh
+  // profile: fake-claude injected via claudeBin wrapper + claudeConfigDir
+  // pointed INSIDE the group's tmp cwd so readHistory never touches the real
+  // ~/.claude. Session files use claude's real on-disk layout:
+  // <claudeConfigDir>/projects/<projectDirName(cwd)>/<sessionId>.jsonl.
+  claude: {
+    note: 'full contract against fake-claude via claudeBin wrapper injection',
+    // ok-mode final text; claude resumes via --resume (dsh spells it --session-id)
+    expect: { okFinalText: () => '答案文本', resumeArg: '--resume' },
+    fakeCli: true,
+    events: true,
+    history: true,
+    // which fake CLI the suite's wrapBin execs (M2: claude has its own fake)
+    fakeBin: FAKE_CLAUDE,
+    // claudeConfigDir is derived the same way makeRunnerArgs derives it, so
+    // the corrupt/huge fixtures land exactly where the reader looks.
+    historyPath: (cwd, sessionId) =>
+      join(cwd, 'claude-home', 'projects', projectDirName(cwd), `${sessionId}.jsonl`),
+    // Oversized-history fixture writer — claude's REAL on-disk format: a
+    // plain JSONL of user/assistant lines (plus the noise line types real
+    // claude interleaves) with 2500 user/assistant turns.
+    hugeHistory: async (path) => {
+      const lines = [{ type: 'queue-operation', operation: 'enqueue', sessionId: 'huge', content: 'noise' }];
+      for (let i = 0; i < 2500; i++) {
+        const ts = new Date(100 + i).toISOString();
+        lines.push({ type: 'user', isSidechain: false, message: { role: 'user', content: `问题 ${i}` }, timestamp: ts });
+        lines.push({ type: 'assistant', isSidechain: false, message: { role: 'assistant', content: [{ type: 'text', text: `回答 ${i}` }] }, timestamp: ts });
+      }
+      lines.push({ type: 'cost-state', sessionId: 'huge', totalCostUSD: 0 });
+      writeFileSync(path, lines.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    },
+    makeRunnerArgs: ({ cwd, mode, fakeHome, wrapBin }) => ({
+      claudeBin: wrapBin(mode, fakeHome),
+      cwd,
+      claudeConfigDir: join(cwd, 'claude-home'),
+    }),
   },
 };
 

@@ -35,6 +35,7 @@ import { importPlugin, validateManifest } from '../../src/kernel/loader.js';
 import { PROFILES, defaultProfile } from './profiles.js';
 
 export const FAKE_DSH = fileURLToPath(new URL('../fake-bin/fake-dsh.js', import.meta.url));
+export const FAKE_CLAUDE = fileURLToPath(new URL('../fake-bin/fake-claude.js', import.meta.url));
 
 const PROMPT = '请查看当前目录'; // fake-dsh stores this in last-prompt; ok mode finals with 答案文本
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -106,16 +107,16 @@ export async function runContractSuite({ pluginDir, providerId = null }) {
   let seq = 0;
   mkdirSync(join(root, 'bin'), { recursive: true });
   // Mode injection without env-passthrough support in the provider: a tiny
-  // /bin/sh wrapper exports FAKE_MODE/FAKE_HOME, then exec's fake-dsh (exec
-  // keeps the pid, so last-pid is the pid the provider spawned). The filename
-  // carries a bare sequence number only — embedding FAKE_MODE would let a
-  // provider smell the test mode from argv[0]/$0.
-  const wrapBin = (mode, fakeHome) => {
-    const script = join(root, 'bin', `dsh-${++seq}.sh`);
+  // /bin/sh wrapper exports FAKE_MODE/FAKE_HOME, then exec's the port's fake
+  // CLI (exec keeps the pid, so last-pid is the pid the provider spawned).
+  // The filename carries a bare sequence number only — embedding FAKE_MODE
+  // would let a provider smell the test mode from argv[0]/$0.
+  const wrapBin = (mode, fakeHome, fakeBin = FAKE_DSH) => {
+    const script = join(root, 'bin', `fake-${++seq}.sh`);
     writeFileSync(script, '#!/bin/sh\n'
       + `export FAKE_MODE="${mode}"\n`
       + `export FAKE_HOME="${fakeHome}"\n`
-      + `exec "${FAKE_DSH}" "$@"\n`);
+      + `exec "${fakeBin}" "$@"\n`);
     chmodSync(script, 0o755);
     return script;
   };
@@ -183,8 +184,14 @@ export async function runContractSuite({ pluginDir, providerId = null }) {
       groupHomes.push(fakeHome);
       return { dir, fakeHome };
     };
+    // The fake CLI is a profile choice (fake-claude for the claude port,
+    // fake-dsh otherwise); bound into wrapBin so profiles keep calling
+    // wrapBin(mode, fakeHome) without knowing the binary.
+    const fakeBin = profile.fakeBin ?? FAKE_DSH;
     const argsFor = (e, mode) => profile.makeRunnerArgs({
-      cwd: e.dir, mode, fakeHome: e.fakeHome, wrapBin, fakeDsh: FAKE_DSH,
+      cwd: e.dir, mode, fakeHome: e.fakeHome,
+      wrapBin: (m, h) => wrapBin(m, h, fakeBin),
+      fakeDsh: fakeBin,
     });
 
     const group = async (id, name, fn, skipReason = null) => {
@@ -276,7 +283,10 @@ export async function runContractSuite({ pluginDir, providerId = null }) {
       g.check(second?.sessionId === sid, `resume returns the SAME sessionId (got ${JSON.stringify(second?.sessionId)}, want ${JSON.stringify(sid)})`);
       if (profile.fakeCli) {
         const argv = readFileSync(join(e.fakeHome, 'last-argv'), 'utf8');
-        g.check(argv.includes(`--session-id ${sid}`), `CLI received --session-id (last-argv=${JSON.stringify(argv.trim())})`);
+        // The resume flag is provider CLI-specific (dsh --session-id, claude
+        // --resume); the profile declares it, dsh's spelling stays the default.
+        const resumeArg = profile.expect?.resumeArg ?? '--session-id';
+        g.check(argv.includes(`${resumeArg} ${sid}`), `CLI received ${resumeArg} (last-argv=${JSON.stringify(argv.trim())})`);
       } else {
         g.note('--session-id argv probe skipped (no fake CLI)');
       }
