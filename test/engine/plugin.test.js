@@ -336,6 +336,64 @@ test('PATCH object fields preserve stripped nested keys; explicit values replace
   assert.equal((await fetch(url('/api/bots/kvbot'), { method: 'DELETE' })).status, 200);
 });
 
+// Known-boundaries wave (2026-11-06): object-typed fields (env / model style
+// free-text maps) echo sensitive-looking STRING values masked — the literal
+// never appears in any bot-echo body — and the '__MASKED__' sentinel round-
+// trips as "unmodified": a save of the masked display keeps the stored
+// value, an explicit new value replaces it.
+test('GET /api/bots masks sensitive object-field values; __MASKED__ round-trip keeps the stored literal', async () => {
+  const created = await post('/api/bots', {
+    id: 'maskbot', name: 'Mask', enabled: false, channel: 'fakechan',
+    account: { endpoint: 'http://mask.local' },
+    provider: 'fakeprov',
+    providerConfig: {
+      cwd: '/tmp', mode: 'a',
+      extra: { OPENAI_API_KEY: 'sk-real-123', HUB_TOKEN: 'tok-456', note: 'keep' },
+    },
+  });
+  assert.equal(created.status, 200);
+  assert.equal((await created.json()).bot.providerConfig.extra.OPENAI_API_KEY, '__MASKED__',
+    'POST echo masks too (display-only: disk keeps the literal)');
+
+  const raw = await (await get('/api/bots')).text();
+  assert.equal(raw.includes('sk-real-123'), false, 'api-key literal never appears in the list body');
+  assert.equal(raw.includes('tok-456'), false, 'token literal never appears in the list body');
+  const bot = JSON.parse(raw).bots.find((b) => b.id === 'maskbot');
+  assert.equal(bot.providerConfig.extra.OPENAI_API_KEY, '__MASKED__', 'api_key-shaped key masks its string value');
+  assert.equal(bot.providerConfig.extra.HUB_TOKEN, '__MASKED__', 'token-shaped key masks too');
+  assert.equal(bot.providerConfig.extra.note, 'keep', 'non-sensitive keys echo verbatim');
+  // masking is echo-only: the disk record is untouched
+  assert.equal(loadBots(join(dataDir, 'bots.json')).bots.find((b) => b.id === 'maskbot')
+    .providerConfig.extra.OPENAI_API_KEY, 'sk-real-123');
+
+  // Editor round-trip: the block EXACTLY as the UI saw it (masked), saved
+  // unchanged — the stored literals must survive their own masked echo.
+  const resp = await patch('/api/bots/maskbot', { providerConfig: { ...bot.providerConfig } });
+  assert.equal(resp.status, 200);
+  let onDisk = loadBots(join(dataDir, 'bots.json')).bots.find((b) => b.id === 'maskbot');
+  assert.equal(onDisk.providerConfig.extra.OPENAI_API_KEY, 'sk-real-123',
+    '__MASKED__ sent back untouched = keep the stored value');
+  assert.equal(onDisk.providerConfig.extra.HUB_TOKEN, 'tok-456');
+  assert.equal(onDisk.providerConfig.extra.note, 'keep');
+  // ...and the PATCH echo stays masked
+  assert.equal((await (await get('/api/bots')).json()).bots
+    .find((b) => b.id === 'maskbot').providerConfig.extra.OPENAI_API_KEY, '__MASKED__');
+
+  // Explicit new value replaces; absent siblings still backfill
+  const resp2 = await patch('/api/bots/maskbot', {
+    providerConfig: { cwd: '/tmp', mode: 'a', extra: { OPENAI_API_KEY: '{{SECRET_q8wkzc1d}}', note: 'edited' } },
+  });
+  assert.equal(resp2.status, 200);
+  assert.equal((await resp2.json()).bot.providerConfig.extra.OPENAI_API_KEY, '__MASKED__', 'PATCH echo masks the NEW literal');
+  onDisk = loadBots(join(dataDir, 'bots.json')).bots.find((b) => b.id === 'maskbot');
+  assert.equal(onDisk.providerConfig.extra.OPENAI_API_KEY, '{{SECRET_q8wkzc1d}}', 'explicit value replaces');
+  assert.equal(onDisk.providerConfig.extra.HUB_TOKEN, 'tok-456', 'absent key still backfilled');
+  assert.equal(onDisk.providerConfig.extra.note, 'edited');
+
+  // cleanup: later tests assert the exact bots.json registry ids
+  assert.equal((await fetch(url('/api/bots/maskbot'), { method: 'DELETE' })).status, 200);
+});
+
 test('POST /api/bots/:id/test runs the provider runner engine-independently; ledger untouched', async () => {
   const resp = await post('/api/bots/b1/test');
   assert.equal(resp.status, 200);

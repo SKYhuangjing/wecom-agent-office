@@ -114,6 +114,32 @@ export function useSSE(topics, cb) {
   }, []);
 }
 
+// —— SSE refetch debounce (known-boundaries wave 2026-11-06) ——————————————
+// A frame storm (progress frames × several mounted pages) used to trigger one
+// fetch PER FRAME. Trailing-edge debounce: a burst collapses into a single
+// refetch 500ms after its last frame; the 5s poll stays the safety net either
+// way, so worst-case freshness loses only ~500ms.
+const SSE_REFETCH_DEBOUNCE_MS = 500;
+
+// useSSERefetch(topics, refresh): useSSE whose frames nudge `refresh` through
+// the debounce. `refresh` stays the callers' stable useCallback shape; the
+// pending trailing fetch is cancelled on unmount.
+export function useSSERefetch(topics, refresh) {
+  if (R == null) return;
+  // Stable per-mount controller (useState initializer runs once): `bump` is
+  // re-pointed every render so the subscription always calls the freshest
+  // closure, and the timer handle survives rerenders.
+  const [ctl] = R.useState(() => ({ timer: null }));
+  ctl.bump = () => {
+    if (ctl.timer != null) clearTimeout(ctl.timer);
+    ctl.timer = setTimeout(() => { ctl.timer = null; refresh(); }, SSE_REFETCH_DEBOUNCE_MS);
+  };
+  useSSE(topics, () => ctl.bump());
+  R.useEffect(() => () => {
+    if (ctl.timer != null) clearTimeout(ctl.timer);
+  }, []);
+}
+
 // useAgents(): live bot list — SSE agent/* nudges a refetch, a 5s poll is the
 // safety net (missed frames, reconnect windows). Returns {agents, error};
 // never throws.
@@ -134,7 +160,7 @@ export function useAgents() {
     const timer = setInterval(refresh, 5000);
     return () => clearInterval(timer);
   }, [refresh]);
-  useSSE(['agent/progress', 'agent/status', 'plugin/lifecycle'], refresh);
+  useSSERefetch(['agent/progress', 'agent/status', 'plugin/lifecycle'], refresh);
   useDisconnect(() => setError(DISCONNECT_TEXT));
   return { agents, error };
 }
@@ -160,7 +186,7 @@ export function useTimeline(botId = null, windowMin = 30) {
     const timer = setInterval(refresh, 5000);
     return () => clearInterval(timer);
   }, [refresh]);
-  useSSE(['run/start', 'run/end', 'agent/progress'], refresh);
+  useSSERefetch(['run/start', 'run/end', 'agent/progress'], refresh);
   useDisconnect(() => setError(DISCONNECT_TEXT));
   return { rows, error };
 }

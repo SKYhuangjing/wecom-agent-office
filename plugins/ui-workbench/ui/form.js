@@ -84,6 +84,11 @@ export function SchemaFields({ WAO, schema, state, onChange, editingExisting }) 
           });
           if (value.trim() !== '' && parsed.error != null) {
             hint = h('span', { className: 'wb-field-error' }, `JSON 解析失败：${parsed.error}（修正后才能保存）`);
+          } else if (value.includes('__MASKED__')) {
+            // Server-side echo masking (known-boundaries wave): sensitive-
+            // looking values display masked; saving the masked text back =
+            // "unchanged" (stored value kept), a new value replaces it.
+            hint = h('span', { className: 'wb-hint' }, '敏感值回显为 __MASKED__：保持原样保存即不修改，填入新值才会替换');
           }
           break;
         }

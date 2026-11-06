@@ -61,6 +61,14 @@ body {
   color: var(--bad); background: var(--bad-bg);
   padding: 8px 12px; border-radius: 8px; margin: 0 0 12px;
 }
+/* Per-plugin load-error row + its own retry (known-boundaries wave 2026-11-06) */
+.shell-error { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.shell-retry {
+  font: inherit; font-size: 12px; cursor: pointer;
+  color: var(--bad); background: transparent;
+  border: 1px solid var(--bad); border-radius: 6px; padding: 2px 10px;
+}
+.shell-retry:hover { background: color-mix(in srgb, var(--bad) 12%, transparent); }
 
 .card-list { list-style: none; margin: 12px 0; padding: 0; display: grid; gap: 10px; }
 .card {

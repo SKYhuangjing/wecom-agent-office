@@ -235,10 +235,16 @@ launchctl print gui/$(id -u)/com.wecom-agent-office       # launchd 视角（退
 
 **已知边界终版清单**（M3 终审 triage 全列——接受/已加固，不再挂账）：
 
-1. **SSE 背压/debounce**：内核 SSE 未做慢客户端背压（极端可占内存）；SSE 触发的
-   refetch 无 debounce（多页同订时突发重复拉取）。观测/资源面，非正确性问题。
-2. **env 回显面**：`providerConfig.env`/`configOverrides` 自由文本对象 GET **原样回显**
-   ——手填 secret 字面量会出现在响应与 UI；凭证一律走 `apiKeyEnv`（只存变量名）。
+1. **SSE 背压/debounce**：内核 SSE 未做慢客户端背压（极端可占内存；单用户部署接受）；
+   ~~SSE 触发的 refetch 无 debounce（多页同订时突发重复拉取）~~ **已修（2026-11-06
+   边界收口波）**——SDK 侧 SSE 帧 refetch 统一走 useSSERefetch 的 500ms trailing
+   debounce，帧风暴折叠为静默期后一次拉取（5s 轮询兜底不变）；内核侧慢客户端背压
+   仍为已知接受项（观测/资源面，非正确性问题）。
+2. **env 回显面**：~~`providerConfig.env`/`configOverrides` 自由文本对象 GET **原样回显**~~
+   **已修（本波）**——object 型 schema 字段回显做敏感值掩码：键名命中
+   secret/token/password/apikey/api_key 的字符串值回显为 `__MASKED__`（仅回显，磁盘不动）；
+   PATCH 把 `__MASKED__` 原样送回=未修改（回填已存真值），显式新值才替换；list 型字段
+   （codex configOverrides 的 k=v 行）不掩码——凭证仍一律走 `apiKeyEnv`（只存变量名）。
 3. **禁用插件顶层求值**：discover 阶段 import 会求值所有候选目录的模块顶层（含被
    禁用插件）——带挂起顶层 await 的禁用插件可阻塞 boot/reload（src/index.js 注释声明）。
 4. **log ENOSPC**：~~未包 try~~ **已加固（本波）**——文件写失败（ENOSPC/EACCES/轮转
@@ -248,16 +254,25 @@ launchctl print gui/$(id -u)/com.wecom-agent-office       # launchd 视角（退
    视为死锁不 adopt。触发罕见、方向无害（第二实例报错退出）。
 6. **单块超预算前缀**：单块超出站预算时 handoff 交接摘要前缀可超 maxChars，由通道
    截断（截断优于丢帧）；低频。
-7. **warn/hard 窄窗**：10min 两阶段 warn/hard 定时器在终帧已发后的窄窗内仍可能多发
-   一行进度/心跳文案——观测层噪音，不影响终帧正确性。
-8. **shell 单错误面**：控制台 Shell 层只有一条全局错误文案位（不清除/覆盖语义弱），
-   多页面同时出错只显示其一。
+7. **warn/hard 窄窗**：~~10min 两阶段 warn/hard 定时器在终帧已发后的窄窗内仍可能多发
+   一行进度/心跳文案~~ **已修（2026-11-06 边界收口波）**——runSettled 标志：runner
+   promise settle 后 warn/hard 定时器回调短路，不再对已收尾的轮发「转后台」假承诺
+   （回归：run.test.js 窄窗用例，含 mutation 验证）。
+8. **shell 单错误面**：~~控制台 Shell 层只有一条全局错误文案位（不清除/覆盖语义弱），
+   多页面同时出错只显示其一~~ **已修（本波）**——页面插件加载错误改 per-plugin Map
+   （多错并存显示、成功加载清除对应项、逐插件「重试」按钮）；/api/state 本身不可达
+   仍为单条全局错误。
 9. **真实锁冲突文案（闭案分析）**：dsh 真实锁冲突下的 describeError 文案仅 fake 层
    验证（M2 申报）；闭案裁定——文案为固定友好句（「写锁被另一个进程占用…请稍后重试」），
    不携带底层错误细节，真实占用场景最坏表现=同一句话，无误导面，**接受闭案**。
 10. **run/* 括号语义**：`run/start`…`run/end` SSE 帧与时间线括号=**bot 级忙碌窗口**
     （idle→working→idle 转换发帧）：同 bot 并发多 chat 只有一对括号，非逐 run——
     终审裁定为既定语义，UI/读者按 bot 级解读。
+11. **Safari/触屏（2026-11-06 边界收口波静态核查）**：shell/SDK/办公室 3D 的 API 面
+    （Pointer Events+touch-action/EventSource/fetch/URL/URLSearchParams/动态 import/
+    ResizeObserver/matchMedia/rAF/canvas 2D/color-mix）逐一对照 Safari 18 支持表——
+    无不兼容点（唯一贴边项 `backdrop-filter` 无前缀写法恰 18 起支持，17 及以下仅丢
+    HUD 磨砂）；**静态核查通过，未在真 Safari/触屏实测**（基线截图为无头 Chrome）。
 
 **未验证项（M3 显式申报）**：
 

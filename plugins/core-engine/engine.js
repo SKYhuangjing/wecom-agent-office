@@ -273,13 +273,21 @@ export async function defaultRunTurn(bot, msg, ac) {
   // §6.7 two-phase deadline: warn closes the stream (background mode on, run
   // keeps going); the hard timer aborts — the runner only sees 'aborted', so
   // hardTimedOut is what reclassifies the result to a timeout.
+  // runSettled (known-boundaries wave 2026-11-06): once the runner's promise
+  // settles, both timers lose their meaning — a warn firing in the narrow
+  // window before stopTimers (during the final frame's adapter awaits) would
+  // promise 「转后台推送」 for a run that is already delivering its final, and
+  // a hard abort of a settled run reclassifies nothing. Fire → no-op.
+  let runSettled = false;
   const warnTimer = setTimeout(() => {
+    if (runSettled) return;
     backgroundMode = true; // the 10min cliff degrades to a channel switch
     const text = outboundText(WARN_TEXT);
     if (streaming) void sendProgress(text, true);
     else void sendReply(text);
   }, warnAt);
   const hardTimer = setTimeout(() => {
+    if (runSettled) return;
     hardTimedOut = true;
     ac.abort();
   }, hardTimeoutMs);
@@ -398,6 +406,7 @@ export async function defaultRunTurn(bot, msg, ac) {
       }
     }
     if (result == null) result = synthError(new Error('runner resolved without a result'));
+    runSettled = true; // runner promise settled: the warn/hard windows are closed from here on
     const effCode = result.code === 'aborted' && hardTimedOut ? 'timeout' : result.code;
     switch (effCode) {
       case 'completed': {

@@ -115,7 +115,7 @@ function scriptedRunner(steps) {
 
 const COMPLETE = (o = {}) => ({ code: 'completed', finalText: '答案内容', returnsSessionId: 's1', ...o });
 
-function makeHarness({ steps, capabilities, limits, bot, middleware = { maskOutbound } } = {}) {
+function makeHarness({ steps, capabilities, limits, bot, middleware = { maskOutbound }, adapter } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'wao-run-'));
   const log = fakeLog();
   const ledger = new Ledger({ file: join(dir, 'ledger.jsonl'), log });
@@ -125,21 +125,21 @@ function makeHarness({ steps, capabilities, limits, bot, middleware = { maskOutb
   const resets = [];
   const origReset = progressor.reset.bind(progressor);
   progressor.reset = () => { resets.push(Date.now()); origReset(); };
-  const adapter = fakeAdapter({ capabilities });
+  const adap = adapter ?? fakeAdapter({ capabilities });
   const runner = scriptedRunner(steps ?? [COMPLETE()]);
   const b = bot ?? mkBot();
   const engine = new Engine({
-    log, getRunner: () => runner, getAdapter: () => adapter,
+    log, getRunner: () => runner, getAdapter: () => adap,
     ledgerFactory: () => ({ ledger, cache }),
     timeline, progressor, middleware, limits: { ...MS_LIMITS, ...limits },
   });
-  engine.attachBot(b, { adapter, runner });
+  engine.attachBot(b, { adapter: adap, runner });
   const send = async (text, bb = b, chatKey = K) => {
     engine.onMessage(bb, mkMsg(text, chatKey));
     await engine.chains.get(chatKey);
     await tick();
   };
-  return { engine, adapter, runner, ledger, cache, timeline, progressor, resets, log, bot: b, send, dir };
+  return { engine, adapter: adap, runner, ledger, cache, timeline, progressor, resets, log, bot: b, send, dir };
 }
 
 // One §3 ledger row, seed-style (seq allocated by the ledger itself).
@@ -269,6 +269,38 @@ test('two-phase: warn frame closes the stream at warnAt; late completion pushes,
 
   const row = h.ledger.turns({ chatKey: K })[0];
   assert.equal(row.reason, 'completed', 'background mode does not change bookkeeping');
+});
+
+// Known-boundaries wave (2026-11-06): the warn/hard timers' NARROW WINDOW — a
+// timer firing after the runner promise settled but before stopTimers (the
+// final frame's adapter awaits are the gap) must send NOTHING: the 「转后台」
+// promise would be false (the final is already being delivered) and aborting
+// a settled run reclassifies nothing. runSettled closes both timers.
+test('narrow window: a warn timer firing after the runner settled sends no warn frame', async () => {
+  // Slow progress adapter: the completed run's final frame PARKS in its
+  // adapter await, holding the turn open past warnAt — exactly the window.
+  const slow = fakeAdapter({});
+  const origProgress = slow.progress;
+  slow.progress = async (...a) => { await sleep(120); return origProgress(...a); };
+  const h = makeHarness({
+    adapter: slow,
+    limits: { streamDeadlineMs: 80, warnLeadMs: 0 }, // warnAt = 80ms < 120ms park
+    steps: [COMPLETE()], // settles immediately
+  });
+  await h.send('快任务');
+  // The turn settles at ~t=120 (the parked final), but a stray warn's adapter
+  // send is fire-and-forget — without the guard its frame would land at ~t=200.
+  // Wait past that delivery window before judging the frame log.
+  await sleep(280);
+
+  const texts = h.adapter.frames.map((f) => f.text);
+  assert.ok(!texts.includes(WARN_TEXT), `no warn frame for an already-settled run (${texts})`);
+  const finals = h.adapter.frames.filter((f) => f.method === 'progress' && f.finish);
+  assert.equal(finals.length, 1, 'the final still closes the stream');
+  assert.ok(finals[0].text.includes('答案内容'), 'final content intact');
+  assert.equal(h.adapter.frames.filter((f) => f.method === 'push').length, 0,
+    'no false background mode (the run completed in-stream)');
+  assert.equal(h.ledger.turns({ chatKey: K })[0].reason, 'completed');
 });
 
 // --- 4: hard timeout → dirty session + self-handoff ---------------------------

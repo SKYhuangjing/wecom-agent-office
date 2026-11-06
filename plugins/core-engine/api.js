@@ -37,6 +37,49 @@ export function sanitize(value) {
   return value;
 }
 
+// Echo-time masking for object-typed schema fields (known-boundaries wave
+// 2026-11-06). `env` / `model` style free-text objects could not be scrubbed
+// key-wise the way sanitize drops `secret`/*apikey* — their values are
+// arbitrary user text, so a hand-filled secret LITERAL inside them echoed
+// verbatim in GET /api/bots and the UI editor. The ECHO now masks instead:
+// recursive walk, a key that LOOKS like a credential name masks its STRING
+// value to '__MASKED__'. Display-only — the stored record is never touched;
+// mergePreserving treats the sentinel as "unmodified", so saving the masked
+// echo round-trip keeps the real value while an explicit new one replaces it.
+const MASKED_ECHO = '__MASKED__';
+const SENSITIVE_KEY = /secret|token|password|apikey|api_key/i;
+
+const maskSensitiveStrings = (value) => {
+  if (Array.isArray(value)) return value.map(maskSensitiveStrings);
+  if (value !== null && typeof value === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = typeof v === 'string' && SENSITIVE_KEY.test(k) ? MASKED_ECHO : maskSensitiveStrings(v);
+    }
+    return out;
+  }
+  return value;
+};
+
+// Mask ONLY inside object-typed schema fields (the free-text surfaces): a key
+// like `tokenCount` elsewhere must not be cosmetically blanked.
+const maskObjectSchemaFields = (schema, block) => {
+  if (!Array.isArray(schema) || !isObject(block)) return;
+  for (const item of schema) {
+    if (item?.type !== 'object' || typeof item.key !== 'string') continue;
+    if (isObject(block[item.key])) block[item.key] = maskSensitiveStrings(block[item.key]);
+  }
+};
+
+// Clone-and-mask a bot record for echo responses. The clone is mandatory:
+// state.doc.bots holds the LIVE objects the attached runtime runs from.
+const maskedBotEcho = (state, bot) => {
+  const out = structuredClone(bot);
+  maskObjectSchemaFields(state.ports?.getChannel?.(bot.channel)?.accountSchema, out.account);
+  maskObjectSchemaFields(state.ports?.getProvider?.(bot.provider)?.configSchema, out.providerConfig);
+  return out;
+};
+
 const sendJson = (res, code, obj, extra = {}) => {
   res.writeHead(code, { 'Content-Type': 'application/json', ...extra });
   res.end(JSON.stringify(sanitize(obj)));
@@ -86,6 +129,10 @@ const findBot = (state, id) => state.doc.bots.find((b) => isObject(b) && b.id ==
 //             round-trip cannot carry them — preserve-style deep merge:
 //             request-absent keys backfill from the stored value, provided
 //             keys override; explicit null still clears the whole field.
+//             Masked echoes extend the same rule (known-boundaries wave): a
+//             sensitive key sent back as MASKED_ECHO was never edited — it
+//             backfills too, so saving the masked display cannot overwrite
+//             the real secret with the literal sentinel.
 const preserveWriteOnly = (schema, patchBlock, oldBlock) => {
   if (!Array.isArray(schema) || !isObject(patchBlock) || !isObject(oldBlock)) return;
   for (const item of schema) {
@@ -107,6 +154,7 @@ const mergePreserving = (patchVal, oldVal) => {
   const out = { ...patchVal };
   for (const [k, v] of Object.entries(oldVal)) {
     if (!(k in out)) out[k] = v; // stripped key the editor never saw: backfill
+    else if (out[k] === MASKED_ECHO && SENSITIVE_KEY.test(k)) out[k] = v; // masked echo sent back untouched: keep the stored value
     else if (isObject(out[k]) && isObject(v)) out[k] = mergePreserving(out[k], v);
   }
   return out;
@@ -220,7 +268,7 @@ async function createBotHandler({ req, res, state }) {
   state.doc.bots.push(bot);
   saveBots(state.botsFile, state.doc);
   if (bot.enabled !== false) state.attach(bot);
-  sendJson(res, 200, { bot });
+  sendJson(res, 200, { bot: maskedBotEcho(state, bot) });
 }
 
 async function patchBotHandler({ req, res, m, state }) {
@@ -255,7 +303,7 @@ async function patchBotHandler({ req, res, m, state }) {
     state.detach(bot.id, 're-attach after update');
     state.attach(bot);
   }
-  sendJson(res, 200, { bot });
+  sendJson(res, 200, { bot: maskedBotEcho(state, bot) });
 }
 
 async function deleteBotHandler({ res, m, state }) {
@@ -290,7 +338,7 @@ async function toggleBotHandler({ res, m, state }) {
     await drainBotOf(state, bot.id); // a disabled runtime waits out its chain first
     state.detach(bot.id, 'bot disabled');
   }
-  sendJson(res, 200, { bot });
+  sendJson(res, 200, { bot: maskedBotEcho(state, bot) });
 }
 
 // Registry view for the UI's schema-driven forms (M3 T2): which channels and
@@ -317,9 +365,12 @@ async function portsHandler({ res, state }) {
 // Full bot records for the CRUD editor (M3 T2). sendJson's sanitize strips
 // secret/*apikey* keys, so what the editor receives is write-only — editing
 // an unrelated field resubmits the account without the secret, which the
-// PATCH keep-blank-password rule turns back into the stored value.
+// PATCH keep-blank-password rule turns back into the stored value. Inside
+// object-typed fields the echo additionally MASKS sensitive-looking string
+// values (maskedBotEcho): a hand-filled secret literal in env/model never
+// displays, and the '__MASKED__' round-trip PATCHes back as "unchanged".
 async function listBotsHandler({ res, state }) {
-  sendJson(res, 200, { bots: state.doc.bots.filter(isObject) });
+  sendJson(res, 200, { bots: state.doc.bots.filter(isObject).map((b) => maskedBotEcho(state, b)) });
 }
 
 // Probe run: the provider runner DIRECTLY — no channel, no engine chain, no

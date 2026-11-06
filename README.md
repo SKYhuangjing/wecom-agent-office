@@ -91,9 +91,12 @@ curl -X POST localhost:8792/api/plugins/<id>/disable|enable   # 禁/启用某插
 
 响应**永不回显 secret**（API 层递归清洗；`secret` 键与 `*apikey*` 名样键任意深度都会剥——
 连带 `model.apiKeyEnv` 这类环境变量**名**也会剥，PATCH 端用「保留式回填」配平：请求里缺的键
-回填已存值，显式提供的键覆盖）。注意：`providerConfig.env` / `configOverrides` 这类自由文本
-对象 GET **原样回显**——schema 无从甄别其值，往里手填 secret 字面量会出现在响应与 UI 里；
-凭证请走 `apiKeyEnv`（只存变量名）。
+回填已存值，显式提供的键覆盖）。`env` / `model` 这类 object 型自由文本字段值无法逐键甄别，
+回显做**敏感值掩码**（2026-11-06 边界收口波）：键名命中 `secret|token|password|apikey|api_key`
+（不区分大小写）的**字符串值**在 GET /api/bots 等回显里显示为 `__MASKED__`（仅回显，磁盘与
+运行时不动）；PATCH 把 `__MASKED__` 原样送回=「未修改」（自动回填已存真值），显式填新值才替换。
+残留面：**list 型字段不掩码**（如 codex `configOverrides` 的 `key=value` 行）——凭证仍请走
+`apiKeyEnv`（只存变量名），不要把 secret 字面量写进任何配置块。
 
 > dsh bot 的 profile 物化是**即时**的：创建/修改 dsh bot 就把 profile 写到
 > `~/.dsh/profiles/<profile>/`（即使 bot 停用）；`DELETE /api/bots/<id>` 会清理该目录。
@@ -213,6 +216,14 @@ launchctl print gui/$(id -u)/com.wecom-agent-office | head -30   # launchd 视�
 - **Web UI 已齐（M3）**：工作台六页（机器人/会话/台账/时间线/插件/推送）+ 办公室 3D
   （iso/2d × 昼夜），浅深两态 21 张 harness 截图基线提交在 `test/ui-shots/`（改 UI 红线：
   必须重截对照）；盲评清零（无 P0/P1，P2×5 修复复测）。
+- **Safari 18/触屏：静态核查通过，未实测**（2026-11-06 边界收口波）：逐一对照
+  shell/SDK/办公室 3D 的 API 面——Pointer Events（pointerdown/move/up/cancel +
+  setPointerCapture + touch-action:none，iOS 13+）、EventSource（10+）、fetch/URL/
+  URLSearchParams、动态 import()（11+）、ResizeObserver（13.1+）、matchMedia（14+）、
+  rAF、canvas 2D（arcTo/ellipse/measureText/setTransform）、color-mix()（16.2+）、
+  dataset——**无不兼容点**；唯一贴边项 `backdrop-filter`（办公室 HUD 磨砂，无前缀写法
+  Safari 18 起支持，17 及以下仅丢磨砂、内容不受影响）。静态对照支持表得出，
+  未在真 Safari/触屏设备跑过（截图基线为无头 Chrome）。
 - **真实企微未接（切换就绪待执行）**：channel-wecom 只过了 fake openws 契约与 e2e；
   生产切换按 `docs/CUTOVER.md` 逐 bot 串行执行（runbook + 半自动脚本 `test/cutover.sh`），
   切换前旧系统 wecom-bridge 继续服役。

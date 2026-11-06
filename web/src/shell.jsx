@@ -50,7 +50,12 @@ const EmptyState = () => h('div', { className: 'page' },
 
 const Shell = () => {
   const [list, setList] = useState(() => [...pages.values()]);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState(null); // /api/state itself unreachable: one loud line
+  // Per-plugin load errors (known-boundaries wave 2026-11-06): several can
+  // coexist (the old single slot kept only the latest), a successful load
+  // clears its own entry, and each row carries its own 重试.
+  const [loadErrors, setLoadErrors] = useState(() => new Map()); // pluginId → message
+  const [sources, setSources] = useState([]); // {id, entry} from /api/state — retry fuel
   const [active, setActive] = useState(() => location.hash.slice(2) || null);
 
   pushPage = useCallback((desc) => {
@@ -63,26 +68,45 @@ const Shell = () => {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
+  // Import ONE page plugin; success clears its error row, failure (re)sets it.
+  const loadPlugin = useCallback(async ({ id, entry }) => {
+    try {
+      const mod = (await import(entry))?.default; // runtime URL: not bundled
+      if (mod == null || typeof mod !== 'object') throw new Error('模块无 default 导出');
+      registerPage({ ...mod, id: mod.id ?? id });
+      setLoadErrors((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Map(prev);
+        next.delete(id);
+        return next;
+      });
+    } catch (err) {
+      setLoadErrors((prev) => {
+        const next = new Map(prev);
+        next.set(id, err?.message ?? String(err));
+        return next;
+      });
+    }
+  }, []);
+
   useEffect(() => {
     (async () => {
       try {
         const state = await api('/api/state');
         const plugins = Array.isArray(state?.uiPlugins) ? state.uiPlugins : [];
-        await Promise.all(plugins.map(async ({ id, entry }) => {
-          try {
-            const mod = (await import(entry))?.default; // runtime URL: not bundled
-            if (mod == null || typeof mod !== 'object') throw new Error('模块无 default 导出');
-            registerPage({ ...mod, id: mod.id ?? id });
-          } catch (err) {
-            setError(`加载页面插件 ${id} 失败：${err?.message ?? err}`);
-          }
-        }));
+        setSources(plugins);
+        await Promise.all(plugins.map(loadPlugin));
       } catch (err) {
         setError(err?.message ?? String(err)); // state itself unreachable: say it once, loudly
       }
     })();
     // Bootstrap runs once: a reload-nudged refresh is a later task's concern.
-  }, []);
+  }, [loadPlugin]);
+
+  const retry = (id) => {
+    const src = sources.find((p) => p?.id === id);
+    if (src != null) void loadPlugin(src);
+  };
 
   const sorted = [...list].sort((a, b) => ((a.order ?? 10) - (b.order ?? 10)) || (a.id < b.id ? -1 : 1));
   const current = sorted.find((p) => p.id === active) ?? sorted[0] ?? null;
@@ -99,6 +123,9 @@ const Shell = () => {
     ),
     h('main', { className: 'main' },
       error != null ? h('p', { className: 'error' }, error) : null,
+      [...loadErrors.entries()].map(([id, msg]) => h('p', { key: id, className: 'error shell-error' },
+        `加载页面插件 ${id} 失败：${msg} `,
+        h('button', { className: 'shell-retry', onClick: () => retry(id) }, '重试'))),
       current != null ? h(PageView, { key: current.id, mod: current }) : h(EmptyState),
     ),
   );
