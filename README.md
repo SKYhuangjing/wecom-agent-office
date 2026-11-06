@@ -163,8 +163,8 @@ launchctl print gui/$(id -u)/com.wecom-agent-office | head -30   # launchd 视�
   `-32002` 重新 `initialize` 即恢复。
 - **错误分层**：协议错误＝HTTP 200 + JSON-RPC error（`-32700` 解析 / `-32600` 形状 /
   `-32601` 方法未知 / `-32602` 工具名或参数形状 / `-32603` 内部 / `-32002` 会话）；传输错误＝
-  HTTP 状态码（405 / 415 非 JSON / 413 超 256KB）。**业务失败不是协议错误**：校验 400 /
-  查无 404 / 冲突 409 以 `result.isError:true` + 中文原因返回（Agent 可读可转述）。
+  HTTP 状态码（405 / 415 非 JSON / 413 超 256KB）。**业务失败不是协议错误**：校验 400（如重复入职 `bot id already exists`）/
+  查无 404 / 离线广播 409 以 `result.isError:true` + 中文原因返回（Agent 可读可转述）。
 - **输出双形态**：每工具 `content[].text`（中文摘要）+ `structuredContent`（结构化数据）；
   secret 永不回显（`__MASKED__` 语义同 §3）。当前回环无鉴权（§2 边界同样适用）。
 

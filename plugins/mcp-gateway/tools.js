@@ -56,7 +56,7 @@ const unavailable = (message) => {
 };
 
 // Op-layer failures (httpError-shaped {status, message, errors?}) → isError
-// tool result carrying the API's own semantics (400 校验 / 404 查无 / 409 冲突).
+// tool result carrying the API's own semantics (400 校验 / 404 查无 / 409 离线广播).
 const opFail = (toolName, err) => {
   const status = Number.isInteger(err?.status) ? err.status : 0;
   const message = err?.message ?? String(err);
@@ -113,7 +113,7 @@ function appendPortHints(err, ops) {
 const TOOLS = [
   {
     name: 'list_employees',
-    description: '查看在岗员工名册：全员工牌号/花名/在岗状态（工作中/待命/离线，休假单独标注）/离线原因/当前工作汇报进度行/今日与累计工单数/技能岗位。只读，无参数。',
+    description: '查看在岗员工名册：全员工牌号/花名/在岗状态/离线原因/当前工作汇报进度行/今日与累计工单数/技能岗位。状态四档：working=工作中/idle=待命/offline=离线(休假)/enabled:false=休假(调休)；转述时用此词表。只读，无参数。',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     run({ services }) {
       const ops = opsNow(services);
@@ -131,7 +131,7 @@ const TOOLS = [
   },
   {
     name: 'get_employee',
-    description: '按工牌号查一位员工的详情：在岗状态/离线原因/入职时间/岗位与通道/工位/门禁名单/工单统计/配置摘要（不含 secret，敏感值以 __MASKED__ 显示）。只读。',
+    description: '按工牌号查一位员工的详情：在岗状态（状态四档：working=工作中/idle=待命/offline=离线(休假)/enabled:false=休假(调休)；转述时用此词表）/离线原因/入职时间/岗位与通道/工位/门禁名单/工单统计/配置摘要。敏感值不回显（secret 类键整体省略）。只读。',
     inputSchema: {
       type: 'object',
       properties: { botId: { type: 'string', description: '工牌号（bot id）' } },
@@ -219,7 +219,7 @@ const TOOLS = [
   },
   {
     name: 'offboard',
-    description: '⚠️ 危险操作：办离职（删除该员工）。在途工作收尾后断开连接、清理物化工位文件、从名册移除；台账文件与时间线历史保留。执行前务必向用户复述后果并确认。',
+    description: '⚠️ 危险操作：办离职（删除该员工）。在途工作收尾后断开连接、清理物化工位文件、从名册移除；台账文件与时间线历史保留。同工牌号可重新 hire（历史台账不自动接续）。执行前务必向用户复述后果并确认。',
     inputSchema: {
       type: 'object',
       properties: { botId: { type: 'string', description: '工牌号（bot id）' } },
@@ -437,7 +437,7 @@ const TOOLS = [
   },
   {
     name: 'company_state',
-    description: '公司状态摘要：运行时长、部门（在役/停用/故障计数与清单）、员工（在册/工作中/待命/离线/休假）。只读。',
+    description: '公司状态摘要：运行时长、部门（在役/停用/故障计数与清单）、员工（在册/工作中/待命/离线/休假）。状态四档：working=工作中/idle=待命/offline=离线(休假)/enabled:false=休假(调休)；转述时用此词表。只读。',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     run({ services }) {
       const kops = kopsNow(services);

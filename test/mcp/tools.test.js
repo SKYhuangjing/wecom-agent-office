@@ -180,6 +180,16 @@ test('tools/list: the 13-tool roster with Chinese descriptions and object schema
   }
   // the probe's success judge is the result code, not isError
   assert.match(tools.find((t) => t.name === 'probation_test').description, /勿只看 isError/);
+  // blind-review P2s (W1-T4): the four-tier status lexicon rides in the tool
+  // descriptions so a bare client relays states verbatim; offboard's fact
+  // sheet covers re-hire; get_employee describes the real masking presentation
+  // (secret-class keys omitted outright — not echoed as `__MASKED__`).
+  const lexicon = /状态四档：working=工作中\/idle=待命\/offline=离线\(休假\)\/enabled:false=休假\(调休\)；转述时用此词表/;
+  for (const name of ['list_employees', 'get_employee', 'company_state']) {
+    assert.match(tools.find((t) => t.name === name).description, lexicon);
+  }
+  assert.match(tools.find((t) => t.name === 'offboard').description, /同工牌号可重新 hire（历史台账不自动接续）/);
+  assert.match(tools.find((t) => t.name === 'get_employee').description, /敏感值不回显（secret 类键整体省略）/);
 });
 
 test('hire → appears in list_employees → get_employee detail is secret-free', async () => {
