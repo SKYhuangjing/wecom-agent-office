@@ -531,3 +531,8 @@ wecom-agent-office/
   验证；probe 补 kill-then-resume 与 codex resume+stdin；同 provider 换模型；跨 provider 交接/切回（反例回归绿）；试跑 API。
 - **M3 Web UI+验收**：Shell+SDK（window.WAO 契约）+SSE/timeline；ui-workbench（含插件管理页）+
   ui-office3d v2；harness 内核托管截图流；盲评清零；按 **§12 逐 bot 串行切换**上线+冷启动演练。
+
+---
+
+> **增补设计（2026-11-07）**：资产系统（skill/memory/MCP/prompt/工具 五类 + RTK + ripgrep，W3）→
+> **`docs/DESIGN-ASSETS.md`**（provider 端口扩展 materializeAssets 物化管线，随 W3-T0 两路评审定稿）。
