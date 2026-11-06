@@ -93,7 +93,7 @@ phase④ 韧性终审修复）——按"诚实申报优先"未为凑数重构；
 
 | 项 | 结果 |
 |---|---|
-| `npm test` | **319/319 pass, 0 fail**（~30s；含 ledger 反例 A/B 回归与 provider 剖析） |
+| `npm test` | **321/321 pass, 0 fail**（~30s；含 ledger 反例 A/B 回归与 provider 剖析；M2 终审 follow-up +2 用例：/test 自定义 prompt、claudeConfigDir env 注入） |
 | 三家契约 `npm run contract -- --plugin plugins/provider-{dsh,claude,codex} --port …` | **11/11 × 3**，0 skip |
 | `npm run test:matrix`（真 CLI） | **6/6 pass**（S1a/b/c 同 provider 换模型、S2 交接含暗号召回、S3 切回 delta-only+暗号召回、S5 API 冒烟；~98s） |
 | `bash test/accept-m1.sh` 重跑（/test 签名扩展后） | **PASS，exit 0**（不回归；round2 仍按契约新会话） |
@@ -169,7 +169,8 @@ accept-m2: PASS (doctor clean, dsh+claude+codex probe×2 each with resume, switc
 **盲评观察（M2 终审 P2-2/P3，行为记录非缺陷）**：
 
 - claude 探针回复可能**多行冗长**（网关/模型行为；accept 脚本显示取首行，不影响 completed 判定）。
-- codex 探针延迟实测 **~25s**（dsh/claude ~6s）——M3 运维预期：接近 /test 的 30s 超时阈值，余量仅 ~5s。
+- codex 探针延迟实测 **~25s**（dsh/claude ~6s）——M3 运维预期：~~接近 /test 的 30s 超时阈值，余量
+  仅 ~5s~~ 已修（M2 终审 follow-up：`TEST_TIMEOUT_MS` 30s→60s，余量 ~35s）。
 
 **遗留 minors**：M2 各任务 deferred minors 总账见 `.superpowers/sdd/2026-11-06-wao-m2/progress.md`
 （要点：model-dependent 召回断言为已申报 flake 向量[网关漂移非回归]；roundtrip 探针 ask-present 不进
@@ -199,6 +200,10 @@ accept-m2: PASS (doctor clean, dsh+claude+codex probe×2 each with resume, switc
   M3 立项起点=DESIGN §14 M3 行 + 两账本未闭 minors。
 - **接线钉（前任务留给后续的义务）**：跨 turn 出站预算靠 adapter 限流兜底（T13 minor）、30/min 限流
   已落（T17）；~~M2 需补 claude thinking 可得性验证~~ 已闭（T1 探针：`.thinking` 载荷真实出现）。
+- **两条滑档的 M1 minors 点名入 M3**（M2 终审点名，勿再滑）：**pendingFinal 空 text 终帧残留回归**
+  （M1-T17 minor，§5 #7 约定「M2 provider 齐后加回归」未兑现——M3 三家 provider 在位后补该回归）；
+  **npm-test last-pid ENOENT 偶发 flake 根因**（§2 脚注向量：runner/claude-runner 两个 timeout 用例
+  假 CLI last-pid 未落盘瞬时失败，复跑即绿——M3 查清落盘竞态或让用例对 ENOENT 容错）。
 
 ## 5. 遗留 deferred-minors TOP 10（M1，自 progress.md 各任务 minor 行，含影响评估）
 
@@ -232,7 +237,7 @@ profile 成功并随 DELETE 清理。完整 minors 总账见 progress.md 各任�
 ## 7. 交接检查单
 
 ```sh
-npm test                                                        # 319/319
+npm test                                                        # 321/321
 npm run contract -- --plugin plugins/provider-dsh --port dsh     # 11/11
 npm run contract -- --plugin plugins/provider-claude --port claude  # 11/11 (M2)
 npm run contract -- --plugin plugins/provider-codex --port codex    # 11/11 (M2)

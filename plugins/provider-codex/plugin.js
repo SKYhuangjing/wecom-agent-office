@@ -35,6 +35,10 @@ export default {
         { key: 'configOverrides', label: '运行时配置覆盖（列表，每项 key=value 形如 openai_base_url=https://gw.example/v1，逐项传 -c；字符串值自动加 TOML 引号）', type: 'list' },
         { key: 'apiKeyEnv', label: '凭证环境变量名（值为 model.apiKey 字面量时注入；codex 自身读 CODEX_API_KEY）', type: 'string', default: 'CODEX_API_KEY' },
         { key: 'env', label: '注入子进程的环境变量（值必须是字符串）', type: 'object' },
+        // progressCoT is consumed by the core-engine progressor wiring (T19)
+        // per DESIGN §6.1 (providerConfig.progressCoT 默认 on) — do not remove;
+        // same row as dsh so the M3 UI renders the switch uniformly.
+        { key: 'progressCoT', label: '进度行展示思维链摘要', type: 'bool', default: true },
         { key: 'codexBin', label: 'codex 可执行文件（PATH 或绝对路径）', type: 'string', default: 'codex' },
         { key: 'codexHome', label: 'codex 配置目录（默认 ~/.codex；注入 $CODEX_HOME，会话 rollout 也在其 sessions/ 下——readHistory 同源）', type: 'string' },
       ],

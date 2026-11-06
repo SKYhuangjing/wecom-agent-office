@@ -31,8 +31,12 @@ export default {
         { key: 'allowedTools', label: '允许的工具（列表，逗号拼接传 --allowedTools）', type: 'list' },
         { key: 'env', label: '注入子进程的环境变量（值必须是字符串）', type: 'object' },
         { key: 'prompt', label: '人设（多行，--append-system-prompt）', type: 'string' },
+        // progressCoT is consumed by the core-engine progressor wiring (T19)
+        // per DESIGN §6.1 (providerConfig.progressCoT 默认 on) — do not remove;
+        // same row as dsh so the M3 UI renders the switch uniformly.
+        { key: 'progressCoT', label: '进度行展示思维链摘要', type: 'bool', default: true },
         { key: 'claudeBin', label: 'claude 可执行文件（PATH 或绝对路径）', type: 'string', default: 'claude' },
-        { key: 'claudeConfigDir', label: 'claude 配置目录（默认 ~/.claude，会话历史所在；可用 $CLAUDE_CONFIG_DIR 重定向）', type: 'string' },
+        { key: 'claudeConfigDir', label: 'claude 配置目录（默认 ~/.claude，会话历史所在；重定向时注入子进程 $CLAUDE_CONFIG_DIR——readHistory 同源）', type: 'string' },
       ],
 
       // Semantic validation on top of the schema types: cwd presence, model

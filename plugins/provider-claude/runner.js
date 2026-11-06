@@ -54,6 +54,11 @@ export function createRunner({ bot, providerConfig, log, escalationMs = DEFAULT_
     if (m.baseURL) extraEnv.ANTHROPIC_BASE_URL = m.baseURL;
     if (m.apiKey) extraEnv[m.apiKeyEnv || 'ANTHROPIC_AUTH_TOKEN'] = m.apiKey;
   }
+  // A redirected claudeConfigDir must reach the CLI too: claude honors
+  // $CLAUDE_CONFIG_DIR for its config AND the projects/ session tree the
+  // history reader walks — without this the CLI writes ~/.claude while
+  // readHistory looks in the redirect (parity with codexHome in codex's runner).
+  if (pc.claudeConfigDir) extraEnv.CLAUDE_CONFIG_DIR = pc.claudeConfigDir;
   const logger = log ?? console;
 
   function run({ prompt, sessionId, signal, timeoutMs, onEvent } = {}) {

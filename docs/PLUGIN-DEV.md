@@ -334,6 +334,11 @@ channel 的 `accountSchema`（bot 的 account 块）与 provider 的 `configSche
 
 插件日志自带 `[插件id]` 前缀（`ctx.log`），grep 它就是你的第一现场。
 
+**disabled 插件的边界（M1-T7/T8 遗留 minor，文档面）**：`enabled:false` 只跳过 activate——
+discover 阶段仍会 import 插件模块以读 manifest，**模块顶层照常求值**，且 import 没有超时兜底。
+因此一个带挂起顶层 await（或顶层死循环）的**禁用**插件照样阻塞 boot/reload；插件模块必须保持
+**顶层零副作用**——顶层只做 import 与常量定义，一切动作（连接/定时器/子进程/await）都进 activate。
+
 ---
 
 ## 10. 红线（违反 = 评审不过）

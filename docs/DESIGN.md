@@ -318,7 +318,7 @@ claude（会话文件挂 cwd 哈希目录）必失效 → 视为切换走交接�
 | **模型网关路由（评审修正）** | `extraEnv`（apiKeyEnv，现状保留） | bot 级 `env`：`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`（官方文档化，✅成立） | ❌ **`OPENAI_BASE_URL` 不存在**——改走 `-c openai_base_url=...` + `-c model_provider=...` 运行时覆盖，或 materializeConfig 写 per-bot `CODEX_HOME/config.toml`；凭证 `CODEX_API_KEY`；ChatGPT OAuth token 对网关无效 |
 | 成功判据 | exit 0 且 `turn_end.reason.kind==='completed'`（✅实测） | `result.subtype==='success'`（M2 复核） | exit 0 且 `turn.completed`（✅实测） |
 | 事件映射 | session/status(step·reason)/text/tool_call/final | system(init)/assistant(text·thinking·tool_use)/result | thread.started/turn.started/**item.completed(reasoning·agent_message·command_execution·file_change·mcp_tool_call·web_search·todo_list)**/turn.completed/**turn.failed·error**（0.166 实测勘误，T4/T5：计划 item 实为 `todo_list{items}`，**无 `plan_update`**——runner 留 plan_update 拼写对冲映射；`collab_tool_call` 存在但暂不映射，按宽松解析降级不可见；漏映射=进度与 timeline 整条丢失） |
-| 只读历史 | zstd 多帧解码（移植 history.js） | `~/.claude/projects/<hash>/*.jsonl` | `~/.codex/sessions/**.jsonl` |
+| 只读历史 | zstd 多帧解码（移植 history.js） | `~/.claude/projects/<字符转义slug(realpath cwd)>/*.jsonl` | `~/.codex/sessions/**.jsonl` |
 | 锁冲突 | code='lock-conflict' → 重试 1 次→防线三文案 | 独占冲突同文案 | 同左 |
 
 **实测基线（2026-11-05 本机探针，`test/probe.sh` 固化）**：dsh 事件流形状/`--session-id` 纯 resume 语义/

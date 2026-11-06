@@ -3,12 +3,13 @@
 // it — a /bin/sh wrapper exporting FAKE_MODE/FAKE_HOME before exec'ing
 // fake-claude.js (exec keeps the pid, so last-pid is the pid the runner
 // spawned) — so the runner needs no env-passthrough support beyond the
-// gateway env injection (model.baseURL/apiKey → ANTHROPIC_*).
+// gateway env injection (model.baseURL/apiKey → ANTHROPIC_*) and
+// claudeConfigDir → $CLAUDE_CONFIG_DIR.
 // Covers: completed shape + unified events + stdin piping, thinking payload
 // (.thinking, thinking_tokens noise skipped), tool_use mapping, resume argv
 // (--resume), abort-partial, SIGKILL escalation (injectable escalationMs),
 // timeout, lock, IsolationError hedge, credential, first-event-abort sessionId
-// drop, no-id-echo, never-rejects, gateway env, argv assembly
+// drop, no-id-echo, never-rejects, gateway env, claudeConfigDir env, argv assembly
 // (--model/--permission-mode/--allowedTools/--append-system-prompt).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -167,6 +168,29 @@ test('runner: gateway env — model.baseURL→ANTHROPIC_BASE_URL, apiKey→ANTHR
     assert.equal(base, 'https://gw.example/v1');
     assert.equal(token, 'sk-explicit', 'providerConfig.env overrides the model-derived token');
     assert.equal(extra, 'yes', 'providerConfig.env passed through');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('runner: env injection — claudeConfigDir → $CLAUDE_CONFIG_DIR (CLI writes where readHistory reads)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wao-cl-cfgdir-'));
+  try {
+    // Without the injection an operator redirecting claudeConfigDir gets a
+    // split brain: the real CLI writes ~/.claude while readHistory walks the
+    // redirect (codexHome parity — provider-codex/runner.js).
+    const fakeHome = join(dir, 'fake-home');
+    mkdirSync(fakeHome, { recursive: true });
+    mkdirSync(join(dir, 'bin'), { recursive: true });
+    const bin = join(dir, 'bin', 'claude-cfgdir.sh');
+    writeFileSync(bin, '#!/bin/sh\n'
+      + `export FAKE_MODE="ok"\nexport FAKE_HOME="${fakeHome}"\n`
+      + `printf '%s' "$CLAUDE_CONFIG_DIR" > "${join(fakeHome, 'saw-cfgdir')}"\n`
+      + `exec "${FAKE_CLAUDE}" "$@"\n`);
+    chmodSync(bin, 0o755);
+    const cfgDir = join(dir, 'claude-cfg');
+    const runner = makeRunner(dir, { claudeBin: bin, claudeConfigDir: cfgDir });
+    const res = await runOnce(runner);
+    assert.equal(res.code, 'completed');
+    assert.equal(readFileSync(join(fakeHome, 'saw-cfgdir'), 'utf8'), cfgDir, 'claudeConfigDir reaches the child as $CLAUDE_CONFIG_DIR');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
