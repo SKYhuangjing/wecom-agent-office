@@ -169,6 +169,10 @@ const TOOLS = [
         },
       },
       required: ['bot'],
+      // top level is closed (typos like "bots"/"record" must fail, not vanish);
+      // the bot record itself stays open — its fields are validated by the
+      // engine's own bot schema (validateBot), not re-declared here.
+      additionalProperties: false,
     },
     async run({ services, args }) {
       const ops = opsNow(services);
@@ -258,7 +262,7 @@ const TOOLS = [
   },
   {
     name: 'probation_test',
-    description: '岗前测试：直连岗位运行器跑一轮（默认探针「回复：收到」，可自定义 prompt；带 sessionId 则续跑该会话）。不进引擎链、不记台账。',
+    description: '岗前测试：直连岗位运行器跑一轮（默认探针「回复：收到」，可自定义 prompt；带 sessionId 则续跑该会话）。不进引擎链、不记台账。结果 code 字段才是探针成功判据（completed＝通过），勿只看 isError——未通过也是正常应答。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -341,8 +345,12 @@ const TOOLS = [
     },
     async run({ services, args, log }) {
       const kops = kopsNow(services);
-      // Impact BEFORE the flip: which employees lose their channel/provider port.
-      let affected = [];
+      // Impact BEFORE the flip: which ON-DUTY employees lose their channel/
+      // provider port. Off-duty (休假) employees are already offline — counting
+      // them as "taken down by this flip" would overstate the impact. null =
+      // impact UNKNOWN (engine service unavailable or the tally failed); the
+      // flip below is authoritative either way.
+      let affected = null;
       const ops = services.get('companyOps'); // optional here — the flip itself needs no engine
       if (ops != null) {
         try {
@@ -350,9 +358,9 @@ const TOOLS = [
           const chans = channels.filter((c) => c.owner === args.departmentId).map((c) => c.id);
           const provs = providers.filter((p) => p.owner === args.departmentId).map((p) => p.id);
           affected = ops.agents().agents
-            .filter((a) => provs.includes(a.provider) || chans.includes(a.channel))
+            .filter((a) => a.enabled && (provs.includes(a.provider) || chans.includes(a.channel)))
             .map((a) => ({ id: a.id, name: a.name }));
-        } catch { /* impact is advisory; the flip below is authoritative */ }
+        } catch { affected = null; /* impact is advisory; the flip below is authoritative */ }
       }
       log?.info?.(`mcp: department_toggle ${args.departmentId} -> ${args.enabled}`);
       const plugins = await kops.setPluginEnabled(args.departmentId, args.enabled);
@@ -363,14 +371,16 @@ const TOOLS = [
           { departmentId: args.departmentId, enabled: true, status: dept?.status ?? null },
         );
       }
-      const names = affected.map((a) => `${a.id}（${a.name}）`);
+      const impactLine = affected == null
+        ? '- 影响未知（引擎不可用）：本次停用未清点受影响员工，请稍后用 list_employees 核对\n'
+        : `- 影响 ${affected.length} 名员工下线${affected.length > 0 ? `：${affected.map((a) => `${a.id}（${a.name}）`).join('、')}` : ''}\n`;
       return ok(
         `⚠️ 部门停用：${args.departmentId} 已停用（部门重组完成）。\n`
-        + `- 影响 ${affected.length} 名员工下线${names.length > 0 ? `：${names.join('、')}` : ''}\n`
+        + impactLine
         + '- 在途工作已按四阶段收尾（drain → 卸载 → 重扫 → 调和）\n'
         + '- 恢复方式：再次 department_toggle（enabled=true）即可，员工自动返岗\n'
         + '- 注意：重组重建了 MCP 会话，若下次调用收到 -32002，请重新 initialize',
-        { departmentId: args.departmentId, enabled: false, status: dept?.status ?? null, affectedEmployees: affected.map((a) => a.id) },
+        { departmentId: args.departmentId, enabled: false, status: dept?.status ?? null, affectedEmployees: affected == null ? null : affected.map((a) => a.id) },
       );
     },
   },
@@ -427,7 +437,7 @@ const TOOLS = [
   },
   {
     name: 'company_state',
-    description: '公司状态摘要：运行时长、部门（在役/停用/故障计数与清单）、员工（在册/工作中/待命/休假）。只读。',
+    description: '公司状态摘要：运行时长、部门（在役/停用/故障计数与清单）、员工（在册/工作中/待命/离线/休假）。只读。',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     run({ services }) {
       const kops = kopsNow(services);
@@ -444,7 +454,9 @@ const TOOLS = [
       }
       const { agents } = ops.agents();
       const n = (s) => agents.filter((a) => (s === 'offduty' ? a.enabled === false : a.enabled !== false && a.status === s)).length;
-      lines.push(`- 员工：在册 ${agents.length} 人（工作中 ${n('working')}／待命 ${n('idle')}／休假 ${n('offduty')}）`);
+      // 离线 counts ENABLED bots currently offline — the fourth bucket the old
+      // line dropped (在册 ≠ 工作中+待命+休假 when anyone is offline).
+      lines.push(`- 员工：在册 ${agents.length} 人（工作中 ${n('working')}／待命 ${n('idle')}／离线 ${n('offline')}／休假 ${n('offduty')}）`);
       return ok(lines.join('\n'), { uptimeSec: kops.uptimeSec(), departments: plugins, agents: ops.sanitize(agents) });
     },
   },

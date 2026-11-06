@@ -702,6 +702,33 @@ test('dirty inputs: oversized/invalid bodies, 405+Allow, 404/400 misses, offline
   assert.equal((await keyed.text()).includes('{{KEY_mg29x}}'), false);
 });
 
+// W1 T2 review: the *Op refactor must not reorder which failure answers a
+// request that triggers two at once — the pre-refactor precedence is API
+// surface (clients may branch on it), locked here.
+test('error precedence: unknown bot and provider-unavailable outrank the parse errors they used to beat', async () => {
+  // timeline: unknown bot + junk window → 404 (bot existence ran first)
+  const tl = await get('/api/timeline?bot=none&window=abc');
+  assert.equal(tl.status, 404);
+  assert.equal((await tl.json()).error, 'bot not found');
+  // test: unknown bot + unparseable body → 404 first
+  const ghost = await fetch(url('/api/bots/none/test'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{oops' });
+  assert.equal(ghost.status, 404);
+  assert.equal((await ghost.json()).error, 'bot not found');
+  // test: provider port gone + unparseable body → 400 "provider … unavailable",
+  // NOT the body-parse 400 (same registry-surgery shape as the direct-reconcile
+  // test above; restored in finally so later tests see the live port)
+  const reg = kernel.portRegistry;
+  const entry = reg.provider.get('fakeprov');
+  reg.provider.delete('fakeprov');
+  try {
+    const resp = await fetch(url('/api/bots/b1/test'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{oops' });
+    assert.equal(resp.status, 400);
+    assert.equal((await resp.json()).error, 'provider fakeprov unavailable');
+  } finally {
+    reg.provider.set('fakeprov', entry);
+  }
+});
+
 test('bots.js unit: load tolerance, schema validation, revalidateAll split', () => {
   assert.deepEqual(loadBots(join(dataDir, 'missing-bots.json')), { bots: [] });
   const f = join(dataDir, 'unit-bots.json');

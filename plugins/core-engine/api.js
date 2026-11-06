@@ -504,7 +504,13 @@ async function testBotOp(state, id, reqBody) {
 
 async function testBotHandler({ req, res, m, state }) {
   const id = idOf(m);
-  if (findBot(state, id) == null) throw httpError(404, 'bot not found'); // 404 wins over body errors, as before
+  const bot = findBot(state, id);
+  if (bot == null) throw httpError(404, 'bot not found'); // 404 wins over body errors, as before
+  const port = state.ports?.getProvider?.(bot.provider);
+  if (port == null || typeof port.createRunner !== 'function') {
+    // provider availability also outranks body-parse errors — the pre-refactor order
+    throw httpError(400, `provider ${bot.provider} unavailable`);
+  }
   sendJson(res, 200, await testBotOp(state, id, await readBody(req)));
 }
 
@@ -560,7 +566,9 @@ function timelineOp(state, { bot, windowMs }) {
 }
 
 async function timelineHandler({ res, searchParams, state }) {
-  sendJson(res, 200, timelineOp(state, { bot: searchParams.get('bot'), windowMs: windowOf(searchParams) }));
+  const bot = searchParams.get('bot') || undefined;
+  if (bot !== undefined && findBot(state, bot) == null) throw httpError(404, 'bot not found'); // 404 wins over window errors, as before (mirrors patchBotHandler)
+  sendJson(res, 200, timelineOp(state, { bot, windowMs: windowOf(searchParams) }));
 }
 
 // window query param parsing (ms) — shared by the HTTP handler; the MCP tool

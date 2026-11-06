@@ -16,6 +16,14 @@
   详细汇报；`progressCoT` 降级为废弃兼容别名（仅 cot 风格内抑制 💭，不再能翻回详细汇报）。
   timeline（本地工作日志）照旧收全量 thinking/tool 事件——仅收窄企微出站面。
 
+### Fixed
+
+- W1 T2 `*Op` 重构的两处错误优先级回归（终审 Important）：`GET /api/timeline` 未知 bot +
+  坏 window 组合回到 404 bot 优先（bot 存在性预检查回到 window 解析前，镜像 patchBotHandler）；
+  `POST /api/bots/:id/test` provider 端口不可用 + 坏 JSON body 组合回到 400 provider
+  unavailable 优先（端口预检查回到 body 解析前）。「HTTP 行为零变化」的承诺在这两个组合上
+  恢复成立（plugin.test.js 锁定组合序）。
+
 ## [0.1.0] - 2026-11-06
 
 初始发布。

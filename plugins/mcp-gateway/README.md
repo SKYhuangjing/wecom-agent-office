@@ -38,10 +38,10 @@ JSON-RPC 2.0 over HTTP 自研协议子集（计划见 docs/superpowers/plans/202
 | `update_employee` | `botId`,`patch` | 档案更新（patch 语义；密码留空＝保留） |
 | `offboard` | `botId` | ⚠️ 离职（结果带面谈后果：收尾/工位清理/档案留存/可重新入职） |
 | `set_duty` | `botId` | 调休↔返岗（enabled 切换） |
-| `probation_test` | `botId`,`sessionId?`,`prompt?` | 岗前测试（不进引擎链、不记台账） |
+| `probation_test` | `botId`,`sessionId?`,`prompt?` | 岗前测试（不进引擎链、不记台账；成功判据是结果 code 字段，勿只看 isError） |
 | `broadcast` | `botId`,`chatKey`,`content` | ⚠️ 广播（真实送达企微，无法撤回） |
 | `list_departments` | — | 部门（插件）清单 id/type/version/status |
-| `department_toggle` | `departmentId`,`enabled` | ⚠️ 部门启停（四阶段重组；结果带「影响 N 名员工下线」） |
+| `department_toggle` | `departmentId`,`enabled` | ⚠️ 部门启停（四阶段重组；结果带「影响 N 名员工下线」，仅计在岗员工；引擎不可用时如实报「影响未知」） |
 | `work_log` | `botId`,`chatKey?` | 工作档案（台账轮次） |
 | `work_timeline` | `botId?`,`windowMin?` | 工作日志（时间线事件流） |
 | `company_state` | — | 公司状态摘要（运行时长/部门/员工） |

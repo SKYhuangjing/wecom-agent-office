@@ -178,6 +178,8 @@ test('tools/list: the 13-tool roster with Chinese descriptions and object schema
   for (const name of ['offboard', 'broadcast', 'department_toggle']) {
     assert.match(tools.find((t) => t.name === name).description, /危险操作/);
   }
+  // the probe's success judge is the result code, not isError
+  assert.match(tools.find((t) => t.name === 'probation_test').description, /勿只看 isError/);
 });
 
 test('hire → appears in list_employees → get_employee detail is secret-free', async () => {
@@ -299,7 +301,7 @@ test('list_departments and company_state summarize the live registry', async () 
   const st = await call('company_state');
   assert.ok(Number.isFinite(st.structuredContent.uptimeSec));
   assert.match(st.content[0].text, /部门：在役 \d+／停用 \d+／故障 \d+/);
-  assert.match(st.content[0].text, /员工：在册 1 人（工作中 0／待命 1／休假 0）/);
+  assert.match(st.content[0].text, /员工：在册 1 人（工作中 0／待命 1／离线 0／休假 0）/);
 });
 
 test('department_toggle: disable takes the employee offline (reload), session rebuilds, enable restores', async () => {
@@ -322,6 +324,10 @@ test('department_toggle: disable takes the employee offline (reload), session re
   const depts = await call('list_departments');
   assert.equal(depts.structuredContent.departments.find((p) => p.id === 'provider-fake')?.status, 'disabled');
   assert.match(depts.content[0].text, /provider-fake（Fake Provider）｜provider｜v0\.1\.0｜停用/);
+  // offline employees now land in their OWN bucket — the summary line no
+  // longer drops them (text and structuredContent stay consistent)
+  const stOffline = await call('company_state');
+  assert.match(stOffline.content[0].text, /员工：在册 1 人（工作中 0／待命 0／离线 1／休假 0）/, 'offline employee counted in the summary');
 
   const on = await call('department_toggle', { departmentId: 'provider-fake', enabled: true });
   assert.match(on.content[0].text, /部门恢复：provider-fake 已启用/);
@@ -363,6 +369,59 @@ test('offboard: exit-interview consequence copy; second call is a 404 isError', 
   assert.equal(again.structuredContent.status, 404);
 });
 
+test('department_toggle impact counts only on-duty employees; an off-duty hire is not "taken down"', async () => {
+  // Re-hire (same 工牌号, as the exit-interview copy promises) then park m1 on
+  // 调休 BEFORE the flip: a disabled employee is already offline, so the
+  // disable copy must say 0, not 1.
+  const rehired = await call('hire', { bot: BOT_M1 });
+  assert.equal(rehired.isError, undefined);
+  assert.match(rehired.content[0].text, /入职完成：测试员工（工牌号 m1）/);
+  const off = await call('set_duty', { botId: 'm1' });
+  assert.match(off.content[0].text, /调休：测试员工/);
+
+  const flip = await call('department_toggle', { departmentId: 'provider-fake', enabled: false });
+  assert.equal(flip.isError, undefined);
+  assert.match(flip.content[0].text, /影响 0 名员工下线/, 'off-duty employee not miscounted');
+  assert.deepEqual(flip.structuredContent.affectedEmployees, []);
+  sessionId = await initSession();
+
+  const on = await call('department_toggle', { departmentId: 'provider-fake', enabled: true });
+  assert.match(on.content[0].text, /部门恢复：provider-fake 已启用/);
+  sessionId = await initSession();
+
+  const back = await call('set_duty', { botId: 'm1' });
+  assert.match(back.content[0].text, /返岗：测试员工/);
+  // restore the journey's end state (empty roster) for the tests that follow
+  const exit = await call('offboard', { botId: 'm1' });
+  assert.equal(exit.isError, undefined);
+});
+
+test('department_toggle without the engine service: impact honestly unknown, the flip still works', async () => {
+  // Park core-engine (companyOps) — department_toggle must not pretend "0
+  // affected" from a tally it could not run.
+  const offEngine = await call('department_toggle', { departmentId: 'core-engine', enabled: false });
+  assert.equal(offEngine.isError, undefined);
+  assert.match(offEngine.content[0].text, /部门停用：core-engine/);
+  sessionId = await initSession();
+
+  const flip = await call('department_toggle', { departmentId: 'provider-fake', enabled: false });
+  assert.equal(flip.isError, undefined);
+  assert.match(flip.content[0].text, /影响未知（引擎不可用）/, 'unknown impact is stated, not faked as 0');
+  assert.equal(flip.structuredContent.affectedEmployees, null);
+  sessionId = await initSession();
+
+  const onProv = await call('department_toggle', { departmentId: 'provider-fake', enabled: true });
+  assert.match(onProv.content[0].text, /部门恢复：provider-fake 已启用/);
+  sessionId = await initSession();
+  const onEngine = await call('department_toggle', { departmentId: 'core-engine', enabled: true });
+  assert.match(onEngine.content[0].text, /部门恢复：core-engine 已启用/);
+  sessionId = await initSession();
+
+  // engine back behind the tools: companyOps answers again
+  const st = await call('company_state');
+  assert.match(st.content[0].text, /员工：在册 0 人（工作中 0／待命 0／离线 0／休假 0）/);
+});
+
 test('dirty arguments: schema violations are isError results, unknown/malformed tool names are -32602', async () => {
   const missing = await call('get_employee', {});
   assert.equal(missing.isError, true);
@@ -375,6 +434,14 @@ test('dirty arguments: schema violations are isError results, unknown/malformed 
   const extra = await call('list_employees', { foo: 1 });
   assert.equal(extra.isError, true);
   assert.match(extra.content[0].text, /未知参数 foo/);
+
+  // hire's TOP level is closed (typo'd keys must fail, not vanish) while the
+  // bot record itself stays open (engine-side validateBot owns that layer)
+  const extraTop = await call('hire', { bot: { ...BOT_M1, id: 'never-created' }, seasoning: 1 });
+  assert.equal(extraTop.isError, true);
+  assert.match(extraTop.content[0].text, /参数不符：未知参数 seasoning/);
+  const rosterAfter = await call('list_employees');
+  assert.equal(rosterAfter.structuredContent.agents.length, 0, 'rejected hire created nothing');
 
   const negative = await call('work_timeline', { windowMin: -5 });
   assert.equal(negative.isError, true);
