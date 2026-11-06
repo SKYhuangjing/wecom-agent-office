@@ -149,8 +149,10 @@ const pickPort = () => new Promise((resolve, reject) => {
 });
 
 // `pgrep -f <pattern>` with no match exits 1 — the bash-side "no orphan" probe.
+// `--` end-of-options: patterns may start with a dash ("--profile …"), which
+// pgrep would otherwise take for an (illegal) option — exit 2, not "no match".
 const pgrepF = (pattern) => new Promise((resolve) => {
-  execFile('pgrep', ['-f', pattern], (err, stdout) => {
+  execFile('pgrep', ['-f', '--', pattern], (err, stdout) => {
     resolve(err ? null : stdout.trim());
   });
 });
@@ -236,9 +238,13 @@ test('e2e: SIGINT with a hung CLI run in flight → stop-tail sweep SIGKILLs it,
     assert.ok(exited, 'service exited after SIGINT');
     assert.equal(service.exitCode, 0, `graceful exit 0 (signal=${service.signalCode})`);
 
-    // bash-side assertions: known child dead + pgrep finds no straggler
+    // bash-side assertions: known child dead + pgrep finds no straggler.
+    // NOT the wrapper path: it `exec`s the fake CLI, so the wrapper path is
+    // gone from argv — pgrep -f <bin> would match nothing even for a live
+    // orphan (vacuous). The runner's `--profile wecom-<botId>` arg survives
+    // the exec and is unique to this test's bot.
     assert.ok(await pidDeadWithin(cliPid, 5000), `orphan CLI (pid ${cliPid}) dead after service exit`);
-    assert.equal(await pgrepF(bin), null, `pgrep -f ${bin} finds nothing after service exit`);
+    assert.equal(await pgrepF('--profile wecom-orphan-b1'), null, 'pgrep -f "--profile wecom-orphan-b1" finds nothing after service exit');
 
     // and the sweep (not something else) did it: the service log narrates it
     const waoLog = readFileSync(join(dataDir, 'logs', 'wao.log'), 'utf8');

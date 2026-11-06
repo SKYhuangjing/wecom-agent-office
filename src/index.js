@@ -45,8 +45,12 @@ const json = (res, code, obj, extra = {}) => {
 // this process's direct children (exactly what the runners spawned — pgrep
 // excludes itself), confirm each is dead, and SIGKILL any survivor. Success
 // is silent; only action/failure narrates. Assembly-layer on purpose (entry
-// owns process lifetime, kernel modules stay child-free). pgrep is a macOS
-// given here; where it is missing the sweep degrades to a warn, never throws.
+// owns process lifetime, kernel modules stay child-free). Library caveat:
+// createKernel's stop() sweeps the EMBEDDING process's direct children too —
+// SIGKILLing any child the host itself spawned — so this is CLI-specific
+// semantics; hosts embedding the kernel with children of their own must not
+// lean on stop() untouched. pgrep is a macOS given here; where it is missing
+// the sweep degrades to a warn, never throws.
 export const sweepOrphanChildren = async ({ pid = process.pid, log, execFileFn = execFile } = {}) => {
   const say = (level, msg) => { (log?.[level] ?? (() => {}))(msg); };
   const list = await new Promise((resolve) => {
@@ -54,8 +58,12 @@ export const sweepOrphanChildren = async ({ pid = process.pid, log, execFileFn =
       if (err) {
         // pgrep exit 1 = no children matched (the happy norm); ENOENT = this
         // platform has no pgrep — degrade loudly, the sweep is best-effort.
+        // A timeout (killed=true) is a different animal: pgrep EXISTS but did
+        // not answer — say so, "unavailable" would send the operator hunting
+        // for a missing binary that is right there.
         if (err.code === 1) return resolve([]);
-        say('warn', `stop: orphan sweep skipped (pgrep unavailable: ${err.code ?? err.message})`);
+        if (err.killed) say('warn', 'stop: orphan sweep skipped (pgrep timed out after 2000ms)');
+        else say('warn', `stop: orphan sweep skipped (pgrep unavailable: ${err.code ?? err.message})`);
         return resolve(null);
       }
       resolve(String(stdout).split('\n').map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0));
@@ -546,15 +554,21 @@ const cmdDoctor = async (flags) => {
   if (!existsSync(plistPath)) {
     mark('!', 'launchd', `not installed (informational — cp docs/launchd.plist ${plistPath} per its header, then launchctl load)`);
   } else {
-    const listed = await new Promise((resolve) => {
-      execFile('launchctl', ['list'], { timeout: 3000 }, (err, stdout) => resolve(err ? null : String(stdout ?? '')));
+    const [listed, lcErr] = await new Promise((resolve) => {
+      execFile('launchctl', ['list'], { timeout: 3000 }, (err, stdout) => resolve([err ? null : String(stdout ?? ''), err]));
     });
-    const m = listed != null
-      ? new RegExp('^\\s*(\\d+|-)\\s+[-\\d]+\\s+com\\.wecom-agent-office\\s*$', 'm').exec(listed)
-      : null;
-    if (m != null && m[1] !== '-') mark('✓', 'launchd', `installed and running (pid ${m[1]})`);
-    else if (m != null) mark('✗', 'launchd', 'loaded but NOT running (tail the plist\'s launchd.err.log; launchctl kickstart -k gui/$(id -u)/com.wecom-agent-office to force-restart)');
-    else mark('✗', 'launchd', `installed at ${plistPath} but not loaded (launchctl load ${plistPath})`);
+    if (lcErr != null) {
+      // launchctl itself failing (spawn error/timeout) says NOTHING about the
+      // agent's loaded state — reporting "not loaded" here would send the
+      // operator to re-load a healthy install. Informational, state unknown.
+      const why = lcErr.killed ? 'timed out after 3000ms' : (lcErr.code ?? lcErr.message);
+      mark('!', 'launchd', `cannot determine loaded state — launchctl list failed (${why}); check manually: launchctl list | grep com.wecom-agent-office`);
+    } else {
+      const m = new RegExp('^\\s*(\\d+|-)\\s+[-\\d]+\\s+com\\.wecom-agent-office\\s*$', 'm').exec(listed);
+      if (m != null && m[1] !== '-') mark('✓', 'launchd', `installed and running (pid ${m[1]})`);
+      else if (m != null) mark('✗', 'launchd', 'loaded but NOT running (tail the plist\'s launchd.err.log; launchctl kickstart -k gui/$(id -u)/com.wecom-agent-office to force-restart)');
+      else mark('✗', 'launchd', `installed at ${plistPath} but not loaded (launchctl load ${plistPath})`);
+    }
   }
   return bad === 0 ? 0 : 1;
 };

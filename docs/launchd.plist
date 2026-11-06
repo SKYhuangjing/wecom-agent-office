@@ -2,14 +2,18 @@
 <!-- ==========================================================================
   wao launchd 模板（M3 T6 运维加固）。生产安装是 T9 切换的事——这份是模板。
 
-  使用三步（把两个 <...> 占位替换成本机绝对路径后）：
+  使用三步（把 REPO_DIR/DATA_DIR/NODE_BIN/NODE_DIR 四个占位替换成本机绝对路径后）：
 
     1) 填模板（示例，本仓库默认布局——注意 node 路径按机器改，见下方
        EnvironmentVariables 注释）：
          cp docs/launchd.plist ~/Library/LaunchAgents/com.wecom-agent-office.plist
-         # 编辑：REPO_DIR → 仓库绝对路径；DATA_DIR → 数据目录绝对路径
-         #       NODE_BIN → `which node` 的绝对路径（nvm 机器上是
-         #         /Users/<user>/.nvm/versions/node/<ver>/bin/node）
+         # 编辑（四个占位一个都不能漏）：
+         #   REPO_DIR → 仓库绝对路径；DATA_DIR → 数据目录绝对路径
+         #   NODE_BIN → `which node` 的绝对路径（nvm 机器上是
+         #     /Users/<user>/.nvm/versions/node/<ver>/bin/node）
+         #   NODE_DIR → node 的 bin 目录（与 NODE_BIN 同目录；填进下方
+         #     PATH——launchd 无 nvm 初始化，漏改它 provider CLI 全都找不到，
+         #     且安装后表面一切正常，只在运行时静默失败）
 
     2) 安装并启动（用户级 LaunchAgent，随用户登录自起）：
          launchctl load ~/Library/LaunchAgents/com.wecom-agent-office.plist
