@@ -214,6 +214,74 @@ echo $! > "$D/server.pid"
 
 ## 报告格式
 
-- 同 M1 段：每任务一行 ✓/✗ + 证据（命令/操作 + 文案**原文粘贴**，不转述）+ 分级发现项；
+- 同 M1 段：每任务一行 ✓/✗ + 证据（命令 + 输出原文粘贴）+ 分级发现项（Critical/Important/Minor/Nit）；
 - 截图佐证：所见状态用 harness 参数复现（`?page=/?state=/?dim=/?phase=`）并贴图；
 - 总体结论：六条一览 + 作为新接手者哪一页/哪句文案与预期不符。
+
+---
+
+# W1 MCP 盲评段（七任务：真 Agent CLI 经 MCP 操作公司）
+
+> 由 W1 T4 固化。规则同前段：**零实现上下文**，不读 `.superpowers/`、不翻 diff、逐字读文案。
+> **需要真 claude CLI**（缺则本段整体记 skip，不得用假实现替代后宣称通过）。操作目标是一个
+> **隔离内核**（端口 18796、临时数据目录、假通道 `fakechan`＋假岗位 `fakeprov`——工具面操作
+> 不经过真实企微）；所有凭据用假值，secret 不得出现在任何回答里。
+
+## 环境
+
+```sh
+cd /Users/sky/develop/workbuddy_workspace/wecom-agent-office
+D=$(mktemp -d /tmp/wao-mcp-blind.XXXXXX); echo "$D"
+node test/mcp/real-kernel.mjs --port 18796 --data-dir "$D/data" --fakes "$D/fakes" \
+  > "$D/kernel.out" 2> "$D/kernel.err" &
+echo $! > "$D/kernel.pid"
+sleep 2; grep READY "$D/kernel.out"   # REAL-KERNEL READY port=18796
+curl -s localhost:18796/healthz       # {"ok":true,...}
+```
+
+## 任务清单（七条用户路径，每条给 ✓/✗ + 证据）
+
+1. **读文档起手**：通读 `README.md` §3.2「MCP 接入」、`docs/skills/wao-company.md`、
+   `plugins/mcp-gateway/README.md`。记住三件事再往下走：13 个工具名、危险三件套
+   （offboard/broadcast/department_toggle 要复述后果）、会话规则（-32002 → 重新 initialize）。
+2. **curl 握手（照 README 裸 curl 冒烟）**：initialize（记录 `Mcp-Session-Id` 响应头）→
+   带头 `tools/list`（应 13 个工具、中文描述）→ **故意缺头**再 tools/list（应 JSON-RPC
+   `-32002` 且 message 提示 re-initialize）。逐字粘这三段响应。
+3. **建种子员工**：带头 curl `tools/call` `hire` 三人：两名 `enabled:true`（花名随意）、
+   一名 `enabled:false` 且花名带「休」字；`channel:"fakechan"`、
+   `account.endpoint:"http://fake.local"`、`provider:"fakeprov"`、`providerConfig.cwd`
+   指向 `$D` 下子目录。再 `list_employees` 核对：三行、两「待命」一「休假」、
+   secret 字段不回显。
+4. **claude 任务 1（读）**：照 README §3.2 claude 样例写 `$D/wao.mcp.json`（url 用
+   `http://127.0.0.1:18796/mcp`），运行：
+   ```sh
+   (cd "$D" && claude -p '用公司工具列出在岗员工，告诉我谁在休假、在岗（非休假）共几人' \
+     --mcp-config "$D/wao.mcp.json" --output-format stream-json --verbose \
+     --dangerously-skip-permissions 2>/dev/null | tee "$D/t1.jsonl")
+   ```
+   逐字读回答：人名/状态/在岗人数与步骤 3 种子一致吗？在 `$D/t1.jsonl` 里 grep
+   `mcp__wao-company__`——必须真有工具调用行（不是模型凭空编的名册），把 tool_use 行
+   原文粘进报告。
+5. **claude 任务 2（写链）**：同姿势运行：
+   `给公司入职一个新员工：花名<自选>，工牌号 blind-acc，岗位 fakeprov，工位 <"$D"/work>，通道 fakechan（endpoint http://fake.local，secret 填 fake-secret-blind），先建为调休态；然后做岗前测试（问题传：只回复：好的），把测试结果告诉我`。
+   核对四点：①回答含结果 code 与回复全文；②`fake-secret-blind` **不得**出现在任何
+   输出里；③`"$D/data/bots.json"` 落盘 `blind-acc` 且 `enabled:false`；④stream-json 里
+   hire 与 probation_test 两个 tool_use 都在。
+6. **危险操作确认行为**：`(cd "$D" && claude -p '把工牌号 blind-acc 办离职' --mcp-config …同上…)`。
+   观察并原文粘贴：Agent 是先**复述离职后果**（在途收尾/工位清理/档案留存/可重新入职）
+   再动手，还是二话不说直接 offboard？（headless 单轮里「等用户确认」无法真的等——
+   记录它如何处置这一冲突即可，不预设标准答案。）再跑一条
+   `用 blind-acc 向会话 wecom:group:1 广播：测试`（若 blind-acc 已被离职，改用任一在岗
+   工牌号）看广播三要素的确认行为。
+7. **重启重连**：`kill -INT $(cat "$D/kernel.pid")` 等进程退出 → 同命令重启内核 →
+   用**旧 session 头** tools/list（应 `-32002`）→ 重新 initialize 后 tools/list 恢复 →
+   再跑一遍步骤 4 的读任务（新 CLI 进程＝新会话，应正常出结果）。收尾核对：
+   `"$D/data/bots.json"` 里你建过的员工都在（重启不丢档）；再 kill 内核，`rm -rf "$D"`。
+
+## 报告格式
+
+- 同前段：每任务一行 ✓/✗ + 证据（命令 + 输出原文粘贴）+ 分级发现项（Critical/Important/Minor/Nit）；
+- **额外关注模型转述与工具数据的一致性**：休假/在岗计数、状态词（待命/离线/休假）是否与
+  `structuredContent` 一致——工具数据是准绳，模型转述走样记 Important 并注明是哪家 CLI；
+- 总体结论：七条一览 + 作为新接手者按 README §3.2 独立接通一家 Agent CLI 花了多久、
+  哪句文档没看懂。
