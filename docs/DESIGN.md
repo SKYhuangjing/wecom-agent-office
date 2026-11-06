@@ -312,7 +312,7 @@ claude（会话文件挂 cwd 哈希目录）必失效 → 视为切换走交接�
 
 | | dsh 0.2.1 | claude 2.1.318 | codex 0.166 |
 |---|---|---|---|
-| 起进程 | `dsh --profile P --json -`（`--session-id` 仅 resume，新会话省略；首事件回传新 id） | `claude -p --output-format stream-json --verbose`（stdin 传 prompt；新会话 `--session-id <uuid>`，续接 `--resume`） | `codex exec --json --skip-git-repo-check -`；续接 `codex exec resume <id>`（**resume+stdin 哨兵待 probe 复测**，回退=prompt 位置参数） |
+| 起进程 | `dsh --profile P --json -`（`--session-id` 仅 resume，新会话省略；首事件回传新 id） | `claude -p --output-format stream-json --verbose`（stdin 传 prompt；新会话**不传 session 旗标**，id 由 system/init 事件回传；续接 `--resume <id>`，init 回显同 id——T1/T2 实测，与上文续接契约一致） | `codex exec --json --skip-git-repo-check -`；续接 `codex exec resume <id>`（**resume+stdin 哨兵待 probe 复测**，回退=prompt 位置参数） |
 | 模型 | profile（materialize） | `--model` | `-m` / `-c model=` |
 | 权限/沙箱 | profile（presets+sandbox-policy） | `--permission-mode`+`--allowedTools` | `-s read-only\|workspace-write\|danger-full-access` |
 | **模型网关路由（评审修正）** | `extraEnv`（apiKeyEnv，现状保留） | bot 级 `env`：`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`（官方文档化，✅成立） | ❌ **`OPENAI_BASE_URL` 不存在**——改走 `-c openai_base_url=...` + `-c model_provider=...` 运行时覆盖，或 materializeConfig 写 per-bot `CODEX_HOME/config.toml`；凭证 `CODEX_API_KEY`；ChatGPT OAuth token 对网关无效 |
@@ -326,7 +326,11 @@ claude（会话文件挂 cwd 哈希目录）必失效 → 视为切换走交接�
 magpie；codex thread.started/item.completed(reasoning 文本✅)/turn.completed(reasoning_output_tokens)。
 **probe.sh 两条专项已固化（2026-11-06，`test/probe-baselines/` 提交）**：dsh kill-then-resume（SIGKILL 后
 `--session-id` resume **可用**，同一 sessionId 回显、上下文存活）；codex `exec resume <tid> -` 的
-stdin 哨兵**可用**（新 prompt 经 stdin 生效、thread_id 回显）。基线漂移检测：`bash test/probe.sh --check`。
+stdin 哨兵**可用**（新 prompt 经 stdin 生效、thread_id 回显）。**claude 真续接已证实（2026-11-06，随机暗号+
+新鲜对照会话法，`claude-resume.ndjson`）**：resume 轮忆出本会话暗号而对照新会话不能 → 上下文确随 `--resume`
+存活；**风险注记（M3 runbook 素材）**：同 cwd 会话共享 auto-memory（`~/.claude/projects/<cwd>/memory/`），
+单会话被告知的秘密可泄入同 cwd 其他会话——多 bot 同 cwd 部署须视 memory 为共享态。
+基线漂移检测：`bash test/probe.sh --check`。
 
 ---
 

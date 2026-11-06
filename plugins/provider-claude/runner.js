@@ -22,8 +22,12 @@ import { readHistory } from './history.js';
 // claude's exact session-conflict wording is UNKNOWN until M3 real-CLI
 // validation; the patterns are plausible shapes plus a generic fallback so an
 // unseen-but-obvious lock text still maps. Same incident class as dsh: two
-// processes resuming one session file.
-const LOCK_CONFLICT_RE = /session is locked|locked by another (?:claude |process|instance)|session lock|SessionAlreadyOwnedError|another instance.*session|session.*already in use/i;
+// processes resuming one session file. `IsolationError` is a hedge (M2-T3):
+// a distinct error-token shape seen in the wild for two-process session
+// contention — kept alongside, NOT in fake-claude's lock text (the regex and
+// the fake are co-validated; changing either means changing both). Unify all
+// of this against the REAL wording once M3 observes an actual conflict.
+const LOCK_CONFLICT_RE = /session is locked|locked by another (?:claude |process|instance)|session lock|SessionAlreadyOwnedError|IsolationError|another instance.*session|session.*already in use/i;
 const MISSING_CREDENTIAL_RE = /ANTHROPIC_API_KEY|invalid api key|authentication|unauthorized/i;
 const DEFAULT_ESCALATION_MS = 3000;
 const STDERR_TAIL_CHARS = 4000;

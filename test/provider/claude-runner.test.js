@@ -7,9 +7,9 @@
 // Covers: completed shape + unified events + stdin piping, thinking payload
 // (.thinking, thinking_tokens noise skipped), tool_use mapping, resume argv
 // (--resume), abort-partial, SIGKILL escalation (injectable escalationMs),
-// timeout, lock, credential, first-event-abort sessionId drop, no-id-echo,
-// never-rejects, gateway env, argv assembly (--model/--permission-mode/
-// --allowedTools/--append-system-prompt).
+// timeout, lock, IsolationError hedge, credential, first-event-abort sessionId
+// drop, no-id-echo, never-rejects, gateway env, argv assembly
+// (--model/--permission-mode/--allowedTools/--append-system-prompt).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -238,6 +238,27 @@ test('runner: lock stderr/result — code=lock-conflict', async () => {
     assert.equal(res.code, 'lock-conflict');
     assert.equal(res.ok, false);
     assert.match(res.detail.stderrTail, /is locked by another process/);
+    assert.equal(res.detail.exitCode, 1);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('runner: IsolationError stderr (no invented lock text) — code=lock-conflict', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wao-cl-iso-'));
+  try {
+    // The regex hedge (M2-T3): a bare `IsolationError` on stderr with NONE of
+    // fake-claude's invented lock phrasing must still map to lock-conflict —
+    // real claude's conflict wording is unknown until M3, so the fallback
+    // token carries this shape on its own (fake-claude text stays untouched;
+    // regex and fake are co-validated, see the lock test above).
+    mkdirSync(join(dir, 'bin'), { recursive: true });
+    const bin = join(dir, 'bin', 'claude-isolation.sh');
+    writeFileSync(bin, '#!/bin/sh\necho "Error: IsolationError: session is owned by an active process" >&2\nexit 1\n');
+    chmodSync(bin, 0o755);
+    const runner = makeRunner(dir, { claudeBin: bin });
+    const res = await runOnce(runner);
+    assert.equal(res.code, 'lock-conflict');
+    assert.equal(res.ok, false);
+    assert.match(res.detail.stderrTail, /IsolationError/);
     assert.equal(res.detail.exitCode, 1);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
