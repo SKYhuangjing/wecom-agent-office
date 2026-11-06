@@ -32,10 +32,12 @@ async function until(cond, timeoutMs = 8000, everyMs = 25) {
 
 function makeLog() {
   const warns = [];
+  const debugs = [];
   return {
     warns,
+    debugs,
     info: () => {},
-    debug: () => {},
+    debug: (...a) => debugs.push(a.map(String).join(' ')),
     warn: (...a) => warns.push(a.map(String).join(' ')),
     error: () => {},
   };
@@ -59,7 +61,15 @@ function makeEngine() {
 // Fake WeCom openws endpoint. st.frames records EVERY frame the client ever
 // sent (across reconnects); st.connections counts connections (retry storms
 // would show up here).
-function startFakeWecom({ subscribeErrcode = 0 } = {}) {
+//
+// respondAck controls how outbound aibot_respond_msg frames are acked:
+//   'immediate' (default) — ack as soon as the frame arrives
+//   'delayed'   — an ack is HELD until the NEXT respond frame arrives (then
+//                 the previous one is released); st.flushHeld() releases the
+//                 last held ack. Models a server whose acks land after the
+//                 client has already registered the next frame.
+//   'never'     — never ack respond frames (timeout path).
+function startFakeWecom({ subscribeErrcode = 0, respondAck = 'immediate' } = {}) {
   return new Promise((resolve) => {
     const server = createServer();
     const wss = new WebSocketServer({ server });
@@ -68,10 +78,19 @@ function startFakeWecom({ subscribeErrcode = 0 } = {}) {
       frames: [],
       sockets: [],
       subscribeErrcode,
+      respondAck,
+      flushHeld: () => {},
     };
     wss.on('connection', (ws) => {
       st.connections += 1;
       st.sockets.push(ws);
+      let heldAck = null;
+      st.flushHeld = () => {
+        if (heldAck && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(heldAck));
+          heldAck = null;
+        }
+      };
       ws.on('message', (buf) => {
         let msg;
         try {
@@ -89,8 +108,15 @@ function startFakeWecom({ subscribeErrcode = 0 } = {}) {
             }),
           );
         } else if (msg.cmd && msg.cmd !== 'ping') {
-          // ack every outbound request (errcode 0, no cmd — protocol ack shape)
-          ws.send(JSON.stringify({ headers: { req_id: msg.headers?.req_id }, errcode: 0 }));
+          if (msg.cmd !== 'aibot_respond_msg' || st.respondAck === 'immediate') {
+            // ack every outbound request (errcode 0, no cmd — protocol ack shape)
+            ws.send(JSON.stringify({ headers: { req_id: msg.headers?.req_id }, errcode: 0 }));
+            return;
+          }
+          if (st.respondAck === 'never') return;
+          // 'delayed': release the PREVIOUS held ack now, hold this one.
+          if (heldAck && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(heldAck));
+          heldAck = { headers: { req_id: msg.headers?.req_id }, errcode: 0 };
         }
       });
     });
@@ -609,4 +635,82 @@ test('createWecomClient injects WebSocket and tracks initial state', () => {
   assert.equal(client.state, 'stopped'); // before start()
   assert.equal(client.lastError, null);
   assert.equal(client.connected, false);
+});
+
+// Regression (final review 2026-11-06): a streamed reply reuses ONE callback
+// req_id for ALL its frames. With a single pending slot per req_id, each later
+// frame's registration orphaned the previous frame's timer → a false
+// "ack timeout" rejection (+ warn) per streamed turn. Each frame must own its
+// ack slot; acks settle the OLDEST outstanding frame (send order).
+test('per-frame ack slots: delayed stream acks (ack lands only after the NEXT frame) never reject or warn', async () => {
+  const server = await startFakeWecom({ respondAck: 'delayed' });
+  const engine = makeEngine();
+  const log = makeLog();
+  const adapter = makeAdapter(server, engine, log, { ackTimeoutMs: 300 });
+  try {
+    adapter.start();
+    await until(() => adapter.status().state === 'online');
+
+    server.sendToCurrent(msgCallback('r-ack', groupText('AK', 'u1', '流式任务')));
+    await until(() => engine.messages.length === 1);
+
+    // Fire the frames back-to-back WITHOUT awaiting: f2 registers while f1's
+    // ack is still outstanding — under the old reqId-keyed map f2's
+    // registration orphaned f1's slot and its timer rejected at +300ms here.
+    const ps = [
+      adapter.progress('r-ack', 'sid-ack', '一', false),
+      adapter.progress('r-ack', 'sid-ack', '二', false),
+      adapter.progress('r-ack', 'sid-ack', '三', false),
+      adapter.progress('r-ack', 'sid-ack', '终', true),
+    ];
+    await until(() => respondFrames(server).length === 4);
+    server.flushHeld(); // release the final frame's ack (held: no next frame)
+    const rs = await Promise.all(ps);
+    assert.ok(rs.every(Boolean), `every frame acked, got ${JSON.stringify(rs.map(Boolean))}`);
+
+    // past the (shortened) ack timeout: nothing may reject late either
+    await sleep(400);
+    assert.ok(!log.warns.some((w) => /ack timeout|send failed/.test(w)), `warns=${JSON.stringify(log.warns)}`);
+  } finally {
+    adapter.stop();
+    await server.close();
+  }
+});
+
+// Log semantics for the timeout that CAN still happen (server never acks):
+// non-final stream refreshes are best-effort → debug only, no warn; the
+// final frame keeps warn + the pendingFinal push-replay safety net.
+test('ack-timeout log levels: non-final frame → debug only; final frame → warn + queued for push replay', async () => {
+  const server = await startFakeWecom({ respondAck: 'never' });
+  const engine = makeEngine();
+  const log = makeLog();
+  const adapter = makeAdapter(server, engine, log, { ackTimeoutMs: 250 });
+  try {
+    adapter.start();
+    await until(() => adapter.status().state === 'online');
+
+    server.sendToCurrent(msgCallback('r-to', groupText('TO', 'u1', '超时任务')));
+    await until(() => engine.messages.length === 1);
+
+    // non-final frame times out → resolved null, debug line, NO warn
+    const r = await adapter.progress('r-to', 'sid-to', '处理中', false);
+    assert.equal(r, null, 'send() swallows the timeout');
+    assert.ok(log.debugs.some((d) => /non-final frame ack timeout/.test(d)), `debugs=${JSON.stringify(log.debugs)}`);
+    assert.ok(!log.warns.some((w) => /ack timeout|send failed/.test(w)), `no warn for non-final timeout: ${JSON.stringify(log.warns)}`);
+
+    // final frame times out → warn + text queued for push replay
+    const rf = await adapter.progress('r-to', 'sid-to', '最终答案', true);
+    assert.equal(rf, null);
+    assert.ok(log.warns.some((w) => /send failed: ack timeout/.test(w)), `final timeout warned: ${JSON.stringify(log.warns)}`);
+
+    // reconnect → the queued final flushes as a push to the chat
+    server.current().terminate();
+    await until(() => adapter.status().state === 'online', 10000);
+    await until(() => server.frames.some((f) => f.cmd === 'aibot_send_msg' && f.body.chatid === 'TO'), 5000);
+    const push = server.frames.find((f) => f.cmd === 'aibot_send_msg' && f.body.chatid === 'TO');
+    assert.equal(push.body.markdown.content, '最终答案');
+  } finally {
+    adapter.stop();
+    await server.close();
+  }
 });

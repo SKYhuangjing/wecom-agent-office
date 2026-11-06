@@ -57,12 +57,16 @@ function extractText(body) {
 export function createAdapter({ account, bot, log, engine, WebSocket }) {
   const acct = account || {};
   const pingSec = Number(acct.pingIntervalSec);
+  // Test/diagnostic knob (not part of accountSchema): shortens the 15s ack
+  // wait so timeout semantics are testable in milliseconds.
+  const ackMs = Number(acct.ackTimeoutMs);
   const client = createWecomClient({
     WebSocket,
     url: acct.wsUrl || DEFAULT_WS_URL,
     botId: acct.botId,
     secret: acct.secret,
     pingIntervalSec: Number.isFinite(pingSec) && pingSec > 0 ? pingSec : 30,
+    ackTimeoutMs: Number.isFinite(ackMs) && ackMs > 0 ? ackMs : undefined,
     logger: log,
     // 生产语义：被踢即停机，不重连抢连接；通知引擎该 channel 已断。
     onKicked: () => {
@@ -107,6 +111,13 @@ export function createAdapter({ account, bot, log, engine, WebSocket }) {
   // failed finish=true frame is stored for replay once we are online again.
   function send(fn, meta) {
     return fn().catch((e) => {
+      // 非终帧（ack/progress 流刷新）超时 = 尽力而为（前身注释 "Refresh/reply
+      // acks are best-effort"）：降为 debug，不制造每轮一条的伪告警。终帧
+      // 超时仍是 warn 并进入补发队列（真丢帧时的安全网）。
+      if (e?.code === 'ACK_TIMEOUT' && !meta?.finish) {
+        log.debug?.(`channel-wecom: non-final frame ack timeout (best-effort, dropped): ${e?.message || e}`);
+        return null;
+      }
       log.warn?.(`channel-wecom: send failed: ${e?.message || e}`);
       if (meta?.finish) {
         // Replay target is the CHAT (chatKey), not the failed req_id.

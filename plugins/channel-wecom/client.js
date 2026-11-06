@@ -17,6 +17,10 @@
 //      successful subscribe) as before.
 //   6. stop() also clears a pending reconnect timer (the original leaked it;
 //      here the 5-min auth retry would otherwise outlive the adapter).
+//   7. Pending acks are FIFO queues per req_id (the original stored one slot
+//      per req_id): a streamed reply reuses the callback req_id for ALL its
+//      frames, so single-slot keying orphaned every earlier frame's timer —
+//      a false "ack timeout" rejection per streamed turn.
 //
 // Protocol (see https://developer.work.weixin.qq.com/document/path/101463):
 //   - Connect WebSocket to wss://openws.work.weixin.qq.com
@@ -35,12 +39,13 @@ import { randomUUID } from 'node:crypto';
 const AUTH_FAIL_RETRY_MS = 5 * 60 * 1000;
 
 export class WeComClient {
-  constructor({ WebSocket, url, botId, secret, pingIntervalSec = 30, logger, onKicked, onAuthFail }) {
+  constructor({ WebSocket, url, botId, secret, pingIntervalSec = 30, ackTimeoutMs = 15000, logger, onKicked, onAuthFail }) {
     this.WebSocket = WebSocket;
     this.url = url;
     this.botId = botId;
     this.secret = secret;
     this.pingIntervalSec = pingIntervalSec;
+    this.ackTimeoutMs = ackTimeoutMs;
     this.log = logger;
     this.onKicked = onKicked;
     this.onAuthFail = onAuthFail;
@@ -53,7 +58,15 @@ export class WeComClient {
     this.stopped = false;
     this.authFailed = false;
     this.handlers = { message: [], event: [], state: [] };
-    this.pending = new Map(); // req_id -> {resolve,reject,timer}
+    // reqId -> [{resolve,reject,timer}] FIFO queue. A streamed reply reuses
+    // ONE callback req_id for ALL its frames (respondStream), so several ack
+    // slots can be in flight under the same key — each frame gets its OWN
+    // slot+timer and an ack settles the OLDEST one (acks come in send order).
+    // (Keying by reqId alone made each later frame overwrite the previous
+    // slot, whose orphan timer then rejected at +15s — one false
+    // "ack timeout" warn per streamed turn; production 2026-11-06 log shows
+    // exactly 2, each +15.0s after a turn's final frame.)
+    this.pending = new Map();
     this.seq = 0;
     // Diagnostics: did WeCom actually push a callback? Exposed via status().
     this.callbacks = 0;
@@ -235,18 +248,30 @@ export class WeComClient {
 
   _awaitAck(reqId, timeoutMs) {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(reqId);
-        reject(new Error(`ack timeout for ${reqId}`));
+      const entry = { resolve, reject, timer: null };
+      const q = this.pending.get(reqId) || [];
+      if (q.length === 0) this.pending.set(reqId, q);
+      q.push(entry);
+      entry.timer = setTimeout(() => {
+        // Only retire THIS entry — sibling frames under the same reqId keep waiting.
+        const cur = this.pending.get(reqId) || [];
+        const i = cur.indexOf(entry);
+        if (i >= 0) cur.splice(i, 1);
+        if (cur.length === 0) this.pending.delete(reqId);
+        const err = new Error(`ack timeout for ${reqId}`);
+        // Adapter downgrades non-final stream timeouts to debug (best-effort).
+        err.code = 'ACK_TIMEOUT';
+        reject(err);
       }, timeoutMs);
-      this.pending.set(reqId, { resolve, reject, timer });
     });
   }
 
   _rejectAllPending(err) {
-    for (const [, p] of this.pending) {
-      clearTimeout(p.timer);
-      p.reject(err);
+    for (const [, q] of this.pending) {
+      for (const p of q) {
+        clearTimeout(p.timer);
+        p.reject(err);
+      }
     }
     this.pending.clear();
   }
@@ -312,10 +337,12 @@ export class WeComClient {
   _settleAck(msg) {
     const reqId = msg.headers?.req_id;
     if (!reqId) return;
-    const p = this.pending.get(reqId);
+    // FIFO: the ack answers the oldest outstanding frame under this reqId.
+    const q = this.pending.get(reqId);
+    const p = q && q.shift();
     if (!p) return;
+    if (!q || q.length === 0) this.pending.delete(reqId);
     clearTimeout(p.timer);
-    this.pending.delete(reqId);
     if (msg.errcode === 0 || msg.errcode === undefined) p.resolve(msg);
     else {
       // Carry errcode/errmsg on the rejection so _subscribe can tell an
@@ -367,7 +394,7 @@ export class WeComClient {
     });
   }
 
-  _request(frame, ackTimeoutMs = 15000) {
+  _request(frame, ackTimeoutMs = this.ackTimeoutMs) {
     const reqId = frame.headers.req_id;
     // Refresh/reply acks are best-effort; don't block the pipeline forever.
     this._send(frame);

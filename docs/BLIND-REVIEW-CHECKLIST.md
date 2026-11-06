@@ -126,6 +126,49 @@
 
 ---
 
+# M2 盲评段（六任务：三 provider 真切换）
+
+> 由 M2 计划 Task 7「盲评（零上下文子代理照清单：README→起服→建 claude bot→test 两轮→
+> 切 codex→test→切回→disable/enable）」扩写固化（终评补记）。规则同 M1 段：零实现上下文、
+> 不读 `.superpowers/`、不翻 diff、逐字读文案。**需要真 claude/codex CLI**（缺任一则本段
+> 整体记 skip，不得用假实现替代后宣称通过）。bot 一律 `enabled:false`，不触真实企微。
+
+## 环境
+
+```sh
+cd /Users/sky/develop/workbuddy_workspace/wecom-agent-office
+D=$(mktemp -d /tmp/wao-m2-blind.XXXXXX); echo "$D"
+node src/index.js start --port 18795 --data-dir "$D/data" > "$D/server.log" 2>&1 &
+echo $! > "$D/server.pid"
+curl -s localhost:18795/healthz   # 200 起服确认
+```
+
+## 任务清单（六条用户路径，每条给 ✓/✗ + 证据）
+
+1. **读 README 起手**：通读 `README.md`，按它确认三 provider 插件就位
+   `curl -s localhost:18795/api/plugins`（core-engine/channel-wecom/provider-dsh/
+   provider-claude/provider-codex 全 active）。
+2. **建 claude bot（enabled:false）**：`POST /api/bots`，provider=claude、
+   `providerConfig.cwd` 指向独立临时目录（**勿与其他 bot 共用 cwd**——claude 同 cwd
+   auto-memory 跨会话串扰是已披露边界）。预期 200、响应里 secret 不回显。
+3. **claude test 两轮**：第一轮 `POST /api/bots/:id/test`（空体）→ `code:"completed"`、
+   记下 `sessionId`；第二轮带 `{"sessionId":"<上轮>"}` → 仍 completed 且**同 sessionId**
+   （resume 不新建会话；若第二轮开了新会话记 Critical）。
+4. **切 codex → test**：`PATCH /api/bots/:id` `{"provider":"codex"}` → 200；再 test 一轮 →
+   completed（跨 provider 台账交接；文案里不得出现「找不到会话」类错误）。
+5. **切回 claude → test**：PATCH 回 claude → test 仍 completed（切回持久化：
+   providerConfig 原样保留，不因切换丢失）。
+6. **disable/enable provider 插件**：`POST /api/plugins/provider-claude/disable` →
+   该 bot test 应 400 且错误点名 provider 不可用；`…/enable` → test 恢复 completed。
+   收尾：`DELETE /api/bots/:id` → `{ok:true}`；`kill -INT $(cat "$D/server.pid")` 停服。
+
+## 报告格式
+
+- 同 M1 段：每任务一行 ✓/✗ + 证据（命令 + 输出原文粘贴）+ 分级发现项（Critical/Important/Minor/Nit）；
+- 总体结论：六条一览 + 切换语义（resume 同 sessionId、切回配置保留）与文档承诺的出入。
+
+---
+
 # M3 UI 盲评段（六任务，双轨：真控制台 + harness）
 
 > 由 M3-T7 盲评固化（当轮 52 截图逐读、零 P0/P1）。规则与 M1 段一致：**零实现上下文**，

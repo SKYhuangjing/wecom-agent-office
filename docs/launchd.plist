@@ -4,6 +4,10 @@
 
   使用三步（把 REPO_DIR/DATA_DIR/NODE_BIN/NODE_DIR 四个占位替换成本机绝对路径后）：
 
+  ⚠ 占位符本身【无尖括号】：无论 sed 还是手工替换，都按 token 名
+  （REPO_DIR/DATA_DIR/NODE_BIN/NODE_DIR）匹配，勿把 <> 写进匹配串
+  ——切换首装即踩过：sed 带 <> 一发未中，安装静默失败。
+
     1) 填模板（示例，本仓库默认布局——注意 node 路径按机器改，见下方
        EnvironmentVariables 注释）：
          cp docs/launchd.plist ~/Library/LaunchAgents/com.wecom-agent-office.plist

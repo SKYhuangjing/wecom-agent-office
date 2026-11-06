@@ -110,6 +110,7 @@ Background；头部注释即安装三步）。安装（生产切换 T9 执行，
 cp docs/launchd.plist ~/Library/LaunchAgents/com.wecom-agent-office.plist
 # 编辑三处占位：REPO_DIR（仓库绝对路径）/ DATA_DIR（数据目录绝对路径）/
 #   NODE_BIN、NODE_DIR（`which node` 及其 bin 目录——launchd 不跑 nvm 初始化）
+# ⚠ 占位符无尖括号：sed/手工替换按 token 名匹配，勿带 <>（首装踩过：带 <> sed 未中，静默失败）
 mkdir -p <DATA_DIR>/logs
 launchctl load ~/Library/LaunchAgents/com.wecom-agent-office.plist
 curl -s localhost:8792/healthz          # 确认起来

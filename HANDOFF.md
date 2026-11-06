@@ -276,10 +276,12 @@ launchctl print gui/$(id -u)/com.wecom-agent-office       # launchd 视角（退
 
 **未验证项（M3 显式申报）**：
 
-1. **真实企微入站全链路直到用户首条消息**：切换后首条消息的流式回复（含会话延续）
-   =终验；连接 online 与出站 push 可自动验证，入站不可（CUTOVER §4/§6 注记 4）。
+1. **真实企微入站全链路直到用户首条消息**：~~切换后首条消息的流式回复（含会话延续）
+   =终验~~ **已终验（2026-11-06 10:55 协议层 PASS：真实流量 3 条+latest-wins 抢占活体+
+   两轮 completed+台账秒级对齐+用户亲证；见文末「M3 终笔」）**。
 2. **24h 检查点**：切换次日巡检（重启计数/两 bot online/台账增长/orphan sweep 残留），
-   命令同运行手册。
+   **日期 2026-11-07，命令清单已固化（healthz/agents/告警 grep/launchctl print，见文末
+   「M3 终笔」24h 检查点行；未设自动化，人工执行后结果记回）**。
 3. **cutover.sh drill 子命令的真 launchd 路径**：harness 验证了 baseline/stage1/stage2/
    断点续跑/rollback 全路径与 drill 的未装拒跑分支；drill 的 kickstart 自愈段未在真
    launchd 上执行过（kickstart 语义本身 T6 已真机验证）。
@@ -288,8 +290,9 @@ launchctl print gui/$(id -u)/com.wecom-agent-office       # launchd 视角（退
 ## 4. M1 未验证项（显式申报，M2/M3 后状态加注）
 
 1. **真实企微长连接端到端**：channel-wecom 仅过 fake openws 契约 + e2e；~~真企微按 DESIGN §12
-   在 M3 逐 bot 串行切换时验证~~ **切换就绪（M3 T9）：runbook `docs/CUTOVER.md`；终验=切换后
-   用户首条消息的回复**。
+   在 M3 逐 bot 串行切换时验证~~ **切换已执行（M3 T9）：runbook `docs/CUTOVER.md`；终验~~=切换后
+   用户首条消息的回复~~ **已 PASS（2026-11-06 10:55 真实流量协议层终验，见 §3 未验证项 1 与文末
+   M3 终笔）**。
 2. **claude / codex provider**：~~M2 交付~~ **已于 M2 交付**（见 §2；其未验证小项=真实锁冲突文案，M3 闭案见 §3 已知边界 #9）。
 3. **Web UI**：~~M3（Shell + window.WAO SDK + ui-workbench + ui-office3d v2 + harness 截图流）~~
    **已于 M3 交付**（§3：六页+3D+21 基线，盲评清零）。
@@ -365,6 +368,8 @@ node src/index.js doctor  # 全 ✓
 - **现场**：切换前旧桥已死（8791 无响应无进程，旧系统无自愈）——两 bot 此前处于离线状态；切换无互踢风险，仍按 runbook 归档旧表
 - **执行**（docs/CUTOVER.md 全步骤）：launchd 安装（PATH 覆盖三 CLI bin；首次失败根因=模板占位符无尖括号 sed 未中，已修）→ 双 bot enabled:false 建档（凭据从旧表直读，响应零 secret）→ 旧 bots.json 归档（bots.json.cutover-backup-20261106，1916B）+写空表防复活 → main 接管（idle）→ **出站验证 ×3 全部 {"ok":true}**（main 单聊+群聊、bot2 单聊——切换通知已真实送达企微）→ bot2 接管（idle）
 - **冷启动演练**：launchctl kickstart -k → 自动复活重订阅 ✓；kill -9 → KeepAlive 自愈（15122→15155）双 bot 回线 ✓（日志「subscribed to WeCom bot OK」×2 实证）
-- **入站终验**：= 用户下次给任一 bot 发消息的第一条回复（企微断线不补发；订阅成功+协议层移植+e2e 全绿为现有证据）
-- **回滚**：launchctl unload ~/Library/LaunchAgents/com.wecom-agent-office.plist → 恢复 ../wecom-bridge/bots.json.cutover-backup-20261106 为 bots.json → DSH GUI 里 enable 旧 wecom-bots 插件（1.2s 自动拉起旧桥）
+- **入站终验（已收口，2026-11-06 10:55，协议层 PASS）**：真实流量 3 条——单聊×2（10:55:16.588 / 10:55:21.553）+ 群聊×1（10:55:32.311）；其中一次 **latest-wins 抢占活体**：SIGTERM（10:55:21.554）→ +3000ms 存活 → SIGKILL（10:55:24.557）→ close（10:55:24.583）；两轮 **completed**（dsh close 10:55:39.614 / 10:55:45.592）；台账 main 2 行 completed（10:55:39.647 / 10:55:45.620）+ bot2 1 行 interrupted（10:55:24.922）与日志**秒级对齐**；用户亲证企微收到回复。**协议层终验 PASS**。（同窗口两条 `ack timeout` WARN 已诊断为流式帧 ack 伪告警——终评收口波修复：同 req_id 逐帧 ack 槽位 + 非终帧超时降 debug，回归测试锁定，见 plugins/channel-wecom/CHANGELOG.md）
+- **24h 检查点（2026-11-07）**：`curl -s localhost:8792/healthz`（ok:true、uptimeSec 无重启风暴）→ `curl -s localhost:8792/api/agents`（两 bot idle+channelState online）→ 告警 grep `grep -E "WARN|ERROR" data/logs/wao.log`（收口波后不应再有非终帧 ack 伪告警；终帧 `send failed: ack timeout` =真丢帧，按运行手册 pendingFinal 补发语义处理）→ `launchctl print gui/$(id -u)/com.wecom-agent-office`（重启计数/last exit code）。**未设自动化（无编号，人工执行）**；结果记回本节。
+- **归档命名对齐（终评收口波）**：`../wecom-bridge/` 下补了符号链接 `bots.json.archive-20261106-183900` → 既有备份 `bots.json.cutover-backup-20261106`（原备份文件未动）——使 CUTOVER.md/`test/cutover.sh` 的 `bots.json.archive-*` glob 约定可解析；wecom-bridge 对本仓库只读约定下的唯一特许例外。
+- **回滚**：launchctl unload ~/Library/LaunchAgents/com.wecom-agent-office.plist → 恢复 ../wecom-bridge/bots.json.archive-20261106-183900（或 bots.json.cutover-backup-20261106，同一文件）为 bots.json → DSH GUI 里 enable 旧 wecom-bots 插件（1.2s 自动拉起旧桥）
 - **日常**：curl 127.0.0.1:8792/healthz｜/api/agents｜日志 data/logs/wao.log（轮转 10MB×5）+ launchd.{out,err}.log｜升级=launchctl kickstart -k｜Web UI=http://127.0.0.1:8792
