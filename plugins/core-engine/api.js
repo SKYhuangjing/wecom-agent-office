@@ -73,24 +73,43 @@ const idOf = (m) => {
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const findBot = (state, id) => state.doc.bots.find((b) => isObject(b) && b.id === id) ?? null;
 
-// Write-only password fields (M3 UI red line: secrets never echo): the editor
-// loads a sanitized record, so in a PATCHed block a password that is blank OR
-// ABSENT means "keep the stored value" (the UI omits untouched fields; a curl
-// that sends '' gets the same rule) — without it, saving an edit of unrelated
-// fields would wipe the secret and trip required-validation. Schema-driven over
-// the merged channel's accountSchema and the merged provider's configSchema;
-// POST keeps the raw semantics ('' / absent = missing = required error), so
-// creating a bot still demands the real secret. Consequence, accepted: a
-// password can never be CLEARED via PATCH — replaced, yes; removed, no.
-const keepBlankPasswords = (schema, patchBlock, oldBlock) => {
+// Write-only PATCH semantics (M3 UI red line: secrets never echo). The editor
+// loads a sanitized record, so what a PATCHed block CANNOT see must read as
+// "keep the stored value" — otherwise saving unrelated fields silently wipes
+// credentials. Two schema-driven rules, same accepted trade-off (replaced yes,
+// silently erased no; POST keeps the raw semantics, so creating a bot still
+// demands the real secret):
+//   password: blank OR absent → keep the stored value (the UI omits untouched
+//             fields; a curl sending '' gets the same rule).
+//   object:   sanitize strips *secret*/*apikey* keys at ANY depth (collateral:
+//             an env NAME like model.apiKeyEnv is stripped too), so the JSON
+//             round-trip cannot carry them — preserve-style deep merge:
+//             request-absent keys backfill from the stored value, provided
+//             keys override; explicit null still clears the whole field.
+const preserveWriteOnly = (schema, patchBlock, oldBlock) => {
   if (!Array.isArray(schema) || !isObject(patchBlock) || !isObject(oldBlock)) return;
   for (const item of schema) {
-    if (item == null || item.type !== 'password' || typeof item.key !== 'string') continue;
-    if ((patchBlock[item.key] === undefined || patchBlock[item.key] === '')
-      && oldBlock[item.key] !== undefined) {
-      patchBlock[item.key] = oldBlock[item.key];
+    if (item == null || typeof item.key !== 'string') continue;
+    if (item.type === 'password') {
+      if ((patchBlock[item.key] === undefined || patchBlock[item.key] === '')
+        && oldBlock[item.key] !== undefined) {
+        patchBlock[item.key] = oldBlock[item.key];
+      }
+    } else if (item.type === 'object') {
+      const patch = patchBlock[item.key];
+      const old = oldBlock[item.key];
+      if (isObject(patch) && isObject(old)) patchBlock[item.key] = mergePreserving(patch, old);
     }
   }
+};
+
+const mergePreserving = (patchVal, oldVal) => {
+  const out = { ...patchVal };
+  for (const [k, v] of Object.entries(oldVal)) {
+    if (!(k in out)) out[k] = v; // stripped key the editor never saw: backfill
+    else if (isObject(out[k]) && isObject(v)) out[k] = mergePreserving(out[k], v);
+  }
+  return out;
 };
 
 const validateOrThrow = (bot, ports) => {
@@ -202,12 +221,12 @@ async function patchBotHandler({ req, res, m, state }) {
   if (bot == null) throw httpError(404, 'bot not found');
   const patchBody = await readBody(req);
   if (!isObject(patchBody)) throw httpError(400, 'patch body must be a JSON object');
-  // Resolve blank passwords BEFORE the merge (the rule reads the OLD record's
-  // stored values); the schemas are the merged channel/provider's — a patch
-  // may retarget either port id in the same request.
-  keepBlankPasswords(state.ports?.getChannel?.(patchBody.channel ?? bot.channel)?.accountSchema,
+  // Resolve write-only fields BEFORE the merge (the rules read the OLD
+  // record's stored values); the schemas are the merged channel/provider's —
+  // a patch may retarget either port id in the same request.
+  preserveWriteOnly(state.ports?.getChannel?.(patchBody.channel ?? bot.channel)?.accountSchema,
     patchBody.account, bot.account);
-  keepBlankPasswords(state.ports?.getProvider?.(patchBody.provider ?? bot.provider)?.configSchema,
+  preserveWriteOnly(state.ports?.getProvider?.(patchBody.provider ?? bot.provider)?.configSchema,
     patchBody.providerConfig, bot.providerConfig);
   const merged = { ...bot, ...patchBody, id: bot.id }; // id is immutable
   validateOrThrow(merged, state.ports);

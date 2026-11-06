@@ -57,6 +57,9 @@ export default {
       configSchema: [
         { key: 'cwd', label: 'Working directory', type: 'string', required: true },
         { key: 'mode', label: 'Mode', type: 'enum', options: ['a', 'b'], required: false },
+        // Object-typed field with credential-shaped keys: the sanitize/*apikey*
+        // round-trip case the UI editor hits on real providers (model.apiKey).
+        { key: 'extra', label: 'Extra object', type: 'object' },
       ],
       // Restates the schema's required-cwd fact WITHOUT the record prefix —
       // deliberately the duplication shape validateBot must collapse.
@@ -280,6 +283,52 @@ test('PATCH blank/absent password keeps the stored secret; POST stays strict', a
   });
   assert.equal(bad.status, 400);
   assert.match((await bad.json()).error, /account\.secret is required/);
+});
+
+// Nested stripped keys (T2 review Important): sanitize strips *apikey*-named
+// keys at ANY depth from GET /api/bots (collateral: model.apiKeyEnv — an env
+// NAME, not a secret), so the editor's JSON round-trip carries the STRIPPED
+// object and a PATCH replacing the block would silently wipe the stored
+// credentials on an unrelated save. object-typed schema fields therefore
+// preserve-style deep-merge: request-absent keys backfill, provided keys win.
+test('PATCH object fields preserve stripped nested keys; explicit values replace', async () => {
+  assert.equal((await post('/api/bots', {
+    id: 'kvbot', name: 'KV', enabled: false, channel: 'fakechan',
+    account: { endpoint: 'http://kv.local' },
+    provider: 'fakeprov',
+    providerConfig: { cwd: '/tmp', mode: 'a', extra: { apiKey: 'sk-old', apiKeyEnv: 'MY_ENV', note: 'keep' } },
+  })).status, 200);
+  const kv = (await (await get('/api/bots')).json()).bots.find((b) => b.id === 'kvbot');
+  assert.equal(kv.providerConfig.extra.apiKey, undefined, 'GET strips nested apiKey');
+  assert.equal(kv.providerConfig.extra.apiKeyEnv, undefined, 'GET strips nested apiKeyEnv too (env NAME — collateral of the /apikey/i rule)');
+  assert.equal(kv.providerConfig.extra.note, 'keep');
+
+  // Editor round-trip: the block EXACTLY as the UI saw it (stripped), cwd edited
+  const resp = await patch('/api/bots/kvbot', {
+    providerConfig: { cwd: '/tmp2', mode: 'a', extra: kv.providerConfig.extra },
+  });
+  assert.equal(resp.status, 200);
+  let onDisk = loadBots(join(dataDir, 'bots.json')).bots.find((b) => b.id === 'kvbot');
+  assert.equal(onDisk.providerConfig.cwd, '/tmp2');
+  assert.equal(onDisk.providerConfig.extra.apiKey, 'sk-old', 'stripped key backfilled from the stored value');
+  assert.equal(onDisk.providerConfig.extra.apiKeyEnv, 'MY_ENV');
+  assert.equal(onDisk.providerConfig.extra.note, 'keep');
+
+  // Explicit replacement wins; absent siblings still backfill
+  const resp2 = await patch('/api/bots/kvbot', {
+    providerConfig: { cwd: '/tmp2', mode: 'a', extra: { apiKey: 'sk-new', note: 'edited' } },
+  });
+  assert.equal(resp2.status, 200);
+  onDisk = loadBots(join(dataDir, 'bots.json')).bots.find((b) => b.id === 'kvbot');
+  assert.equal(onDisk.providerConfig.extra.apiKey, 'sk-new', 'provided key overrides');
+  assert.equal(onDisk.providerConfig.extra.apiKeyEnv, 'MY_ENV', 'absent key still backfilled');
+  assert.equal(onDisk.providerConfig.extra.note, 'edited');
+
+  // materialize saw the backfilled values — the runner gets the real config
+  assert.equal(globalThis.__waoFakeMaterializeLog.at(-1).cwd, '/tmp2');
+
+  // cleanup: later tests assert the exact bots.json registry ids
+  assert.equal((await fetch(url('/api/bots/kvbot'), { method: 'DELETE' })).status, 200);
 });
 
 test('POST /api/bots/:id/test runs the provider runner engine-independently; ledger untouched', async () => {

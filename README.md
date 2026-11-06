@@ -88,7 +88,11 @@ curl -X POST localhost:8792/api/service/reload    # 四阶段热重载(升级插
 curl -X POST localhost:8792/api/plugins/<id>/disable|enable   # 禁/启用某插件(走同一 reload)
 ```
 
-响应**永不回显 secret**（API 层递归清洗）。
+响应**永不回显 secret**（API 层递归清洗；`secret` 键与 `*apikey*` 名样键任意深度都会剥——
+连带 `model.apiKeyEnv` 这类环境变量**名**也会剥，PATCH 端用「保留式回填」配平：请求里缺的键
+回填已存值，显式提供的键覆盖）。注意：`providerConfig.env` / `configOverrides` 这类自由文本
+对象 GET **原样回显**——schema 无从甄别其值，往里手填 secret 字面量会出现在响应与 UI 里；
+凭证请走 `apiKeyEnv`（只存变量名）。
 
 > dsh bot 的 profile 物化是**即时**的：创建/修改 dsh bot 就把 profile 写到
 > `~/.dsh/profiles/<profile>/`（即使 bot 停用）；`DELETE /api/bots/<id>` 会清理该目录。

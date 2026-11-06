@@ -119,12 +119,20 @@ export default {
     const noPorts = ports.channels.length === 0 || ports.providers.length === 0;
 
     const switchProvider = (next) => {
+      // Switching back to the STORED provider restores its saved config (not
+      // schema defaults) — an accidental detour must not read as a re-config.
+      const stored = editingExisting ? bots.find((b) => b.id === selected) : null;
+      const fromRecord = stored != null && stored.provider === next;
       setDraft((d) => ({
         ...d,
         provider: next,
         // Keep id/name/channel/account; providerConfig restarts from the new
-        // schema's defaults (DESIGN §7 跨 provider 切换 → 交接).
-        providerConfig: fieldsFromSchema(ports.providers.find((p) => p.id === next)?.configSchema),
+        // schema's defaults (DESIGN §7 跨 provider 切换 → 交接) — or from the
+        // stored record when next IS the stored provider.
+        providerConfig: fieldsFromSchema(
+          ports.providers.find((p) => p.id === next)?.configSchema,
+          fromRecord ? stored.providerConfig : undefined,
+        ),
       }));
     };
 
