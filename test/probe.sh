@@ -6,7 +6,8 @@
 #                                 # (raw NDJSON + header comments), plus special probes:
 #                                 # dsh kill-then-resume, codex resume+stdin with
 #                                 # resume-of-resume thread continuity (Y9 memory),
-#                                 # claude resume (X7 memory + session-id contract),
+#                                 # claude resume (random-passcode carryover with a
+#                                 # fresh-session control leg + session-id contract),
 #                                 # claude thinking blocks (informational).
 #   bash test/probe.sh --check    # re-run the three minimal probes and compare EVENT-TYPE
 #                                 # SEQUENCES against the baselines; drift → diff + exit 1.
@@ -31,7 +32,6 @@ BASE_DIR="$SCRIPT_DIR/probe-baselines"
 TIMEOUT_SECS=150
 PROMPT='只回复两个字：收到'
 LONG_PROMPT='请慢慢从 1 数到 30，每个数字单独一行输出'
-CLAUDE_SECRET='记住暗号X7，之后我会问你。现在只回复：好的'
 CLAUDE_ASK='暗号是什么？只回复暗号本身'
 THINK_PROMPT='先想一下再回答：3的平方加1等于多少？只回复数字'
 THINK_MODEL='antigravity/claude-opus-4-6-thinking' # only thinking-branded id in ~/.claude/settings.json modelPicker
@@ -191,13 +191,6 @@ capture_codex() {
 }
 
 NOW="$(date +%Y-%m-%d)"
-CLAUDE_SECRET='记住暗号X7，之后我会问你。现在只回复：好的'
-CLAUDE_ASK='暗号是什么？只回复暗号本身'
-THINK_PROMPT='先想一下再回答：3的平方加1等于多少？只回复数字'
-THINK_MODEL='antigravity/claude-opus-4-6-thinking' # only thinking-branded id in ~/.claude/settings.json modelPicker
-CODEX_SECRET='记住暗号Y9，之后我会问你。现在只回复：好的'
-CODEX_ASK='暗号是什么？只回复暗号本身'
-CODEX_ASK2='暗号还是什么？只回复暗号本身'
 
 save_minimal() { # save_minimal <cli> <capture-fn>
   local cli="$1" fn="$2" tmp rc
@@ -314,14 +307,14 @@ probe_codex_resume_stdin() {
     if [ "$rc2" = skipped ]; then
       echo "# leg2: SKIPPED — leg1 emitted no thread.started, nothing to resume"
     else
-      echo "# leg2: \`codex exec resume ${tid1} --json -\` (stdin asks the secret) exit=${rc2}"
+      echo "# leg2: \`codex exec resume ${tid1} --json --skip-git-repo-check -\` (stdin asks the secret) exit=${rc2}"
       echo "# leg2 thread.started: $([ -n "$tid2" ] && ([ "$tid2" = "$tid1" ] && echo "emitted, SAME id as leg1" || echo "emitted, NEW id ${tid2}") || echo "NOT emitted on resume")"
       echo "# leg2 memory: $( [ "$mem2" = yes ] && echo "RECALLED — reply contains Y9" || echo "NO MEMORY — reply lacks Y9") (reply: ${reply2:-none})"
     fi
     if [ "$rc3" = skipped ]; then
       echo "# leg3: SKIPPED — no leg2 thread to resume"
     else
-      echo "# leg3: \`codex exec resume ${resume2} --json -\` (resume-of-resume) exit=${rc3}"
+      echo "# leg3: \`codex exec resume ${resume2} --json --skip-git-repo-check -\` (resume-of-resume) exit=${rc3}"
       echo "# leg3 thread.started: $([ -n "$tid3" ] && ([ "$tid3" = "$tid1" ] && echo "emitted, SAME id as leg1" || echo "emitted, NEW id ${tid3}") || echo "NOT emitted on resume")"
       echo "# leg3 memory: $( [ "$mem3" = yes ] && echo "RECALLED — reply contains Y9" || echo "NO MEMORY — reply lacks Y9") (reply: ${reply3:-none})"
     fi
@@ -338,20 +331,26 @@ probe_codex_resume_stdin() {
   echo "saved $BASE_DIR/codex-resume-stdin.ndjson (leg1 exit=${rc1}, leg2 exit=${rc2}, leg3 exit=${rc3})"
 }
 
-# —— special probe: claude resume — memory + session-id contract (NOTE-only) ———
-# round1 stores secret X7 → round2 --resume <id> asks it. Records whether the
-# memory truly carries over and WHICH session id round2's init emits — run()
-# must return "the id to pass next time", so the baseline pins that fact.
+# —— special probe: claude resume — carryover + session-id contract (NOTE-only) —
+# round1 stores a RANDOM passcode in-conversation (told NOT to write it to any
+# file or memory) → round2 --resume <id> asks it → CONTROL: a fresh session
+# (no --resume) asks the same question. If the control ALSO answers, the recall
+# came from claude auto-memory (same-cwd sessions share the project memory
+# dir), not from resume context — the header then records carryover as
+# UNPROVEN. The passcode is random per run so earlier runs' memory entries
+# cannot answer this run's question.
 
 probe_claude_resume() {
-  local out1 out2 sid rc1 rc2 sid2 answer memory
+  local out1 out2 outc pass rc1 rc2 rcc sid sid2 sidc ans_r ans_c mem_r=no mem_c=no think_r
   if ! have claude; then
     echo "skip  claude resume probe: claude not installed"
     return 0
   fi
+  pass="X7-${RANDOM}${RANDOM}"
   out1="$(mktemp "$BASE_DIR/.tmp-clr-a.XXXXXX")"
   out2="$(mktemp "$BASE_DIR/.tmp-clr-b.XXXXXX")"
-  run_timed "$TIMEOUT_SECS" claude -p "$CLAUDE_SECRET" --output-format stream-json --verbose >"$out1" 2>/dev/null
+  outc="$(mktemp "$BASE_DIR/.tmp-clr-c.XXXXXX")"
+  run_timed "$TIMEOUT_SECS" claude -p "记住暗号${pass}，只把它记在心里，不要写入任何文件或记忆。现在只回复：好的" --output-format stream-json --verbose >"$out1" 2>/dev/null
   rc1=$?
   sid="$(claude_sid_of "$out1")"
   if [ -n "$sid" ]; then
@@ -360,36 +359,54 @@ probe_claude_resume() {
   else
     rc2=skipped
   fi
+  run_timed "$TIMEOUT_SECS" claude -p "$CLAUDE_ASK" --output-format stream-json --verbose >"$outc" 2>/dev/null
+  rcc=$?
   sid2="$(claude_sid_of "$out2")"
-  answer="$(claude_text_of "$out2")"
-  case "$answer" in
-    *X7*) memory=yes ;;
-    *) memory=no ;;
-  esac
+  sidc="$(claude_sid_of "$outc")"
+  ans_r="$(claude_text_of "$out2")"
+  ans_c="$(claude_text_of "$outc")"
+  think_r="$(claude_thinking_of "$out2")"
+  # verdicts precomputed before the output block: bash 3.2 (macOS) cannot parse $(case ...) inline
+  case "$ans_r" in *"$pass"*) mem_r=yes ;; esac
+  case "$ans_c" in *"$pass"*) mem_c=yes ;; esac
   {
     echo "# claude resume probe — captured ${NOW} (NOTE-only: multi-round facts, NOT compared in --check)"
-    echo "# round1: \`claude -p <记住暗号X7> --output-format stream-json --verbose\` exit=${rc1}; session_id from system/init: $([ -n "$sid" ] && echo captured || echo MISSING)"
+    echo "# passcode ${pass} is RANDOM per run; round1 was told to keep it in-conversation only (no file/memory writes)"
+    echo "# round1: \`claude -p <记住随机暗号> --output-format stream-json --verbose\` exit=${rc1}; session_id from system/init: $([ -n "$sid" ] && echo captured || echo MISSING)"
     if [ "$rc2" = skipped ]; then
       echo "# round2: SKIPPED — round1 emitted no system/init session_id, nothing to resume"
     else
-      echo "# round2: \`claude -p <暗号是什么> --resume <id> --output-format stream-json --verbose\` exit=${rc2}"
-      echo "# memory: $( [ "$memory" = yes ] && echo "TRUE RESUME — final text contains X7" || echo "NO MEMORY — final text lacks X7") (reply: ${answer:-none})"
-      if [ -z "$sid2" ]; then
-        echo "# session-id contract: round2 emitted NO system/init — run() falls back to returning the input id"
-      elif [ "$sid2" = "$sid" ]; then
-        echo "# session-id contract: round2 system/init echoes the SAME id as round1 — returning the input id stays correct"
-      else
-        echo "# session-id contract: round2 system/init emits a NEW id (${sid2}) ≠ resumed id — run() must return round2's OWN init id, not the input id"
-      fi
+      echo "# round2: \`claude -p <${CLAUDE_ASK}> --resume <id> --output-format stream-json --verbose\` exit=${rc2}; answered passcode: ${mem_r} (reply: ${ans_r:-none}); thinking blocks: ${think_r}"
+      echo "# PROVEN: --resume is accepted (exit=${rc2}) and the resume turn emits assistant events like a first turn (incl. thinking blocks)"
+    fi
+    echo "# control: FRESH session, no --resume, same question — exit=${rcc}; answered passcode: ${mem_c} (reply: ${ans_c:-none}); control session id: ${sidc:-none}"
+    if [ "$rc2" = skipped ]; then
+      echo "# carryover: NOT TESTED — round1 gave no session id to resume"
+    elif [ "$mem_r" = no ]; then
+      echo "# carryover: NOT SHOWN — the resume round did not answer the passcode"
+    elif [ "$mem_c" = no ]; then
+      echo "# carryover: CONFIRMED — the resume round recalled the passcode while a fresh control session could not (recall must come from --resume context)"
+    else
+      echo "# carryover: UNPROVEN — the CONTROL also answered from claude auto-memory, so round2's recall cannot be attributed to --resume context"
+    fi
+    echo "# auto-memory risk (observed in an earlier fixed-passcode capture): same-cwd claude sessions share project auto-memory (~/.claude/projects/<cwd>/memory) — a secret told to one session can surface in OTHER same-cwd sessions; multi-bot same-cwd deployments must treat memory as shared state (M3 runbook material)"
+    if [ -z "$sid2" ]; then
+      echo "# session-id contract: round2 emitted NO system/init — run() falls back to returning the input id"
+    elif [ "$sid2" = "$sid" ]; then
+      echo "# session-id contract: round2 system/init echoes the SAME id as round1 — returning the input id stays correct"
+    else
+      echo "# session-id contract: round2 system/init emits a NEW id (${sid2}) ≠ resumed id — run() must return round2's OWN init id, not the input id"
     fi
     echo "# ---- round1 output (raw, as captured) ----"
     cat "$out1"
     echo "# ---- round2 output (raw, as captured) ----"
     cat "$out2"
+    echo "# ---- control output (raw, first 6 JSON lines) ----"
+    head -6 "$outc"
   } > "${out1}.final"
   atomic_write "$BASE_DIR/claude-resume.ndjson" "${out1}.final"
-  rm -f "$out1" "$out2"
-  echo "saved $BASE_DIR/claude-resume.ndjson (round1 exit=${rc1}, round2 exit=${rc2}, memory=${memory:-n/a})"
+  rm -f "$out1" "$out2" "$outc"
+  echo "saved $BASE_DIR/claude-resume.ndjson (round1 exit=${rc1}, round2 exit=${rc2}, resume-answered=${mem_r}, control-answered=${mem_c})"
 }
 
 # —— special probe: claude thinking blocks (NOTE-only, informational) ——————————

@@ -3,12 +3,12 @@
 # resume: WORKS — `dsh --session-id <killed-sid>` exits 0 and echoes the SAME sessionId (context survived the SIGKILL)
 # resume first event types: session status status text status 
 # ---- killed run output (raw, as captured) ----
-{"type":"session","sessionId":"session-34c11d3a-f722-4503-bed9-6f579ecc434b","cwd":"/Users/sky/develop/workbuddy_workspace/wecom-agent-office"}
+{"type":"session","sessionId":"session-5028ea97-5d42-4023-b796-cef2c4fc6acc","cwd":"/Users/sky/develop/workbuddy_workspace/wecom-agent-office"}
 {"type":"status","phase":"turn_start","turn":1}
 {"type":"status","phase":"step_start","turn":1,"step":1}
 # ---- resume run output (raw, first 5 JSON lines) ----
-{"type":"session","sessionId":"session-34c11d3a-f722-4503-bed9-6f579ecc434b","cwd":"/Users/sky/develop/workbuddy_workspace/wecom-agent-office"}
+{"type":"session","sessionId":"session-5028ea97-5d42-4023-b796-cef2c4fc6acc","cwd":"/Users/sky/develop/workbuddy_workspace/wecom-agent-office"}
 {"type":"status","phase":"turn_start","turn":2}
 {"type":"status","phase":"step_start","turn":2,"step":1}
-{"type":"text","text":"1\n\n2\n\n3\n\n4\n\n5\n\n6\n\n7\n\n8\n\n9\n\n10\n\n11\n\n12\n\n13\n\n14\n\n15\n\n16\n\n17\n\n18\n\n19\n\n20\n\n21\n\n22\n\n23\n\n24\n\n25\n\n26\n\n27\n\n28\n\n29\n\n30"}
-{"type":"status","phase":"step_end","turn":2,"step":1,"usage":{"inputTokens":249,"outputTokens":59,"totalTokens":7092,"cacheReadTokens":6784}}
+{"type":"text","text":"1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n26\n27\n28\n29\n30\n\n已经数完 1 到 30，每个数字占一行。"}
+{"type":"status","phase":"step_end","turn":2,"step":1,"usage":{"inputTokens":249,"outputTokens":75,"totalTokens":7108,"cacheReadTokens":6784}}
