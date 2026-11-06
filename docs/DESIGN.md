@@ -54,9 +54,10 @@
 │                          middleware； bots.json 归它所有；           │
 │                          注册 /api/agents|bots|ledger|session|...   │
 │  channel-wecom(type:channel)  WeComClient+流式/推送+诊断页           │
-│  provider-dsh / provider-claude / provider-codex（+各自 ui 页）      │
+│  provider-dsh / provider-claude / provider-codex / provider-pi       │
 │  ui-workbench(type:ui)  list/bots/session/push/plugins 页           │
-│  ui-office3d(type:ui)   办公室 3D v2 页                             │
+│  ui-office3d(type:ui)   办公室 Magpie 2D/ISO/3D 页                  │
+│  ui-office-studio       白棚工位热区页（OFFICE-STUDIO-SPEC）         │
 ├────────────────────────────────────────────────────────────────────┤
 │ web/  Shell(导航/路由/主题/页面注册, 注入 window.WAO) + SDK          │
 └────────────────────────────────────────────────────────────────────┘
@@ -102,7 +103,7 @@ channel-wecom 唯一的外部依赖收归内核，使「import 限于自身目�
 |---|---|---|
 | `core` | `ctx.services.register(...)` | `core-engine` |
 | `channel` | `ctx.registerChannel(id, {capabilities, accountSchema, createAdapter})` | `channel-wecom` |
-| `provider` | `ctx.registerProvider(id, {configSchema, validate, materializeConfig, removeConfig, createRunner, readHistory, describeError})` | `provider-dsh/claude/codex` |
+| `provider` | `ctx.registerProvider(id, {configSchema, validate, materializeConfig, removeConfig, createRunner, readHistory, describeError})` | `provider-dsh/claude/codex/pi` |
 | `ui` | `ctx.registerPage({id, title, icon, order, entry})` | `ui-workbench`、`ui-office3d`、各插件自带页 |
 | `middleware` | `ctx.registerMiddleware({onInbound, onOutbound})` 链式 | core-engine 内置掩码 |
 | `progressor` | `ctx.registerProgressor({compose})` | core-engine 内置语义进度 |
@@ -302,24 +303,24 @@ ctx.registerProvider('dsh', {
 })
 ```
 
-**会话续接契约（三家归一）**：首轮不传 sessionId、run() 回传新 id；后续传 id 续接
-（dsh `--session-id` 纯 resume / claude `--resume` / codex `exec resume`）。
+**会话续接契约（四家归一）**：首轮不传 sessionId、run() 回传新 id；后续传 id 续接
+（dsh `--session-id` 纯 resume / claude `--resume` / codex `exec resume` / pi `--session <partial-uuid>`）。
 **abort 处置**：run() 恒 resolve 不 reject；首轮新会话被 abort → sessionId 丢弃不入缓存（半写会话不进台账）。
 **bornCwd 校验**：缓存记录生成时 cwd；bot 改 cwd 后 sessionId 对 dsh（cwd+preset 匹配）与
 claude（会话文件挂 cwd 哈希目录）必失效 → 视为切换走交接，不硬 resume。
 
-### 5.1 三家适配要点与实测基线
+### 5.1 四家适配要点与实测基线
 
-| | dsh 0.2.1 | claude 2.1.318 | codex 0.166 |
-|---|---|---|---|
-| 起进程 | `dsh --profile P --json -`（`--session-id` 仅 resume，新会话省略；首事件回传新 id） | `claude -p --output-format stream-json --verbose`（stdin 传 prompt；新会话**不传 session 旗标**，id 由 system/init 事件回传；续接 `--resume <id>`，init 回显同 id——T1/T2 实测，与上文续接契约一致） | `codex exec --json --skip-git-repo-check -`；续接 `codex exec resume <id>`（stdin 哨兵实测**可用**，基线 codex-resume-stdin；**resume 拒 `-s`**——实测 `error: unexpected argument '-s' found`，续接腿改传 `-c sandbox_mode="…"`；**`-c` 字符串值需 TOML 引号**，help 自带示例 `-c model="o3"`——0.166 实测） |
-| 模型 | profile（materialize） | `--model` | `-m` / `-c model=` |
-| 权限/沙箱 | profile（presets+sandbox-policy） | `--permission-mode`+`--allowedTools` | `-s read-only\|workspace-write\|danger-full-access` |
-| **模型网关路由（评审修正）** | `extraEnv`（apiKeyEnv，现状保留） | bot 级 `env`：`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`（官方文档化，✅成立） | ❌ **`OPENAI_BASE_URL` 不存在**——改走 `-c openai_base_url=...` + `-c model_provider=...` 运行时覆盖，或 materializeConfig 写 per-bot `CODEX_HOME/config.toml`；凭证 `CODEX_API_KEY`；ChatGPT OAuth token 对网关无效 |
-| 成功判据 | exit 0 且 `turn_end.reason.kind==='completed'`（✅实测） | `result.subtype==='success'`（M2 复核） | exit 0 且 `turn.completed`（✅实测） |
-| 事件映射 | session/status(step·reason)/text/tool_call/final | system(init)/assistant(text·thinking·tool_use)/result | thread.started/turn.started/**item.completed(reasoning·agent_message·command_execution·file_change·mcp_tool_call·web_search·todo_list)**/turn.completed/**turn.failed·error**（0.166 实测勘误，T4/T5：计划 item 实为 `todo_list{items}`，**无 `plan_update`**——runner 留 plan_update 拼写对冲映射；`collab_tool_call` 存在但暂不映射，按宽松解析降级不可见；漏映射=进度与 timeline 整条丢失） |
-| 只读历史 | zstd 多帧解码（移植 history.js） | `~/.claude/projects/<字符转义slug(realpath cwd)>/*.jsonl` | `~/.codex/sessions/**.jsonl` |
-| 锁冲突 | code='lock-conflict' → 重试 1 次→防线三文案 | 独占冲突同文案 | 同左 |
+| | dsh 0.2.1 | claude 2.1.318 | codex 0.166 | pi 1.5.0（@earendil-works/pi-coding-agent） |
+|---|---|---|---|---|
+| 起进程 | `dsh --profile P --json -`（`--session-id` 仅 resume，新会话省略；首事件回传新 id） | `claude -p --output-format stream-json --verbose`（stdin 传 prompt；新会话**不传 session 旗标**，id 由 system/init 事件回传；续接 `--resume <id>`，init 回显同 id——T1/T2 实测，与上文续接契约一致） | `codex exec --json --skip-git-repo-check -`；续接 `codex exec resume <id>`（stdin 哨兵实测**可用**，基线 codex-resume-stdin；**resume 拒 `-s`**——实测 `error: unexpected argument '-s' found`，续接腿改传 `-c sandbox_mode="…"`；**`-c` 字符串值需 TOML 引号**，help 自带示例 `-c model="o3"`——0.166 实测） | `pi -p --mode json`（prompt 走 stdin，新旧腿皆可——实测；续接 `--session <partial-uuid>`，首事件 `session` 回显同 id——基线 pi-resume-stdin；**exit 0 ≠ 成功**：模型全败时 pi 仍 exit 0，流内 assistant `message_end stopReason:'error'` + `auto_retry_end{success:false, finalError}`，成功判据必须看流内 stopReason——死网关实测） |
+| 模型 | profile（materialize） | `--model` | `-m` / `-c model=` | `--provider` + `--model`（models.json 内的 id；**缺 `--provider` 时带斜杠的 id 会被解析成 provider/model 而硬报 Model not found**——实测踩坑） |
+| 权限/沙箱 | profile（presets+sandbox-policy） | `--permission-mode`+`--allowedTools` | `-s read-only\|workspace-write\|danger-full-access` | 无等效 flag（pi 无沙箱档；piArgs 透传兜底） |
+| **模型网关路由（评审修正）** | `extraEnv`（apiKeyEnv，现状保留） | bot 级 `env`：`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`（官方文档化，✅成立） | ❌ **`OPENAI_BASE_URL` 不存在**——改走 `-c openai_base_url=...` + `-c model_provider=...` 运行时覆盖，或 materializeConfig 写 per-bot `CODEX_HOME/config.toml`；凭证 `CODEX_API_KEY`；ChatGPT OAuth token 对网关无效 | materializeConfig 写 per-bot `$PI_CODING_AGENT_DIR/models.json`（baseUrl/api + **apiKey 写 `"$ENV名"`——`$` 前缀承重，裸名=字面量**，pi resolve-config-value 语义）；凭证经 apiKeyEnv 注入（默认 PI_MAGPIE_API_KEY）；magpie 对 localhost **不校验 caller key**（实测：错 key/无 key 均通）→ missing-credential 无法真机触发，正则+fake 层闭案 |
+| 成功判据 | exit 0 且 `turn_end.reason.kind==='completed'`（✅实测） | `result.subtype==='success'`（M2 复核） | exit 0 且 `turn.completed`（✅实测） | exit 0 且最后 assistant `message_end.stopReason==='stop'`（✅实测；exit 单独不可作判据） |
+| 事件映射 | session/status(step·reason)/text/tool_call/final | system(init)/assistant(text·thinking·tool_use)/result | thread.started/turn.started/**item.completed(reasoning·agent_message·command_execution·file_change·mcp_tool_call·web_search·todo_list)**/turn.completed/**turn.failed·error**（0.166 实测勘误，T4/T5：计划 item 实为 `todo_list{items}`，**无 `plan_update`**——runner 留 plan_update 拼写对冲映射；`collab_tool_call` 存在但暂不映射，按宽松解析降级不可见；漏映射=进度与 timeline 整条丢失） | session/agent_start/turn_start/**message_end(assistant: text·thinking·toolCall)**/toolResult 消息/turn_end/agent_end/agent_settled/**auto_retry_start·end**；text 从 message_update 增量累积+message_end 权威覆盖（abort 保部分输出）；GLM 经 magpie 会回 thinking 块（实测，映射为 💭） |
+| 只读历史 | zstd 多帧解码（移植 history.js） | `~/.claude/projects/<字符转义slug(realpath cwd)>/*.jsonl` | `~/.codex/sessions/**.jsonl` | `<piAgentDir>/sessions/<--cwd-slug-->/<ts>_<id>.jsonl`（slug=`--${cwd 去首斜杠,[/\:]:-}--`，与 claude 规则不同；JSONL `{type:'message',message:{role,content}}`） |
+| 锁冲突 | code='lock-conflict' → 重试 1 次→防线三文案 | 独占冲突同文案 | 同左 | 真实锁语义未观测；runner 携通用+pi 风措辞正则（fake 层锁定） |
 
 **实测基线（2026-11-05 本机探针，`test/probe.sh` 固化）**：dsh 事件流形状/`--session-id` 纯 resume 语义/
 两次推理探针无 thinking 事件（CoT 源缺失降级）；claude system-init/assistant-blocks/result、本机已路由
@@ -333,6 +334,11 @@ stdin 哨兵**可用**（新 prompt 经 stdin 生效、thread_id 回显）。**c
 **codex rollout 历史闭环已证（2026-11-06，随机暗号两轮法，`codex-history-roundtrip.ndjson`）**：
 两轮真实线程（`exec` 存暗号 → `exec resume` 取回，resume 同 thread id 回显）经
 provider-codex/history.js 解析=2 turns、暗号双向在场、0 warnings。
+**pi 三条真机事实已固化（2026-11-07，`pi*.ndjson`）**：resume+stdin 三腿（存暗号 P8 →
+`--session` 取回 → resume-of-resume 再取回）同 id 回显、上下文两腿皆存活；
+history 闭环（随机暗号两轮法）经 provider-pi/history.js 解析=2 turns、暗号双向在场、0 warnings；
+magpie 经 anthropic-messages 承载 pi（GLM-5.3-flash / workbuddy/deepseek-v4.1-flash 均通，
+GLM 回 thinking 块）。
 基线漂移检测：`bash test/probe.sh --check`。
 
 ---
@@ -438,7 +444,7 @@ Shell 只做导航/路由/主题/数据订阅；一切视图皆页面插件。�
 方案对新契约不成立）；harness 提供 `window.WAO` stub（React stub+registerPage 收集器+假数据）——
 这是「页面插件独立渲染独立截图独立盲评」成立的全部前提。无头 Chrome 命令行仅换 URL。
 
-页面来源：`ui-workbench`（list/bots/session/push/**plugins 插件管理页**）、`ui-office3d`
+页面来源：`ui-workbench`（list/bots/session/push/**plugins 插件管理页**）、`ui-office3d`（Magpie）、`ui-office-studio`（白棚）
 （办公室 3D v2：头顶任务卡=语义进度、屏幕=timeline、工位徽标=provider 形象；保留投影/BFS/DOM 名牌，
 重画视觉）、各 channel/provider 自带页（wecom 诊断、dsh 会话浏览器）。
 技术：React 18 vendored UMD + esbuild 打包 Shell/SDK 进 `web/dist`（产物提交）；插件 ui/ 无构建直用。

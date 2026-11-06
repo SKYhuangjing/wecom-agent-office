@@ -21,6 +21,11 @@ export const PROVIDER_META = {
     dept: '青锋工程组', tech: 'codex · OpenAI Codex CLI',
     blurb: '动手利落的快枪手：Codex CLI 适合脚本、批量改动与快速验证。',
   },
+  pi: {
+    label: 'pi 工程师', color: 'var(--pv-pi)', varName: '--pv-pi',
+    dept: '轻装工程组', tech: 'pi · pi coding agent',
+    blurb: '轻装上阵的多面手：pi CLI 短平快、会话好续接，网关随配随走，适合轻量任务与自由路由。',
+  },
 };
 export const providerMeta = (id) => (PROVIDER_META[id] ?? {
   label: id ? `${id} 工程师` : '未定岗', color: 'var(--pv-unknown)', varName: '--pv-unknown',

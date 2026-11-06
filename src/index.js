@@ -567,7 +567,7 @@ const cmdDoctor = async (flags) => {
   // fails that provider's runs at runtime — the /api/bots/:id/test endpoint
   // and probe.sh report it precisely; doctor just tells the operator which
   // agent CLIs this machine currently has.
-  for (const cli of ['dsh', 'claude', 'codex']) {
+  for (const cli of ['dsh', 'claude', 'codex', 'pi']) {
     const found = whichBin(cli);
     if (found != null) mark('✓', `cli ${cli}`, `present (${found})`);
     else mark('!', `cli ${cli}`, 'not found in PATH (informational — provider runs needing it will fail)');

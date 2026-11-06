@@ -1,24 +1,25 @@
-# codex history roundtrip probe — captured 2026-11-06 (NOTE-only: real-data artifact, NOT compared in --check)
+# codex history roundtrip probe — captured 2026-11-07 (NOTE-only: real-data artifact, NOT compared in --check)
 # purpose: prove plugins/provider-codex/history.js end-to-end against a brand-new REAL rollout file
-# method: fresh tmp cwd; round1 tells codex a RANDOM passcode C5-232697682 (no file/memory writes), round2 `exec resume <tid>` asks it back
+# method: fresh tmp cwd; round1 tells codex a RANDOM passcode C5-3106021340 (no file/memory writes), round2 `exec resume <tid>` asks it back
 #         (both prompts via stdin '-'), then readHistory({cwd:<tmp>}, tid) parses THAT rollout via the production reader
 #         (default codexHome resolution — rollouts live under $CODEX_HOME/sessions/YYYY/MM/DD/, cwd-independent)
-# round1: `printf <记住暗号C5-232697682，只记在心里不要写入任何文件或记忆> | codex exec --json --skip-git-repo-check -` (tmp cwd) exit=0; thread id from thread.started: 01a1ae79-a799-79e0-84fd-f923b49a658c
+# round1: `printf <记住暗号C5-3106021340，只记在心里不要写入任何文件或记忆> | codex exec --json --skip-git-repo-check -` (tmp cwd) exit=0; thread id from thread.started: 01a1b1c6-2443-75e2-b511-37072d1051de
 # round2: `printf <暗号是什么？只回复暗号> | codex exec resume <tid> --json --skip-git-repo-check -` exit=0; thread.started: echoes the SAME thread id (session-id contract, baseline leg2/leg3)
 # readHistory result (turn texts whitespace-collapsed, 80 chars each):
-#   thread id: 01a1ae79-a799-79e0-84fd-f923b49a658c | turn count: 2 | warnings: 0 | truncated: false
+#   thread id: 01a1b1c6-2443-75e2-b511-37072d1051de | turn count: 2 | warnings: 0 | truncated: false
 #   passcode texts in turns: remember-prompt=yes recalled-passcode=yes ask-present=yes
-#   TURN: 1 [记住暗号C5-232697682，只记在心里不要写入任何文件或记忆] => [记住了：C5-232697682。只在当前对话中记着，不会写入文件或记忆。]
-#   TURN: 2 [暗号是什么？只回复暗号] => [C5-232697682]
+#   TURN: 1 [记住暗号C5-3106021340，只记在心里不要写入任何文件或记忆] => [收到，已牢记暗号 `C5-3106021340`，仅保留在当前会话上下文中，绝不写入任何文件或持久化记忆。]
+#   TURN: 2 [暗号是什么？只回复暗号] => [C5-3106021340]
 # verdict: PASS — real 2-round thread parsed clean: both passcode texts present in turns, 0 warnings, same-id echo
 # ---- round1 output (raw, as captured) ----
-{"type":"thread.started","thread_id":"01a1ae79-a799-79e0-84fd-f923b49a658c"}
+{"type":"thread.started","thread_id":"01a1b1c6-2443-75e2-b511-37072d1051de"}
 {"type":"turn.started"}
-{"type":"item.completed","item":{"id":"item_0","type":"reasoning","text":"**我仅确认当前对话**"}}
-{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"记住了：C5-232697682。只在当前对话中记着，不会写入文件或记忆。"}}
-{"type":"turn.completed","usage":{"input_tokens":22146,"cached_input_tokens":3712,"cache_write_input_tokens":0,"output_tokens":84,"reasoning_output_tokens":50}}
+{"type":"item.completed","item":{"id":"item_0","type":"reasoning","text":"Understood the user's intent to remember the provided code and avoid storing it permanently. The instruction specifies maintaining the information solely within the current conversation context, prohibiting any persistent storage or external logging of the code.\n\n\n"}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"收到，已牢记暗号 `C5-3106021340`，仅保留在当前会话上下文中，绝不写入任何文件或持久化记忆。"}}
+{"type":"turn.completed","usage":{"input_tokens":17011,"cached_input_tokens":14924,"cache_write_input_tokens":0,"output_tokens":412,"reasoning_output_tokens":370}}
 # ---- round2 output (raw, as captured) ----
-{"type":"thread.started","thread_id":"01a1ae79-a799-79e0-84fd-f923b49a658c"}
+{"type":"thread.started","thread_id":"01a1b1c6-2443-75e2-b511-37072d1051de"}
 {"type":"turn.started"}
-{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"C5-232697682"}}
-{"type":"turn.completed","usage":{"input_tokens":44390,"cached_input_tokens":25728,"cache_write_input_tokens":0,"output_tokens":106,"reasoning_output_tokens":60}}
+{"type":"item.completed","item":{"id":"item_0","type":"reasoning","text":"The user is asking for the remembered secret code, and the only constraint is to output the code itself. The code is `C5-3106021340`.\n\n\n\n"}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"C5-3106021340"}}
+{"type":"turn.completed","usage":{"input_tokens":34074,"cached_input_tokens":29885,"cache_write_input_tokens":0,"output_tokens":618,"reasoning_output_tokens":563}}

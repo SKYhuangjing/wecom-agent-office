@@ -18,10 +18,21 @@ import { zstdCompressSync } from 'node:zlib';
 // module cycle: the contract suite imports PROFILES from here.
 const FAKE_CLAUDE = fileURLToPath(new URL('../fake-bin/fake-claude.js', import.meta.url));
 const FAKE_CODEX = fileURLToPath(new URL('../fake-bin/fake-codex.js', import.meta.url));
+const FAKE_PI = fileURLToPath(new URL('../fake-bin/fake-pi.js', import.meta.url));
 
 // claude's project-dir slugging (verified against real sessions — see
 // plugins/provider-claude/history.js header): every non-alphanumeric → '-'.
 const projectDirName = (cwd) => String(cwd ?? '').replace(/[^a-zA-Z0-9]/g, '-');
+
+// pi's session-dir slugging (verified against pi 1.5.0 dist
+// core/session-manager.js getDefaultSessionDirPath, and against a live probe:
+// cwd /private/tmp/wao-pi-probe/work → --private-tmp-wao-pi-probe-work--):
+// strip ONE leading slash, replace / \ : with '-', wrap in '--…--'. Note this
+// is NOT claude's rule (other characters pass through), and the resolution is
+// path.resolve only — no realpath (pi reads process.cwd(), which the OS
+// already resolves physically; see plugins/provider-pi/history.js).
+const piSessionSlug = (cwd) =>
+  `--${String(cwd ?? '').replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`;
 
 export const PROFILES = {
   // plugins/_template/provider — the reference implementation the suite must
@@ -161,6 +172,52 @@ export const PROFILES = {
       codexBin: wrapBin(mode, fakeHome),
       cwd,
       codexHome: join(cwd, 'codex-home'),
+    }),
+  },
+
+  // plugins/provider-pi — all groups, mirroring the dsh/claude/codex
+  // profiles: fake-pi injected via piBin wrapper + piAgentDir pointed INSIDE
+  // the group's tmp cwd (the runner injects $PI_CODING_AGENT_DIR with it, and
+  // readHistory walks its sessions/ tree) so history never touches the real
+  // ~/.pi*. Session files use pi 1.5.0's real layout (live-probed 2026-11-07):
+  // <piAgentDir>/sessions/<piSessionSlug(cwd)>/<fileTimestamp>_<sessionId>.jsonl
+  // with {type:'message', message:{role, content}} lines (format discovered
+  // from files real pi wrote — see plugins/provider-pi/history.js header).
+  pi: {
+    note: 'full contract against fake-pi via piBin wrapper injection',
+    // ok-mode final text; pi resumes via --session <partial-uuid> (the
+    // profile's resumeArg check greps last-argv for '<arg> <sid>')
+    expect: { okFinalText: () => '答案文本', resumeArg: '--session' },
+    fakeCli: true,
+    events: true,
+    history: true,
+    // which fake CLI the suite's wrapBin execs (pi has its own fake)
+    fakeBin: FAKE_PI,
+    // piAgentDir is derived the same way makeRunnerArgs derives it, so the
+    // corrupt/huge fixtures land exactly where the reader looks.
+    historyPath: (cwd, sessionId) =>
+      join(cwd, 'pi-agent', 'sessions', piSessionSlug(cwd), `2026-11-06T00-00-00-000Z_${sessionId}.jsonl`),
+    // Oversized-history fixture writer — pi's REAL on-disk session format:
+    // JSONL of {type, message?} lines with 2500 user/assistant message turns,
+    // plus the noise line types real pi interleaves (session /
+    // model_change / thinking_level_change) and the system-message replay.
+    hugeHistory: async (path) => {
+      const lines = [
+        { type: 'session', version: 3, id: 'huge', timestamp: new Date(0).toISOString(), cwd: '/w' },
+        { type: 'model_change', model: { id: 'huge-model' } },
+        { type: 'thinking_level_change', thinkingLevel: 'off' },
+        { type: 'message', message: { role: 'system', content: '', sections: { preamble: 'You are a coding assistant.' } } },
+      ];
+      for (let i = 0; i < 2500; i++) {
+        lines.push({ type: 'message', message: { role: 'user', content: [{ type: 'text', text: `问题 ${i}` }] } });
+        lines.push({ type: 'message', message: { role: 'assistant', content: [{ type: 'thinking', thinking: '略' }, { type: 'text', text: `回答 ${i}` }], stopReason: 'stop' } });
+      }
+      writeFileSync(path, lines.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    },
+    makeRunnerArgs: ({ cwd, mode, fakeHome, wrapBin }) => ({
+      piBin: wrapBin(mode, fakeHome),
+      cwd,
+      piAgentDir: join(cwd, 'pi-agent'),
     }),
   },
 };

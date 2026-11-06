@@ -73,7 +73,7 @@
     <string>REPO_DIR</string>
 
     <!-- launchd 环境没有 nvm 的 shell 初始化——PATH 必须带上 node 所在目录，
-         provider 子进程（dsh/claude/codex）也从这里找。nvm 机器按实际版本改：
+         provider 子进程（dsh/claude/codex/pi）也从这里找。nvm 机器按实际版本改：
          /Users/<user>/.nvm/versions/node/<ver>/bin -->
     <key>EnvironmentVariables</key>
     <dict>

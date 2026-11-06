@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+provider-pi 第四技能部门接入的 UI 面（11-07）。
+
+### Added
+
+- 人事部岗位元数据新增 pi 岗位（轻装工程组，`--pv-pi` 主题色浅/深两档）；岗位下拉与帮助行补 pi。
+
 公司比喻重设计（company-metaphor，仓库 README §4.2 有公司话↔技术词对照表）。
 
 ### Added

@@ -1,6 +1,7 @@
 # codex minimal probe — raw NDJSON as captured (stdin prompt: 只回复两个字：收到)
-# captured 2026-11-06; exit=0; compare = run-length-collapsed .type sequence (bash test/probe.sh --check)
-{"type":"thread.started","thread_id":"01a1ae2d-bd8b-7620-a340-041f6b2d754d"}
+# captured 2026-11-07; exit=0; compare = run-length-collapsed .type sequence (bash test/probe.sh --check)
+{"type":"thread.started","thread_id":"01a1b1be-e492-75f0-93c1-caba6a3604f2"}
 {"type":"turn.started"}
-{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"收到"}}
-{"type":"turn.completed","usage":{"input_tokens":22075,"cached_input_tokens":3712,"cache_write_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0}}
+{"type":"item.completed","item":{"id":"item_0","type":"reasoning","text":"The prompt requires a two-character response: \"收到\". The request is straightforward, aligning with the explicit directive to provide a minimal reply.\n\n\n"}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"收到"}}
+{"type":"turn.completed","usage":{"input_tokens":16932,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":211,"reasoning_output_tokens":210}}

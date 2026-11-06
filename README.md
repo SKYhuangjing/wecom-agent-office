@@ -23,6 +23,7 @@
 │  provider-dsh   每消息一个 dsh 子进程；per-bot profile 物化      │
 │  provider-claude  claude -p stream-json；--resume 续同一会话     │
 │  provider-codex  codex exec --json；resume 子命令续同 thread     │
+│  provider-pi    pi -p --mode json；--session 续同一会话          │
 │  _template      channel/provider/page 三套可复制脚手架          │
 ├────────────────────────────────────────────────────────────────┤
 │ 一个 bot = channel × provider                                   │
@@ -38,19 +39,20 @@
 - 停机 = SIGINT/SIGTERM 触发四阶段（drain 补终帧 → 逆序拆插件 → 关监听 → 孤儿扫尾 → 释放锁），不是裸 kill；
   每阶段在日志留一行（`wao: stopping (four-phase)` … `wao: stopped (lock released)`），见 `data/logs/wao.log`。
 
-三家 provider 一览（M2 起，同一 runner 契约：run 7 字段 / code 枚举 / readHistory 三件套）：
+四家 provider 一览（同一 runner 契约：run 7 字段 / code 枚举 / readHistory 三件套）：
 
 | provider | 驱动方式 | 续接机制 | 副产物 |
 |---|---|---|---|
 | `dsh` | `dsh --json -` 子进程 | `--session-id` 同会话续跑 | per-bot profile 物化（`~/.dsh/profiles/<profile>/`，DELETE 随 bot 清理） |
 | `claude` | `claude -p --output-format stream-json --verbose` | `--resume <id>` 续同一 session（init 回显同 id） | 无（materializeConfig=null） |
 | `codex` | `codex exec --json --skip-git-repo-check -` | `exec resume <id>` 子命令续同 thread（全事件集：todo_list/文件修改/MCP/web_search…） | 无（materializeConfig=null） |
+| `pi` | `pi -p --mode json`（prompt 走 stdin；⚠️ 模型失败时 pi 仍 exit 0——成功判定看流内 stopReason） | `--session <id>` 续同一 session（首事件回显同 id，partial uuid 可用） | per-bot models.json 物化（`~/.pi/agent-wao-<botId>/`，声明网关+`$ENV` 凭证引用，无密钥落盘；DELETE 只清 models.json，sessions/ 档案保留） |
 
 ## 2. 快速开始
 
 ```sh
 npm install          # 仅一个依赖: ws
-node src/index.js doctor    # 自检: node≥20.10/ws/插件扫描/数据目录可写/端口/CLI在位(dsh·claude·codex)/锁探测
+node src/index.js doctor    # 自检: node≥20.10/ws/插件扫描/数据目录可写/端口/CLI在位(dsh·claude·codex·pi)/锁探测
 node src/index.js start     # 前台常驻; --port N --host H --data-dir DIR
 node src/index.js version   # → 0.1.0   (拼错命令会被拒绝, 不会猜)
 ```
@@ -95,11 +97,13 @@ curl -X POST localhost:8792/api/plugins/<id>/disable|enable   # 禁/启用某插
 回显做**敏感值掩码**（2026-11-06 边界收口波）：键名命中 `secret|token|password|apikey|api_key`
 （不区分大小写）的**字符串值**在 GET /api/bots 等回显里显示为 `__MASKED__`（仅回显，磁盘与
 运行时不动）；PATCH 把 `__MASKED__` 原样送回=「未修改」（自动回填已存真值），显式填新值才替换。
-残留面：**list 型字段不掩码**（如 codex `configOverrides` 的 `key=value` 行）——凭证仍请走
+残留面：**list 型字段不掩码**（如 codex `configOverrides` 的 `key=value` 行、pi `piArgs`）——凭证仍请走
 `apiKeyEnv`（只存变量名），不要把 secret 字面量写进任何配置块。
 
 > dsh bot 的 profile 物化是**即时**的：创建/修改 dsh bot 就把 profile 写到
 > `~/.dsh/profiles/<profile>/`（即使 bot 停用）；`DELETE /api/bots/<id>` 会清理该目录。
+> pi bot 同理即时物化 models.json 到 `~/.pi/agent-wao-<botId>/`（文件只含 `$变量名`
+> 引用不含密钥）；`DELETE` 只删 models.json，`sessions/` 会话档案保留（离职留档）。
 
 ### 3.1 无人值守运维（launchd）
 
@@ -283,7 +287,7 @@ curl -si -X POST localhost:8792/mcp -H 'content-type: application/json' \
 | 入职 / 办理入职 | 新建 bot（POST /api/bots） |
 | 离职 / 办结离职手续 | 删除 bot（DELETE /api/bots/:id） |
 | 调休 / 返岗 | 停用 / 启用（toggle，enabled=false/true） |
-| 技能岗位 / 岗位部门（DSH·Claude·Codex 工程师） | provider（dsh / claude / codex） |
+| 技能岗位 / 岗位部门（DSH·Claude·Codex·Pi 工程师） | provider（dsh / claude / codex / pi） |
 | 工位 | 工作目录 cwd |
 | 门禁名单 | allowedUsers |
 | 工牌激活 / 工牌凭证 | 填企微机器人凭证（channel account） |
@@ -313,17 +317,17 @@ prefers-reduced-motion 全关动画（画布动画由 ofscene 的 reduced 标志
 
 | 命令 | 内容 | 时长 |
 |---|---|---|
-| `npm test` | 353 用例：内核（含 log ENOSPC 降级）/loader/engine（含 createdAt 服务端落戳）/ledger/provider（dsh/claude/codex 剖析）+ web 基建（静态托管/穿越拒绝/uiPlugins/SSE 桥）+ e2e 六场景（fake ws + fake-dsh 全链路）+ ops（孤儿扫尾：单元 + 真服务进程 SIGINT e2e） | ~40s |
-| `npm run contract -- --plugin plugins/provider-dsh --port dsh` | provider 端口契约 11/11（真子进程语义） | 秒级 |
+| `npm test` | 417 用例：内核（含 log ENOSPC 降级）/loader/engine（含 createdAt 服务端落戳）/ledger/provider（dsh/claude/codex/pi 剖析）+ web 基建（静态托管/穿越拒绝/uiPlugins/SSE 桥）+ e2e 六场景（fake ws + fake-dsh 全链路）+ ops（孤儿扫尾：单元 + 真服务进程 SIGINT e2e） | ~40s |
+| `npm run contract -- --plugin plugins/provider-dsh --port dsh` | provider 端口契约 11/11（真子进程语义；四家各有套件：dsh/claude/codex/pi 全部 11/11 零跳过） | 秒级 |
 | `npm run contract` | _template 参考实现（4 pass + 7 skip，skip=需真 CLI 的组） | 秒级 |
 | `bash test/smoke-dsh.sh` | **真 dsh**：两轮对话记忆（同 sessionId 续跑记暗号）+ 真 session 文件解码 | ~10s+ |
-| `npm run test:matrix` | **真 dsh+claude+codex 三家切换矩阵**（M2）：同 provider 换模型原生续 / 跨 provider 交接（含功能性召回）/ 切回 delta-only 重放 + API 级 `/test` sessionId 透传冒烟；文件名 `.realtest.js` 不进 `npm test` glob | ~2-4min |
+| `npm run test:matrix` | **真 dsh+claude+codex+pi 四家切换矩阵**：同 provider 换模型原生续 / 跨 provider 交接（含功能性召回，pi 腿 S2-pi/S1-pi 共 9 轮）/ 切回 delta-only 重放 + API 级 `/test` sessionId 透传冒烟；文件名 `.realtest.js` 不进 `npm test` glob | ~2-5min |
 | `bash test/accept-m1.sh` | **真 dsh 验收**：真内核起服 → API 建 bot → /test 两轮 completed → profile 物化/删除 → SIGINT 锁释放 | ~15s |
 | `bash test/accept-m2.sh` | **真 dsh+claude+codex 验收**（M2）：doctor → 三 bot（enabled:false）各家 /test 两轮（round2 透传 `{sessionId}` 同 id 回显）→ PATCH dsh→claude→dsh 真切换两轮 → agents/ledger 视图 → DELETE+profile 清理 → SIGINT 锁释放 | ~2-3min |
-| `bash test/probe.sh` / `--check` | 三 CLI 事件序列基线固化/漂移检测（kill-resume、codex resume 专项） | 每 CLI ≤150s |
+| `bash test/probe.sh` / `--check` | 四 CLI 事件序列基线固化/漂移检测（kill-resume、codex/pi resume+stdin、claude/codex/pi history-roundtrip 专项） | 每 CLI ≤150s |
 | `bash test/ui-shot.sh` | **UI 截图基线**：临时内核 + CDP 无头 Chrome 产 21 张 harness 基线（六页×浅深/办公室 iso·2d×昼夜/模板页/空错态），缺图或 <5KB exit 1；基线图提交在 `test/ui-shots/` | ~75s |
 
-真 CLI 套件不在 `npm test` 内（依赖本机 dsh/claude/codex/凭证）；CLI 缺失时 matrix/smoke/accept 明确 skip。
+真 CLI 套件不在 `npm test` 内（依赖本机 dsh/claude/codex/pi/凭证）；CLI 缺失时 matrix/smoke/accept 明确 skip。
 
 ## 6. 已知边界（诚实申报）
 

@@ -1,24 +1,26 @@
-# codex resume+stdin+thread-continuity probe — captured 2026-11-06 (NOTE-only: multi-round facts, NOT compared in --check)
+# codex resume+stdin+thread-continuity probe — captured 2026-11-07 (NOTE-only: multi-round facts, NOT compared in --check)
 # leg1: `codex exec --json --skip-git-repo-check -` (stdin stores Y9) exit=0; thread_id=captured
-# leg2: `codex exec resume 01a1ae2d-ee86-7ca1-9832-48283e09982b --json --skip-git-repo-check -` (stdin asks the secret) exit=0
+# leg2: `codex exec resume 01a1b1c0-80e6-7cf2-b10b-5bdcdfb3cb58 --json --skip-git-repo-check -` (stdin asks the secret) exit=0
 # leg2 thread.started: emitted, SAME id as leg1
 # leg2 memory: RECALLED — reply contains Y9 (reply: Y9)
-# leg3: `codex exec resume 01a1ae2d-ee86-7ca1-9832-48283e09982b --json --skip-git-repo-check -` (resume-of-resume) exit=0
+# leg3: `codex exec resume 01a1b1c0-80e6-7cf2-b10b-5bdcdfb3cb58 --json --skip-git-repo-check -` (resume-of-resume) exit=0
 # leg3 thread.started: emitted, SAME id as leg1
 # leg3 memory: RECALLED — reply contains Y9 (reply: Y9)
 # stdin: every leg passes its prompt via stdin '-' — runner may always feed stdin, resume included
 # ---- leg1 output (raw) ----
-{"type":"thread.started","thread_id":"01a1ae2d-ee86-7ca1-9832-48283e09982b"}
+{"type":"thread.started","thread_id":"01a1b1c0-80e6-7cf2-b10b-5bdcdfb3cb58"}
 {"type":"turn.started"}
-{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"好的"}}
-{"type":"turn.completed","usage":{"input_tokens":22087,"cached_input_tokens":3712,"cache_write_input_tokens":0,"output_tokens":79,"reasoning_output_tokens":72}}
+{"type":"item.completed","item":{"id":"item_0","type":"reasoning","text":"The prompt explicitly instructs to respond with only \"好的\". The agent must follow this direct instruction. No further processing or analysis is warranted at this stage.\n\n\n"}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"好的"}}
+{"type":"turn.completed","usage":{"input_tokens":16942,"cached_input_tokens":14888,"cache_write_input_tokens":0,"output_tokens":263,"reasoning_output_tokens":262}}
 # ---- leg2 output (raw, first 6 JSON lines) ----
-{"type":"thread.started","thread_id":"01a1ae2d-ee86-7ca1-9832-48283e09982b"}
+{"type":"thread.started","thread_id":"01a1b1c0-80e6-7cf2-b10b-5bdcdfb3cb58"}
 {"type":"turn.started"}
-{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Y9"}}
-{"type":"turn.completed","usage":{"input_tokens":44269,"cached_input_tokens":25600,"cache_write_input_tokens":0,"output_tokens":104,"reasoning_output_tokens":89}}
+{"type":"item.completed","item":{"id":"item_0","type":"reasoning","text":"The user's direct request is to retrieve the memorized secret code. The prompt specifies the need for a direct response, solely the code itself. The prior interaction established that \"Y9\" is the correct secret code. Therefore, the response must be \"Y9\".\n\n\n"}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Y9"}}
+{"type":"turn.completed","usage":{"input_tokens":33896,"cached_input_tokens":29780,"cache_write_input_tokens":0,"output_tokens":456,"reasoning_output_tokens":453}}
 # ---- leg3 output (raw, first 6 JSON lines) ----
-{"type":"thread.started","thread_id":"01a1ae2d-ee86-7ca1-9832-48283e09982b"}
+{"type":"thread.started","thread_id":"01a1b1c0-80e6-7cf2-b10b-5bdcdfb3cb58"}
 {"type":"turn.started"}
 {"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Y9"}}
-{"type":"turn.completed","usage":{"input_tokens":66493,"cached_input_tokens":47616,"cache_write_input_tokens":0,"output_tokens":129,"reasoning_output_tokens":106}}
+{"type":"turn.completed","usage":{"input_tokens":50864,"cached_input_tokens":44689,"cache_write_input_tokens":0,"output_tokens":568,"reasoning_output_tokens":563}}

@@ -1,14 +1,14 @@
-// M2 Task 6: the three-provider switch matrix over REAL CLIs (dsh / claude /
-// codex) — the M2 centerpiece proving DESIGN §7 switching semantics end to
-// end. NOT part of `npm test` (real CLIs + tokens): run via
+// M2 Task 6: the four-provider switch matrix over REAL CLIs (dsh / claude /
+// codex / pi) — the M2 centerpiece proving DESIGN §7 switching semantics end
+// to end. NOT part of `npm test` (real CLIs + tokens): run via
 //   npm run test:matrix        (or: node --test test/e2e/switch-matrix.realtest.js)
 // The `.realtest.js` suffix keeps it out of the `test/**/*.test.js` glob.
 //
 // Two levels:
-//  A. ENGINE-LEVEL (the §7 semantics, one chatKey / 7 real turns):
+//  A. ENGINE-LEVEL (the §7 semantics, one chatKey / 9 real turns):
 //     real Engine + real Ledger + real SessionCache in a tmp dataDir, with the
-//     REAL provider runners (provider-dsh/-claude/-codex runner.js) wrapped in
-//     a recording proxy — the only instrumentation is capturing the prompt +
+//     REAL provider runners (provider-dsh/-claude/-codex/-pi runner.js) wrapped
+//     in a recording proxy — the only instrumentation is capturing the prompt +
 //     sessionId the runner receives; the CLI below the runner is 100% real.
 //       turn 1  dsh    fresh session, told passcode CODE1          (model A profile)
 //       turn 2  dsh    SAME session, config REWRITTEN to model B  → S1-dsh: native resume survives the rewrite (prompt is the bare message)
@@ -20,7 +20,12 @@
 //                  (claude+codex rows since dsh's consumedSeq — NOT the old dsh
 //                  rounds = counterexample A live on real CLIs) and functionally
 //                  recalls CODE2 (the delta actually reached the resumed session).
-//  B. API-LEVEL SMOKE: real kernel (createKernel, repo plugins) + three
+//       turn 8  pi     switch away (full prefix over all 7 rows), asks the
+//                  passcode → S2-pi: fresh session, functionally recalls CODE2
+//                  (the prefix actually worked; probe baselines proved pi's
+//                  same-id --session resume separately)
+//       turn 9  pi     SAME session under --model switch           → S1-pi: native resume, bare prompt
+//  B. API-LEVEL SMOKE: real kernel (createKernel, repo plugins) + four
 //     enabled:false bots → POST /api/bots/:id/test round 1 (fresh) → round 2
 //     with body {sessionId} (the M2-T6 api.js passthrough) → both rounds
 //     completed and the CLI kept the session/thread id, per provider.
@@ -32,12 +37,17 @@
 // Machine facts this run relies on (probe baselines + local config): dsh
 // profile table carries magpie models; claude routes via ~/.claude/settings
 // env (magpie gateway); codex routes via ~/.codex/config.toml
-// (openai_base_url). Model switches use ids present in each catalog:
-// dsh workbuddy/deepseek-v4.1-flash → auto/glm-5.3-flash; claude default →
-// auto/hy3; codex default (auto/gpt-6-luna) → auto/hy3.
+// (openai_base_url); pi routes via a models.json written into a tmp
+// piAgentDir (magpie anthropic-messages, $ENV apiKey reference — both switch
+// ids verified live over that route 2026-11-07). Model switches use ids
+// present in each catalog: dsh workbuddy/deepseek-v4.1-flash →
+// auto/glm-5.3-flash; claude default → auto/hy3; codex default
+// (auto/gpt-6-luna) → auto/hy3; pi auto/glm-5.3-flash →
+// workbuddy/deepseek-v4.1-flash.
 // CLIs write their own session stores under $HOME (~/.dsh / ~/.claude /
-// ~/.codex) — same as every probe run; tmp cwds and the materialized dsh
-// profile are cleaned up in after().
+// ~/.codex) — same as every probe run — EXCEPT pi, whose agent dir (models.json
+// + sessions/) is redirected into the tmp dataDir via piAgentDir; tmp cwds and
+// the materialized dsh profile are cleaned up in after().
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
@@ -54,6 +64,8 @@ import { createRunner as createDshRunner } from '../../plugins/provider-dsh/runn
 import { writeBotProfile, removeProfile } from '../../plugins/provider-dsh/profiles.js';
 import { createRunner as createClaudeRunner } from '../../plugins/provider-claude/runner.js';
 import { createRunner as createCodexRunner } from '../../plugins/provider-codex/runner.js';
+import { createRunner as createPiRunner } from '../../plugins/provider-pi/runner.js';
+import { writeBotModels } from '../../plugins/provider-pi/models.js';
 import { createKernel } from '../../src/index.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -62,7 +74,7 @@ const HANDOFF_HEADER = '以下是本对话此前的记录（供上下文参考�
 // Real CLIs are a hard precondition: absent CLI → whole-file skip (probe.sh
 // convention — loud, never fatal for CI without the CLIs).
 const have = (bin) => spawnSync(bin, ['--version'], { encoding: 'utf8', timeout: 20000 }).status === 0;
-const MISSING = ['dsh', 'claude', 'codex'].filter((b) => !have(b));
+const MISSING = ['dsh', 'claude', 'codex', 'pi'].filter((b) => !have(b));
 const RUN = MISSING.length === 0;
 const SKIP_REASON = RUN ? false : `real CLIs not on PATH: ${MISSING.join(', ')}`;
 
@@ -76,12 +88,19 @@ const R4 = '只回复两个字：收到';
 const R5 = `再记住一个新暗号${CODE2}，只回复：好的`;
 const R6 = '只回复两个字：收到';
 const R7 = '新来的助手刚才记的新暗号是什么？只回复暗号本身，不要有任何其他文字';
+const R8 = '暗号是什么？只回复暗号本身，不要有任何其他文字';
+const R9 = '只回复两个字：收到';
 
 const DSH_PROFILE = 'wecom-m2t6-matrix';
 const DSH_MODEL_A = { provider: 'magpie', model: 'workbuddy/deepseek-v4.1-flash' };
 const DSH_MODEL_B = { provider: 'magpie', model: 'auto/glm-5.3-flash' };
 const CLAUDE_MODEL_B = 'auto/hy3'; // round-2 --model switch (default route on round 1)
 const CODEX_MODEL_B = 'auto/hy3'; // round-2 -m switch (config.toml default on round 1)
+// pi routes via the materialized models.json (magpie anthropic-messages);
+// the apiKey literal rides in providerConfig.model so the runner injects it
+// under PI_MAGPIE_API_KEY — no dependency on the outer shell env.
+const PI_MODEL_A = 'auto/glm-5.3-flash';
+const PI_MODEL_B = 'workbuddy/deepseek-v4.1-flash';
 
 // Real-run timescales: 4min hard cap per turn (smoke-dsh uses 180s), warn
 // phase effectively off, ms throttling irrelevant (reply-only fake adapter).
@@ -124,11 +143,13 @@ const recorded = []; // { provider, prompt, sessionId } per REAL runner.run
 let dshSid = null;
 let claudeSid = null;
 let codexSid = null;
+let piSid = null;
 
 const REAL_FACTORIES = {
   dsh: createDshRunner,
   claude: createClaudeRunner,
   codex: createCodexRunner,
+  pi: createPiRunner,
 };
 
 // The provider port's makeRunner equivalent, wrapped in the recording proxy:
@@ -189,6 +210,13 @@ if (RUN) {
     writeBotProfile({
       profile: DSH_PROFILE, model: DSH_MODEL_A, permission: 'workspace-write',
       workspaceRoot: workDir, dshBin: 'dsh', nodeBin: process.execPath,
+    });
+    // Materialize pi's models.json too (the runner needs the gateway declared
+    // before the first spawn; lives inside dataDir → after()'s rmSync cleans it).
+    writeBotModels({
+      botId: 'm2t6-matrix', piAgentDir: join(dataDir, 'pi-agent'),
+      provider: 'magpie', baseUrl: 'http://127.0.0.1:3425', api: 'anthropic-messages',
+      model: { model: PI_MODEL_A, apiKey: 'magpie' },
     });
     engine.attachBot(bot, { adapter, runner: runners.get('dsh') });
   });
@@ -330,19 +358,76 @@ test('S3 back to dsh: ORIGINAL sessionId resumed, delta-ONLY prefix (counterexam
   assert.equal(rec.cache.dsh.sessionId, dshSid, 'dsh session id unchanged by the round trip');
   assert.ok(rec.cache.dsh.consumedSeq >= 7, `consumedSeq advanced past the whole delta window (${rec.cache.dsh.consumedSeq})`);
   assert.deepEqual(rows().map((r) => r.provider), ['dsh', 'dsh', 'claude', 'claude', 'codex', 'codex', 'dsh'],
-    'ledger journal spans all three providers on one chatKey');
+    'ledger journal through turn 7 spans dsh/claude/codex on one chatKey');
   assert.equal(rows()[6].sessionId, dshSid, 'the switch-back row journals the resumed dsh session');
+});
+
+// —— S2-pi: 跨 provider 去（…→pi 全量交接）—————————————————————————————
+test('S2-pi switch to pi: full handoff prefix over all 7 rows + functional recall', { skip: SKIP_REASON }, async (t) => {
+  setProvider('pi', {
+    cwd: workDir, piAgentDir: join(dataDir, 'pi-agent'), provider: 'magpie',
+    model: { model: PI_MODEL_A, apiKey: 'magpie' },
+  });
+  await turn(R8);
+  const r8 = lastRow();
+  assert.equal(r8.reason, 'completed', `pi turn completed: ${r8.assistant}`);
+  piSid = r8.sessionId;
+  assert.ok(piSid && piSid !== dshSid && piSid !== codexSid, 'pi minted its own session');
+
+  const call = recorded[7];
+  assert.equal(call.sessionId, null, 'cross-provider turn starts a FRESH pi session');
+  assert.ok(call.prompt.startsWith(HANDOFF_HEADER), `prompt starts with the handoff header: ${call.prompt.slice(0, 40)}`);
+  assert.ok(call.prompt.includes(R1) && call.prompt.includes(R5) && call.prompt.includes(R7),
+    'prefix carries history across ALL three prior providers');
+  assert.ok(call.prompt.endsWith(R8), 'the new message is appended after the prefix');
+
+  // Functional proof the prefix WORKED: both passcodes exist ONLY inside
+  // prior providers' sessions — a fresh pi session can only know either one
+  // from the handoff text. (CODE1 lives in dsh turns 1-2, CODE2 in codex
+  // turn 5 + the turn-7 delta; the model may quote either — observed it
+  // quoting CODE1 on the first live run. Asking "暗号是什么" with two codes
+  // in scope is ambiguous by design; EITHER recall proves the prefix reached
+  // the fresh session.)
+  assert.ok(r8.assistant.includes(CODE1) || r8.assistant.includes(CODE2),
+    `pi recalled a passcode from the handoff prefix (got: ${r8.assistant})`);
+
+  const rec = cache.get(K);
+  assert.equal(rec.current, 'pi');
+  assert.equal(rec.cache.pi.sessionId, piSid);
+  assert.equal(rec.cache.pi.consumedAtBuild, 7, 'rule 1: consumedAtBuild = maxSeq(chatKey) BEFORE this turn');
+  assert.equal(rec.cache.pi.consumedSeq, 8, 'rule 2 advanced past the pi row');
+  assert.equal(rec.cache.dsh.sessionId, dshSid, 'the dsh entry survives the switch away');
+  assert.equal(rec.cache.dsh.dirty, false, 'switching away does NOT dirty the old session');
+});
+
+// —— S1-pi: pi 同 provider 换模型（--model）原生续 ——————————————————————————
+test('S1-pi pi: --model switch → same session, bare prompt; journal spans all four providers', { skip: SKIP_REASON }, async () => {
+  setProvider('pi', {
+    cwd: workDir, piAgentDir: join(dataDir, 'pi-agent'), provider: 'magpie',
+    model: { model: PI_MODEL_B, apiKey: 'magpie' },
+  });
+  await turn(R9);
+  const r9 = lastRow();
+  assert.equal(r9.reason, 'completed', `pi model-B round completed: ${r9.assistant}`);
+  assert.equal(recorded[8].sessionId, piSid, 'pi NATIVELY resumed the same session across the model switch');
+  assert.equal(recorded[8].prompt, R9, 'native resume carries NO handoff prefix');
+  assert.equal(cache.get(K).cache.pi.sessionId, piSid, 'cache pi session unchanged');
+  assert.equal(cache.get(K).current, 'pi');
+  assert.deepEqual(rows().map((r) => r.provider),
+    ['dsh', 'dsh', 'claude', 'claude', 'codex', 'codex', 'dsh', 'pi', 'pi'],
+    'ledger journal spans all FOUR providers on one chatKey');
+  assert.equal(rows()[8].sessionId, piSid, 'the pi row journals the resumed pi session');
 });
 
 // —— S4 note: 反例 A/B 的单元级锁定在 test/ledger/ledger.test.js（npm test 内）
 //    恒绿；本文件 turn 7 在真实链路上复证了反例 A 的行为（旧轮不再重放）。
 
-// —— S5: API 级冒烟（真内核 × 三家 × /test sessionId 透传两轮）————————————————
-test('S5 API smoke: real kernel, three enabled:false bots, /test round 2 {sessionId} resumes per provider', { skip: SKIP_REASON }, async () => {
+// —— S5: API 级冒烟（真内核 × 四家 × /test sessionId 透传两轮）————————————————
+test('S5 API smoke: real kernel, four enabled:false bots, /test round 2 {sessionId} resumes per provider', { skip: SKIP_REASON }, async () => {
   const apiData = mkdtempSync(join(tmpdir(), 'wao-m2t6-api-'));
   // The bots' cwds must EXIST before any runner spawns in them (spawn in a
   // missing cwd fails with a bare ENOENT — first-run lesson of this suite).
-  for (const p of ['dsh', 'claude', 'codex']) mkdirSync(join(apiData, p), { recursive: true });
+  for (const p of ['dsh', 'claude', 'codex', 'pi']) mkdirSync(join(apiData, p), { recursive: true });
   const kernel = await createKernel({ port: 0, dataDir: apiData, pluginsDirs: [join(repoRoot, 'plugins')] });
   const base = `http://127.0.0.1:${kernel.http.port}`;
   const post = (p, body) => fetch(base + p, {
@@ -359,6 +444,11 @@ test('S5 API smoke: real kernel, three enabled:false bots, /test round 2 {sessio
       { id: DSH_API_ID, provider: 'dsh', providerConfig: { cwd: join(apiData, 'dsh'), dshBin: 'dsh', nodeBin: process.execPath, permission: 'workspace-write' } },
       { id: 'm2t6-api-claude', provider: 'claude', providerConfig: { cwd: join(apiData, 'claude') } },
       { id: 'm2t6-api-codex', provider: 'codex', providerConfig: { cwd: join(apiData, 'codex') } },
+      // pi: piAgentDir redirected into apiData so POST /api/bots →
+      // materializeConfig (models.json) and the session store both stay in
+      // tmp — the real ~/.pi/agent-wao-<botId> is never touched. The apiKey
+      // literal rides in model → env PI_MAGPIE_API_KEY (models.json refs it).
+      { id: 'm2t6-api-pi', provider: 'pi', providerConfig: { cwd: join(apiData, 'pi'), piAgentDir: join(apiData, 'pi-agent'), model: { model: PI_MODEL_A, apiKey: 'magpie' } } },
     ];
     for (const { id, provider, providerConfig } of cases) {
       const create = await post('/api/bots', {

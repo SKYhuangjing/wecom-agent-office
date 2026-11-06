@@ -17,6 +17,7 @@
   --pv-dsh: #3d5a80;
   --pv-claude: #e07856;
   --pv-codex: #2e9e8f;
+  --pv-pi: #8a6db8;
   --pv-unknown: #6b7573;
   /* 状态 */
   --st-idle: #8fa39b;       /* 待命 灰绿 */
@@ -44,6 +45,7 @@
     --pv-dsh: #8faecf;
     --pv-claude: #e8917a;
     --pv-codex: #57b8aa;
+    --pv-pi: #b39ddb;
     --pv-unknown: #9aa5a2;
     --st-idle: #8fa39b;
     --st-offline: #d98c8c;

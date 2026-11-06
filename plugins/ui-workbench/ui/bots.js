@@ -299,7 +299,7 @@ export default {
               ? [h('option', { value: '' }, '（无可用岗位）')]
               : ports.providers.map((p) => h('option', { key: p.id, value: p.id },
                 `${PROVIDER_LABEL[p.id] ?? p.id}（${p.id}）`))),
-            h('span', { className: 'wb-hint' }, 'dsh=DeepSeek Harness / claude=Claude Code / codex=OpenAI Codex CLI')),
+            h('span', { className: 'wb-hint' }, 'dsh=DeepSeek Harness / claude=Claude Code / codex=OpenAI Codex CLI / pi=pi coding agent')),
           providerSwitched ? h('div', { className: 'wb-notice' },
             `转岗 ${storedBot?.provider} → ${draft.provider}：保存后首轮将携带近期对话摘要续接上下文（仅文本问答对，工具/思考/压缩状态不迁移）。`) : null,
           h(SchemaFields, {
@@ -386,4 +386,4 @@ export default {
 };
 
 // 岗位下拉的公司话（provider id → 部门称呼）
-const PROVIDER_LABEL = { dsh: 'DSH 工程师', claude: 'Claude 工程师', codex: 'Codex 工程师' };
+const PROVIDER_LABEL = { dsh: 'DSH 工程师', claude: 'Claude 工程师', codex: 'Codex 工程师', pi: 'pi 工程师' };

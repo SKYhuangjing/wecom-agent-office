@@ -2,7 +2,7 @@
 # probe.sh — real-CLI 基线固化 / 漂移检测 (DESIGN §5.1)。
 #
 #   bash test/probe.sh            # baseline capture (default): minimal probes for
-#                                 # dsh / claude / codex → test/probe-baselines/<cli>.ndjson
+#                                 # dsh / claude / codex / pi → test/probe-baselines/<cli>.ndjson
 #                                 # (raw NDJSON + header comments), plus special probes:
 #                                 # dsh kill-then-resume, codex resume+stdin with
 #                                 # resume-of-resume thread continuity (Y9 memory),
@@ -14,8 +14,12 @@
 #                                 # history.js reader — M2-T3 committed artifact),
 #                                 # codex history roundtrip (same shape for the
 #                                 # rollout reader: two-round real thread parsed
-#                                 # through provider-codex/history.js — M2-T5).
-#   bash test/probe.sh --check    # re-run the three minimal probes and compare EVENT-TYPE
+#                                 # through provider-codex/history.js — M2-T5),
+#                                 # pi resume+stdin with resume-of-resume session
+#                                 # continuity + pi history roundtrip (same shape,
+#                                 # through provider-pi/history.js — pi needs a
+#                                 # models.json probe agent dir, see ensure_pi_agent_dir).
+#   bash test/probe.sh --check    # re-run the four minimal probes and compare EVENT-TYPE
 #                                 # SEQUENCES against the baselines; drift → diff + exit 1.
 #
 # Comparison semantics: the baseline stores the RAW type-per-line sequence; the
@@ -24,10 +28,11 @@
 # behavior, not protocol; the ORDER and presence of event types is the contract.
 #
 # NOTE-only baselines (claude-resume, claude-thinking, claude-history-
-# roundtrip, codex-resume-stdin, codex-history-roundtrip, dsh-kill-resume):
+# roundtrip, codex-resume-stdin, codex-history-roundtrip, dsh-kill-resume,
+# pi-resume-stdin, pi-history-roundtrip):
 # multi-round / model-output probes whose header comments are the deliverable
 # (observed facts for the runners). --check never compares them — only the
-# three minimal <cli>.ndjson baselines are compared.
+# four minimal <cli>.ndjson baselines are compared.
 #
 # Never hangs: every probe runs under a 150s kill cap (node-based runner —
 # macOS ships no GNU timeout). Missing CLIs are skipped loudly, never fatal.
@@ -45,6 +50,50 @@ THINK_MODEL='antigravity/claude-opus-4-6-thinking' # only thinking-branded id in
 CODEX_SECRET='记住暗号Y9，之后我会问你。现在只回复：好的'
 CODEX_ASK='暗号是什么？只回复暗号本身'
 CODEX_ASK2='暗号还是什么？只回复暗号本身'
+# pi probes run through the local magpie gateway (same route the production
+# bot uses): models.json is written into a temp agent dir per invocation, the
+# key rides in WAO_PROBE_MAGPIE_KEY. The gateway does not enforce caller auth
+# on localhost (verified 2026-11-07), so the default literal is a placeholder
+# that matches how this machine's own claude CLI is wired — on a stricter
+# gateway export WAO_PROBE_MAGPIE_KEY with a real caller key.
+PI_MODEL='auto/glm-5.3-flash'
+PI_PROBE_KEY="${WAO_PROBE_MAGPIE_KEY:-magpie}"
+PI_SECRET='记住暗号P8，之后我会问你。现在只回复：好的'
+PI_ASK='暗号是什么？只回复暗号本身'
+PI_ASK2='暗号还是什么？只回复暗号本身'
+
+# ensure_pi_agent_dir <dir> — write the probe agent dir's models.json (magpie
+# gateway, $ENV apiKey reference — the literal never lands in the file).
+ensure_pi_agent_dir() {
+  local dir="$1"
+  mkdir -p "$dir"
+  cat > "$dir/models.json" <<EOF
+{
+  "waoManaged": true,
+  "waoBotId": "probe",
+  "providers": {
+    "magpie": {
+      "baseUrl": "http://127.0.0.1:3425",
+      "api": "anthropic-messages",
+      "apiKey": "\$WAO_PROBE_MAGPIE_KEY",
+      "models": [
+        {
+          "id": "${PI_MODEL}",
+          "name": "${PI_MODEL} (magpie probe)",
+          "contextWindow": 272000,
+          "maxTokens": 131072
+        }
+      ]
+    }
+  }
+}
+EOF
+}
+
+# pi_probe_env <dir> — prints the env prefix for a pi probe leg.
+pi_probe_env() {
+  printf 'env PI_CODING_AGENT_DIR=%s WAO_PROBE_MAGPIE_KEY=%s' "$1" "$PI_PROBE_KEY"
+}
 
 # run_timed <secs> <cmd...> — stdin/stdout/stderr inherited; 124 on timeout
 # (timeout(1) convention), 127 when the binary cannot spawn.
@@ -180,6 +229,54 @@ codex_text_of() {
   ' "$1"
 }
 
+# pi_sid_of <file> — session id from the first session event ('' if none).
+pi_sid_of() {
+  node -e '
+    const fs = require("node:fs");
+    for (const l of fs.readFileSync(process.argv[1], "utf8").split("\n")) {
+      try {
+        const o = JSON.parse(l);
+        if (o.type === "session" && o.id) { process.stdout.write(o.id); process.exit(0); }
+      } catch {}
+    }
+  ' "$1"
+}
+
+# pi_text_of <file> — LAST assistant text block (the final answer), 120 chars
+# ('' if none). Thinking blocks are skipped; the last text block wins (the
+# same rule the runner uses).
+pi_text_of() {
+  node -e '
+    const fs = require("node:fs");
+    let text = "";
+    for (const l of fs.readFileSync(process.argv[1], "utf8").split("\n")) {
+      try {
+        const o = JSON.parse(l);
+        if (o.type === "message_end" && o.message?.role === "assistant" && Array.isArray(o.message.content)) {
+          for (const c of o.message.content) if (c.type === "text" && c.text) text = c.text;
+        }
+      } catch {}
+    }
+    process.stdout.write(text.slice(0, 120));
+  ' "$1"
+}
+
+# pi_stop_of <file> — the last assistant message_end stopReason ('' if none).
+# The exit-0-is-not-success fact rides on this: a failed run says "error".
+pi_stop_of() {
+  node -e '
+    const fs = require("node:fs");
+    let stop = "";
+    for (const l of fs.readFileSync(process.argv[1], "utf8").split("\n")) {
+      try {
+        const o = JSON.parse(l);
+        if (o.type === "message_end" && o.message?.role === "assistant" && typeof o.message.stopReason === "string") stop = o.message.stopReason;
+      } catch {}
+    }
+    process.stdout.write(stop);
+  ' "$1"
+}
+
 # —— the three minimal probes ————————————————————————————————————————————————
 
 capture_dsh() { # capture_dsh <out-tmp>; prints exit code
@@ -195,6 +292,18 @@ capture_claude() {
 capture_codex() {
   printf '%s' "$PROMPT" | run_timed "$TIMEOUT_SECS" codex exec --json --skip-git-repo-check - >"$1" 2>/dev/null
   echo $?
+}
+
+# pi runs through the magpie gateway: --no-session keeps the minimal probe
+# ephemeral (no sessions/ writes), the prompt rides on stdin (probe-proven).
+capture_pi() { # capture_pi <out-tmp>; prints exit code
+  local agent_dir
+  agent_dir="$(mktemp -d "${TMPDIR:-/tmp}/wao-pi-probe-agent-XXXXXX")"
+  ensure_pi_agent_dir "$agent_dir"
+  printf '%s' "$PROMPT" | run_timed "$TIMEOUT_SECS" env PI_CODING_AGENT_DIR="$agent_dir" WAO_PROBE_MAGPIE_KEY="$PI_PROBE_KEY" pi -p --mode json --no-session --no-context-files --no-extensions --provider magpie --model "$PI_MODEL" >"$1" 2>/dev/null
+  local rc=$?
+  rm -rf "$agent_dir"
+  echo $rc
 }
 
 NOW="$(date +%Y-%m-%d)"
@@ -665,6 +774,185 @@ probe_codex_history_roundtrip() {
   echo "saved $BASE_DIR/codex-history-roundtrip.ndjson (roundtrip=${pass_ok}, turns=${hist_turns:-n/a}, warnings=${hist_warn:-n/a})"
 }
 
+# —— special probe: pi resume + stdin + session continuity (NOTE-only) ————————
+# leg1 stores secret P8 → leg2 `--session <id>` asks it back → leg3 resumes
+# leg2 (resume-of-resume) and asks again. All prompts go via stdin; the
+# session id is echoed by the `session` event on every leg (baseline-proven).
+
+probe_pi_resume_stdin() {
+  local agent_dir out1 out2 out3 sid1 sid2 sid3 rc1 rc2 rc3 reply2 reply3 mem2=no mem3=no stop2 stop3
+  if ! have pi; then
+    echo "skip  pi resume-stdin probe: pi not installed"
+    return 0
+  fi
+  agent_dir="$(mktemp -d "${TMPDIR:-/tmp}/wao-pi-crs-agent-XXXXXX")"
+  ensure_pi_agent_dir "$agent_dir"
+  out1="$(mktemp "$BASE_DIR/.tmp-prs-a.XXXXXX")"
+  out2="$(mktemp "$BASE_DIR/.tmp-prs-b.XXXXXX")"
+  out3="$(mktemp "$BASE_DIR/.tmp-prs-c.XXXXXX")"
+  printf '%s' "$PI_SECRET" | run_timed "$TIMEOUT_SECS" env PI_CODING_AGENT_DIR="$agent_dir" WAO_PROBE_MAGPIE_KEY="$PI_PROBE_KEY" pi -p --mode json --no-context-files --no-extensions --provider magpie --model "$PI_MODEL" >"$out1" 2>/dev/null
+  rc1=$?
+  sid1="$(pi_sid_of "$out1")"
+  if [ -n "$sid1" ]; then
+    printf '%s' "$PI_ASK" | run_timed "$TIMEOUT_SECS" env PI_CODING_AGENT_DIR="$agent_dir" WAO_PROBE_MAGPIE_KEY="$PI_PROBE_KEY" pi -p --mode json --no-context-files --no-extensions --provider magpie --model "$PI_MODEL" --session "$sid1" >"$out2" 2>/dev/null
+    rc2=$?
+  else
+    rc2=skipped
+  fi
+  sid2="$(pi_sid_of "$out2")"
+  if [ "$rc2" != skipped ]; then
+    printf '%s' "$PI_ASK2" | run_timed "$TIMEOUT_SECS" env PI_CODING_AGENT_DIR="$agent_dir" WAO_PROBE_MAGPIE_KEY="$PI_PROBE_KEY" pi -p --mode json --no-context-files --no-extensions --provider magpie --model "$PI_MODEL" --session "${sid2:-$sid1}" >"$out3" 2>/dev/null
+    rc3=$?
+  else
+    rc3=skipped
+  fi
+  sid3="$(pi_sid_of "$out3")"
+  reply2="$(pi_text_of "$out2")"
+  reply3="$(pi_text_of "$out3")"
+  stop2="$(pi_stop_of "$out2")"
+  stop3="$(pi_stop_of "$out3")"
+  # memory verdicts precomputed before the output block: bash 3.2 (macOS)
+  # cannot parse $(case ...) inline in the echo lines below.
+  case "$reply2" in *P8*) mem2=yes ;; esac
+  case "$reply3" in *P8*) mem3=yes ;; esac
+  {
+    echo "# pi resume+stdin+session-continuity probe — captured ${NOW} (NOTE-only: multi-round facts, NOT compared in --check)"
+    echo "# gateway: magpie (${PI_MODEL} via anthropic-messages); models.json probe agent dir with \$ENV apiKey reference; key=${PI_PROBE_KEY:0:3}…"
+    echo "# leg1: \`pi -p --mode json … --provider magpie --model ${PI_MODEL}\` (stdin stores P8) exit=${rc1}; session id from session event: $([ -n "$sid1" ] && echo captured || echo MISSING)"
+    if [ "$rc2" = skipped ]; then
+      echo "# leg2: SKIPPED — leg1 emitted no session event, nothing to resume"
+    else
+      echo "# leg2: \`pi -p --mode json … --session ${sid1}\` (stdin asks the secret) exit=${rc2}; final stopReason=${stop2:-none}"
+      echo "# leg2 session event: $([ -n "$sid2" ] && ([ "$sid2" = "$sid1" ] && echo "emitted, SAME id as leg1" || echo "emitted, NEW id ${sid2}") || echo "NOT emitted on resume")"
+      echo "# leg2 memory: $( [ "$mem2" = yes ] && echo "RECALLED — reply contains P8" || echo "NO MEMORY — reply lacks P8") (reply: ${reply2:-none})"
+    fi
+    if [ "$rc3" = skipped ]; then
+      echo "# leg3: SKIPPED — no leg2 session to resume"
+    else
+      echo "# leg3: \`pi -p --mode json … --session ${sid2:-$sid1}\` (resume-of-resume) exit=${rc3}; final stopReason=${stop3:-none}"
+      echo "# leg3 session event: $([ -n "$sid3" ] && ([ "$sid3" = "$sid1" ] && echo "emitted, SAME id as leg1" || echo "emitted, NEW id ${sid3}") || echo "NOT emitted on resume")"
+      echo "# leg3 memory: $( [ "$mem3" = yes ] && echo "RECALLED — reply contains P8" || echo "NO MEMORY — reply lacks P8") (reply: ${reply3:-none})"
+    fi
+    echo "# stdin: every leg passes its prompt via stdin (no positional arg) — runner may always feed stdin, resume included"
+    echo "# ---- leg1 output (raw) ----"
+    cat "$out1"
+    echo "# ---- leg2 output (raw, first 6 JSON lines) ----"
+    head -6 "$out2"
+    echo "# ---- leg3 output (raw, first 6 JSON lines) ----"
+    head -6 "$out3"
+  } > "${out1}.final"
+  atomic_write "$BASE_DIR/pi-resume-stdin.ndjson" "${out1}.final"
+  rm -f "$out1" "$out2" "$out3"
+  rm -rf "$agent_dir"
+  echo "saved $BASE_DIR/pi-resume-stdin.ndjson (leg1 exit=${rc1}, leg2 exit=${rc2}, leg3 exit=${rc3})"
+}
+
+# —— special probe: pi history roundtrip (NOTE-only artifact) ———————————————
+# Same shape as the claude/codex roundtrips, for the pi session reader: runs a
+# REAL two-round pi conversation in a FRESH tmp cwd — round1 stores a RANDOM
+# passcode (told to write it to no file or memory), round2 --session <id> asks
+# it back — then parses THAT brand-new session file through the PRODUCTION
+# reader plugins/provider-pi/history.js (readHistory({cwd:<tmp>, piAgentDir},
+# sid) — piAgentDir explicit because the probe agent dir is a temp dir; the
+# default ~/.pi/agent-wao-<botId> resolution shares the same lookup code and
+# is unit-covered).
+# Deliverable = the header verdict: session id, same-id echo on resume, turn
+# count, both passcode texts present in the parsed turns, warnings count.
+
+probe_pi_history_roundtrip() {
+  local agent_dir out1 out2 workdir pass sid sid2 rc1 rc2 verdict pass_ok
+  local hist_turns hist_trunc hist_warn hist_rem hist_rec hist_ask
+  if ! have pi; then
+    echo "skip  pi history-roundtrip probe: pi not installed"
+    return 0
+  fi
+  pass="Q9-${RANDOM}${RANDOM}"
+  workdir="$(mktemp -d "${TMPDIR:-/tmp}/wao-pihr-XXXXXX")"
+  agent_dir="$(mktemp -d "${TMPDIR:-/tmp}/wao-pihr-agent-XXXXXX")"
+  ensure_pi_agent_dir "$agent_dir"
+  out1="$(mktemp "$BASE_DIR/.tmp-phr-a.XXXXXX")"
+  out2="$(mktemp "$BASE_DIR/.tmp-phr-b.XXXXXX")"
+  ( cd "$workdir" && printf '%s' "记住暗号${pass}，只记在心里不要写入任何文件或记忆" | run_timed "$TIMEOUT_SECS" env PI_CODING_AGENT_DIR="$agent_dir" WAO_PROBE_MAGPIE_KEY="$PI_PROBE_KEY" pi -p --mode json --no-context-files --no-extensions --provider magpie --model "$PI_MODEL" ) >"$out1" 2>/dev/null
+  rc1=$?
+  sid="$(pi_sid_of "$out1")"
+  if [ -n "$sid" ]; then
+    ( cd "$workdir" && printf '%s' "暗号是什么？只回复暗号" | run_timed "$TIMEOUT_SECS" env PI_CODING_AGENT_DIR="$agent_dir" WAO_PROBE_MAGPIE_KEY="$PI_PROBE_KEY" pi -p --mode json --no-context-files --no-extensions --provider magpie --model "$PI_MODEL" --session "$sid" ) >"$out2" 2>/dev/null
+    rc2=$?
+  else
+    rc2=skipped
+  fi
+  sid2="$(pi_sid_of "$out2")"
+
+  # Direct node harness: readHistory via the production reader. Emits strict
+  # `KEY value` single lines (turn texts whitespace-collapsed + capped, so
+  # model output can never break the bash assembly below).
+  if [ -n "$sid" ]; then
+    verdict="$(node --input-type=module -e '
+      import { pathToFileURL } from "node:url";
+      const { readHistory } = await import(pathToFileURL(process.argv[4]).href);
+      const r = readHistory({ cwd: process.argv[2], piAgentDir: process.argv[6] }, process.argv[3]);
+      const pass = process.argv[5];
+      const clean = (s) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+      const has = (fn) => (r.turns.some(fn) ? "yes" : "no");
+      const out = [
+        `TURNS ${r.turns.length}`,
+        `TRUNCATED ${r.truncated}`,
+        `WARNINGS ${r.warnings.length}`,
+        `REMEMBER ${has((t) => (t.user ?? "").includes(pass))}`,
+        `RECALLED ${has((t) => (t.assistant ?? "").includes(pass))}`,
+        `ASK ${has((t) => (t.user ?? "").includes("暗号是什么"))}`,
+        ...r.warnings.map((w) => `WARNING ${clean(w)}`),
+        ...r.turns.map((t, i) => `TURN ${i + 1} [${clean(t.user)}] => [${clean(t.assistant)}]`),
+      ];
+      process.stdout.write(out.join("\n") + "\n");
+    ' hr "$workdir" "$sid" "$SCRIPT_DIR/../plugins/provider-pi/history.js" "$pass" "$agent_dir")"
+    hist_turns="$(sed -n 's/^TURNS //p' <<<"$verdict")"
+    hist_trunc="$(sed -n 's/^TRUNCATED //p' <<<"$verdict")"
+    hist_warn="$(sed -n 's/^WARNINGS //p' <<<"$verdict")"
+    hist_rem="$(sed -n 's/^REMEMBER //p' <<<"$verdict")"
+    hist_rec="$(sed -n 's/^RECALLED //p' <<<"$verdict")"
+    hist_ask="$(sed -n 's/^ASK //p' <<<"$verdict")"
+  fi
+  # verdict precomputed: bash 3.2 (macOS) cannot parse $(case…) inline below
+  pass_ok=no
+  if [ "$rc1" = 0 ] && [ "$rc2" = 0 ] && [ -n "$sid" ] && [ "$sid2" = "$sid" ] \
+     && [ "${hist_turns:-0}" -ge 2 ] && [ "$hist_rem" = yes ] && [ "$hist_rec" = yes ] \
+     && [ "${hist_warn:-1}" -eq 0 ]; then
+    pass_ok=yes
+  fi
+  {
+    echo "# pi history roundtrip probe — captured ${NOW} (NOTE-only: real-data artifact, NOT compared in --check)"
+    echo "# purpose: prove plugins/provider-pi/history.js end-to-end against a brand-new REAL session file"
+    echo "# method: fresh tmp cwd; round1 tells pi a RANDOM passcode ${pass} (no file/memory writes), round2 \`--session <id>\` asks it back"
+    echo "#         (both prompts via stdin), then readHistory({cwd:<tmp>, piAgentDir}, sid) parses THAT session via the production reader"
+    echo "#         (piAgentDir explicit — the probe agent dir is a temp dir; sessions live under <piAgentDir>/sessions/<cwdSlug>/)"
+    echo "# round1: \`pi -p --mode json … --provider magpie --model ${PI_MODEL}\` (tmp cwd, stdin stores passcode) exit=${rc1}; session id from session event: $([ -n "$sid" ] && echo "$sid" || echo MISSING)"
+    if [ "$rc2" = skipped ]; then
+      echo "# round2: SKIPPED — round1 emitted no session id, nothing to resume"
+    else
+      echo "# round2: \`pi -p --mode json … --session <id>\` (stdin asks the passcode) exit=${rc2}; session event: $([ -n "$sid2" ] && ([ "$sid2" = "$sid" ] && echo "echoes the SAME id (session-id contract)" || echo "NEW id ${sid2}") || echo "NOT emitted — run() falls back to the input id")"
+    fi
+    echo "# readHistory result (turn texts whitespace-collapsed, 80 chars each):"
+    echo "#   session id: ${sid:-none} | turn count: ${hist_turns:-n/a} | warnings: ${hist_warn:-n/a} | truncated: ${hist_trunc:-n/a}"
+    echo "#   passcode texts in turns: remember-prompt=${hist_rem:-n/a} recalled-passcode=${hist_rec:-n/a} ask-present=${hist_ask:-n/a}"
+    sed -n 's/^WARNING /#   WARNING: /p' <<<"$verdict"
+    sed -n 's/^TURN /#   TURN: /p' <<<"$verdict"
+    if [ "$pass_ok" = yes ]; then
+      echo "# verdict: PASS — real 2-round session parsed clean: both passcode texts present in turns, 0 warnings, same-id echo"
+    else
+      echo "# verdict: FAIL — rc1=${rc1} rc2=${rc2} sid-echo=$([ "$sid2" = "$sid" ] && echo same || echo differs) turns=${hist_turns:-n/a} remember=${hist_rem:-n/a} recalled=${hist_rec:-n/a} warnings=${hist_warn:-n/a}"
+    fi
+    echo "# ---- round1 output (raw, as captured) ----"
+    cat "$out1"
+    echo "# ---- round2 output (raw, as captured) ----"
+    cat "$out2"
+  } > "${out1}.final"
+  atomic_write "$BASE_DIR/pi-history-roundtrip.ndjson" "${out1}.final"
+  rm -f "$out1" "$out2"
+  rm -rf "$workdir" "$agent_dir"
+  echo "saved $BASE_DIR/pi-history-roundtrip.ndjson (roundtrip=${pass_ok}, turns=${hist_turns:-n/a}, warnings=${hist_warn:-n/a})"
+}
+
 # —— check mode ——————————————————————————————————————————————————————————————
 
 check_minimal() { # check_minimal <cli> <capture-fn>
@@ -702,12 +990,15 @@ case "$MODE" in
     save_minimal dsh capture_dsh
     save_minimal claude capture_claude
     save_minimal codex capture_codex
+    save_minimal pi capture_pi
     probe_dsh_kill_resume
     probe_codex_resume_stdin
     probe_claude_resume
     probe_claude_thinking
     probe_claude_history_roundtrip
     probe_codex_history_roundtrip
+    probe_pi_resume_stdin
+    probe_pi_history_roundtrip
     echo "probe: baselines captured (git add $BASE_DIR/*.ndjson)"
     ;;
   --check)
@@ -716,6 +1007,7 @@ case "$MODE" in
     check_minimal dsh capture_dsh || fail=1
     check_minimal claude capture_claude || fail=1
     check_minimal codex capture_codex || fail=1
+    check_minimal pi capture_pi || fail=1
     if [ "$fail" = 1 ]; then
       echo "probe: DRIFT detected — update baselines deliberately (bash test/probe.sh && git add), never blindly"
       exit 1
