@@ -122,7 +122,18 @@ curl -X POST localhost:8792/api/plugins/<id>/disable|enable   # 禁/启用某插
   manifest 声明 `ui: './ui'` → 内核托管 `/api/ui/<id>/` 并进 `/api/state.uiPlugins`。细节与
   harness 模板见 `docs/PLUGIN-DEV.md` §5.4，参照实现 `plugins/_template/page/`。
 - **harness 截图（改 UI 红线：必须截图验证）**：每页面插件 `ui/harness.html` 用
-  `web/harness-lib/wao-stub.js` 的假数据桩独立渲染（内核同源托管），无头 Chrome 截图：
+  `web/harness-lib/wao-stub.js` 的假数据桩独立渲染（内核同源托管）。**UI 改动工作流
+  = 改页 → 跑截图脚本 → 逐张看图（浅/深/空态/错误态）→ 图随代码一起提交**：
+
+  ```sh
+  bash test/ui-shot.sh      # 起临时内核(18798)+CDP 无头 Chrome，重产 21 张基线到 test/ui-shots/
+  ```
+
+  基线清单（提交进库，review 时对照）：ui-workbench 六页 × 浅/深（`?page=`）+
+  ui-office3d iso/2d × 浅(day)/深(night)（`?dim=`/`?phase=`）+ template-page demo +
+  边界四张（`?state=empty|error`：工作台与办公室的空态 / 断服 fetch 失败文案）。
+  主题由 CDP `Emulation.setEmulatedMedia` 精确控制（不依赖系统外观）；任一图缺失或
+  <5KB 脚本 exit 1。harness 还支持手工改 `ui/fake-data.js` 桩出更多状态后单张复现：
 
   ```sh
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
@@ -130,9 +141,8 @@ curl -X POST localhost:8792/api/plugins/<id>/disable|enable   # 禁/启用某插
     http://127.0.0.1:8792/api/ui/<插件id>/harness.html
   ```
 
-  示例（本仓库自带 demo）：`/api/ui/template-page/harness.html`（需 `WAO_PLUGINS_PATH` 指向
-  `plugins/_template` 让模板页生效）。深色/浅色由系统 `prefers-color-scheme` 决定，截图时可加
-  `--force-dark-mode`/`--force-light-mode` 各验一张。
+  单张手工截图时深色可加 `--force-dark-mode`；模板页 demo 需 `WAO_PLUGINS_PATH`
+  指向 `plugins/_template`（脚本已自动带上）。
 
 ## 5. 测试矩阵
 
@@ -146,6 +156,7 @@ curl -X POST localhost:8792/api/plugins/<id>/disable|enable   # 禁/启用某插
 | `bash test/accept-m1.sh` | **真 dsh 验收**：真内核起服 → API 建 bot → /test 两轮 completed → profile 物化/删除 → SIGINT 锁释放 | ~15s |
 | `bash test/accept-m2.sh` | **真 dsh+claude+codex 验收**（M2）：doctor → 三 bot（enabled:false）各家 /test 两轮（round2 透传 `{sessionId}` 同 id 回显）→ PATCH dsh→claude→dsh 真切换两轮 → agents/ledger 视图 → DELETE+profile 清理 → SIGINT 锁释放 | ~2-3min |
 | `bash test/probe.sh` / `--check` | 三 CLI 事件序列基线固化/漂移检测（kill-resume、codex resume 专项） | 每 CLI ≤150s |
+| `bash test/ui-shot.sh` | **UI 截图基线**：临时内核 + CDP 无头 Chrome 产 21 张 harness 基线（六页×浅深/办公室 iso·2d×昼夜/模板页/空错态），缺图或 <5KB exit 1；基线图提交在 `test/ui-shots/` | ~75s |
 
 真 CLI 套件不在 `npm test` 内（依赖本机 dsh/claude/codex/凭证）；CLI 缺失时 matrix/smoke/accept 明确 skip。
 

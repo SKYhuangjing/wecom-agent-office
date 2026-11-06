@@ -4,6 +4,8 @@
      deterministic screenshots (both also work on the real console page):
        ?dim=2d            top-down projection (default isometric)
        ?phase=day|dawn|dusk|night   lock the day-phase clock
+       ?state=empty|error boundary baselines — empty office / 服务断联的
+                         fetch 失败文案 (test/ui-shot.sh 用)
      Then, per the 改 UI 红线:
        CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
        "$CHROME" --headless=new --disable-gpu --window-size=1280,800 \
@@ -25,7 +27,16 @@
   <script type="module">
     import { makeWAOStub } from '/assets/harness-lib/wao-stub.js';
     import { FAKE, FAKE_TIMELINE } from './fake-data.js';
-    const stub = makeWAOStub({ agents: FAKE.agents, timeline: FAKE_TIMELINE });
+    // ?state=empty|error — boundary baselines (test/ui-shot.sh); error uses
+    // the SDK's real offline copy so the shot matches a server-down browser.
+    const state = new URLSearchParams(location.search).get('state');
+    const fake = state === 'empty' ? { agents: [], timeline: [] }
+      : state === 'error' ? {
+        agents: [], agentsError: '网络请求失败：Failed to fetch',
+        timeline: [], timelineError: '网络请求失败：Failed to fetch',
+      }
+        : { agents: FAKE.agents, timeline: FAKE_TIMELINE };
+    const stub = makeWAOStub(fake);
     const office = (await import('./index.js')).default;
     stub.render(office, document.getElementById('root'));
   </script>

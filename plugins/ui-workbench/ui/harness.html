@@ -1,8 +1,11 @@
 <!doctype html>
 <!-- ui-workbench harness (M3 T2/T3 截图工作流, kernel-hosted same-origin):
      ?page=workbench (default) renders 工作台; also bots / session / push /
-     plugins / timeline. Swap fake-data.js entries for the state you want to
-     screenshot (empty ledger, offline bot, failed plugin, push error...), then:
+     plugins / timeline. ?state=empty (no bots) / ?state=error (服务断联的
+     fetch 失败文案) swap the fake data for those boundary states —
+     test/ui-shot.sh 截空态/错误态基线用. Swap fake-data.js entries for the
+     state you want to screenshot (empty ledger, offline bot, failed plugin,
+     push error...), then:
        chrome --headless=new --disable-gpu --screenshot=list-light.png \
          --window-size=1280,800 http://127.0.0.1:8792/api/ui/ui-workbench/harness.html
        chrome ... --screenshot=session-light.png \
@@ -22,9 +25,20 @@
   <script type="module">
     import { makeWAOStub } from '/assets/harness-lib/wao-stub.js';
     import { FAKE, FAKE_API, FAKE_TIMELINE } from './fake-data.js';
-    const stub = makeWAOStub({ agents: FAKE.agents, timeline: FAKE_TIMELINE, api: FAKE_API });
+    const params = new URLSearchParams(location.search);
+    // ?state=empty|error — boundary baselines (test/ui-shot.sh). error uses
+    // the SDK's real offline copy (网络请求失败：…) so the shot matches what a
+    // server-down browser actually shows.
+    const state = params.get('state');
+    const fake = state === 'empty' ? { agents: [], timeline: [] }
+      : state === 'error' ? {
+        agents: [], agentsError: '网络请求失败：Failed to fetch',
+        timeline: [], timelineError: '网络请求失败：Failed to fetch',
+      }
+        : { agents: FAKE.agents, timeline: FAKE_TIMELINE, api: FAKE_API };
+    const stub = makeWAOStub(fake);
     const index = await import('./index.js'); // registers all six pages via the collector
-    const wanted = new URLSearchParams(location.search).get('page');
+    const wanted = params.get('page');
     const page = [index.default, ...stub.pages].find((p) => p.id === wanted) ?? index.default;
     stub.render(page, document.getElementById('root'));
   </script>
