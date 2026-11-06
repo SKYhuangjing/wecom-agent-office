@@ -11,8 +11,8 @@ const MAX_CHARS = 4000;
 
 export default {
   id: 'push',
-  title: '推送',
-  icon: '➤',
+  title: '广播站',
+  icon: '📣',
   order: 4,
   component({ WAO }) {
     const { h, useState, useEffect, api, useAgents } = WAO;
@@ -69,13 +69,13 @@ export default {
 
     if (agentsError != null) {
       return h('div', { className: 'page' },
-        h('h2', null, '推送'),
-        h('div', { className: 'error' }, bannerText('加载机器人列表失败：', agentsError)));
+        h('h2', null, '广播站'),
+        h('div', { className: 'error' }, bannerText('加载同事列表失败：', agentsError)));
     }
     if (agents.length === 0) {
       return h('div', { className: 'page' },
-        h('h2', null, '推送'),
-        h('div', { className: 'wb-empty' }, h('p', null, '还没有机器人——先到 Bot 管理创建。')));
+        h('h2', null, '广播站'),
+        h('div', { className: 'wb-empty' }, h('p', null, '广播站还缺一位播音员——去人事部办一位同事入职，它就能替你向部门群喊话。')));
     }
 
     const agent = agents.find((a) => a.id === botId) ?? null;
@@ -86,42 +86,42 @@ export default {
     const len = content.length;
 
     return h('div', { className: 'page' },
-      h('h2', null, '推送'),
-      h('p', { className: 'muted' }, '以机器人身份向一个既有会话主动发消息（服务端推送）。内容会真实送达企微，请谨慎使用。'),
+      h('h2', null, '广播站'),
+      h('p', { className: 'muted' }, '挑一位同事当播音员，向部门群/同事主动播报。内容会真实送达企微，请谨慎使用。'),
       h('div', { className: 'wb-form', style: { maxWidth: 660 } },
         h('div', { className: 'wb-field' },
-          h('label', null, '机器人'),
+          h('label', null, '播音员', h('span', { className: 'wb-hint', style: { marginLeft: 8 } }, '以哪位同事的身份播报')),
           h('select', {
             className: 'wb-select', value: botId ?? '', onChange: (e) => setBotId(e.target.value),
           }, agents.map((a) => h('option', { key: a.id, value: a.id },
-            `${a.name ?? a.id}（${a.status === 'working' ? '工作中' : a.status === 'idle' ? '空闲' : '离线'}）`)))),
+            `${a.name ?? a.id}（${a.status === 'working' ? '工作中' : a.status === 'idle' ? '待命' : '休假'}）`)))),
         h('div', { className: 'wb-field' },
-          h('label', null, '目标会话（chatKey，来自该机器人的台账）'),
+          h('label', null, '播给谁', h('span', { className: 'wb-hint', style: { marginLeft: 8 } }, '部门群/同事，来自它的往来档案')),
           chatsError != null
-            ? h('div', { className: 'wb-field-error' }, `加载会话列表失败：${chatsError}`)
+            ? h('div', { className: 'wb-field-error' }, `加载播报对象失败：${chatsError}`)
             : chats.length === 0
-              ? h('div', { className: 'wb-hint' }, '该机器人还没有台账记录——推送需要一个既有会话；机器人收到第一条消息后即可选择。')
+              ? h('div', { className: 'wb-hint' }, '它还没有可播报的对象——部门群/同事先来找过它一次，广播才有收件人。')
               : h('select', {
                 className: 'wb-select', value: chatKey, onChange: (e) => setChatKey(e.target.value),
               }, chats.map((c) => h('option', { key: c.chatKey, value: c.chatKey }, c.chatKey)))),
         h('div', { className: 'wb-field' },
-          h('label', null, '内容'),
+          h('label', null, '广播内容'),
           h('textarea', {
             className: 'wb-textarea', rows: 5, maxLength: MAX_CHARS + 100, value: content,
-            placeholder: '要推送的文本内容（上限 4000 字）',
+            placeholder: '要播报的文本内容（上限 4000 字）',
             onChange: (e) => setContent(e.target.value),
           }),
           h('span', { className: `wb-counter${overLimit ? ' over' : ''}` }, `${len} / ${MAX_CHARS}${overLimit ? ' — 超出上限，请删减' : ''}`)),
         notConnected ? h('div', { className: 'wb-notice' },
-          `该机器人当前未连接${agent?.reason ? `（${agent.reason}）` : ''}——推送要求机器人在线（已启用且渠道已连接）。`) : null,
+          `播音员当前不在岗${agent?.reason ? `（原因：${agent.reason}）` : ''}——广播要求它在岗（启用且渠道已连接）。`) : null,
         h('div', { className: 'wb-toolbar' },
           h('button', {
             className: 'wb-btn wb-btn-primary', disabled: !canSend, onClick: () => void send(),
             title: notConnected ? '机器人未连接，无法推送' : undefined,
-          }, sending ? '发送中…' : '发送'))),
+          }, sending ? '播报中…' : '开始广播'))),
       result?.ok === true ? h('div', { className: 'wb-banner wb-banner-ok' },
-        `已推送到 ${result.chatKey}${agent?.name ? `（${agent.name}）` : ''}。`) : null,
+        `${agent?.name ?? '同事'} 已向 ${result.chatKey} 播报完毕。`) : null,
       result?.ok === false ? h('div', { className: 'wb-banner wb-banner-bad' },
-        `推送失败：${result.message}`) : null);
+        `播报失败：${result.message}`) : null);
   },
 };
