@@ -83,6 +83,11 @@ test('runner: ok run — completed shape, event mapping, stdin piped verbatim', 
     assert.ok(typeof res.sessionId === 'string' && res.sessionId !== '', 'session id from the session event');
     assert.equal(res.finalText, '答案文本', 'last turn text wins over the earlier delta');
     assert.equal(res.reason?.kind, 'completed');
+    // observability wave: pi's usage dialect (input/output/cacheRead/cost.total,
+    // probe-baselines/pi.ndjson) normalizes fully — cacheRead + cost included.
+    assert.deepEqual(res.reason?.usage, {
+      inputTokens: 3516, outputTokens: 6, cacheReadTokens: 0, cost: 0,
+    });
     assert.equal(res.detail?.exitCode, 0);
     assert.equal(typeof res.detail?.stderrTail, 'string');
     // mapping: delta text + final text + tool(bash→Bash, brief has ls)

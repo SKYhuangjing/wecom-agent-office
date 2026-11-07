@@ -39,7 +39,7 @@
 
 | 事项 | 命令/位置 |
 |---|---|
-| 巡检 | healthz + /api/agents（两 bot 应 idle=连接+订阅）；日志 `data/logs/wao.log`（10MB×5 轮转）+ `launchd.{out,err}.log` |
+| 巡检 | healthz + /api/agents（两 bot 应 idle=连接+订阅）；日志 `data/logs/wao.log`（10MB×5 轮转）+ `launchd.{out,err}.log`（**日志治理 observability wave 后：文件日志健康时不再 mirror stderr——launchd.err.log 应保持空；非空=file 侧降级 stderr-only 的告警，去查盘/权限**） |
 | 升级（改任何插件/shell 代码后） | `launchctl kickstart -k gui/$(id -u)/com.wecom-agent-office`（进程重启=四阶段停机+KeepAlive 自愈；⚠️ `/api/service/reload` 只做配置级重载——静态 import 缓存局限，勿当升级用） |
 | 插件启停（=部门开张/歇业） | UI 后勤部门页 或 `POST /api/plugins/:id/enable\|disable`（四阶段 reload；引用它的 bot 立即离线并给原因） |
 | 插件开发 | `plugins/_template/` 三脚手架 + [PLUGIN-DEV.md](docs/PLUGIN-DEV.md) + 契约套件 `npm run contract -- --plugin <dir>`（profiles 控 skip、插件侧无逃逸） |
@@ -118,6 +118,6 @@
 
 **W3 资产系统**（docs/DESIGN-ASSETS.md 权威，双评审定稿）：五类资产（**skill/memory/mcp/prompt/tool**）+配发（shared 跟源）/私发（exclusive 快照）双模式；物化管线四家 provider（dsh=profile 组合器/claude=CLAUDE.md+skills+mcp 单文件/codex=AGENTS.md+config.toml/pi=agentDir+旗标）；**RTK 实测单轮 -18% token**（rtk 1.1.0 已装 ~/.local/bin，三 flavor）；ripgrep 指引资产。UI=Web「资产科」双视图+入职向导配装备步；doctor 含漂移检查（`!` 告警级）；修复=POST /api/bots/:id/rematerialize-assets。mcp 资产 env/headers 值永不回显（__MASKED__ 按位置，留掩码=不改）。data/ 新增：assets.json（0600）+ assets/<botId>/manifest.json。
 
-**cost-tracker Token 用量播报**（中间件插件，`plugins/cost-tracker/`）：最终回复尾行 `📊 Token：输入 X · 输出 Y`；**按 bot 开关=绑定/解绑工具资产 cost-tracker**（激活时自动注册进 assets.json，origin plugin；控制台/MCP 的 bind API 即开关）。引擎侧：`defaultRunTurn` 最终回复经 `middleware.onOutbound(text,{bot,usage,model,durationMs})`（进度帧/维护文案不经过；坏中间件抛错隔离不吞回复；middleware 产物仍过掩码）；usage 累计器归一 dsh/claude/codex 三种上报方言（运行总量取 max，非求和）。不定价、不持久化（台账正文无尾行）。**现状**：codex 岗位出真实数字（runner 已带 reason.usage）；dsh/claude 岗位显示 0，待各自 runner 转发 usage 事件（引擎已就绪）。注意：该资产由插件托管，勿在控制台编辑（编辑器只认 rtk/ripgrep，保存会改写 content；删除后下次 reload 自动重注册）。
+**cost-tracker Token 用量播报**（中间件插件，`plugins/cost-tracker/`）：最终回复尾行 `📊 Token：输入 X · 输出 Y`；**按 bot 开关=绑定/解绑工具资产 cost-tracker**（激活时自动注册进 assets.json，origin plugin；控制台/MCP 的 bind API 即开关）。引擎侧：`defaultRunTurn` 最终回复经 `middleware.onOutbound(text,{bot,usage,model,durationMs})`（进度帧/维护文案不经过；坏中间件抛错隔离不吞回复；middleware 产物仍过掩码）；usage 累计器归一 dsh/claude/codex/pi 四种上报方言（运行总量取 max，非求和）。不定价（台账 `cost` 恒 null）；**台账每行落 `tokens`=累计 totalTokens（observability wave，含 aborted/timeout/error 行——bookkeep 全分支走累计器）**。**现状**：四 provider 全通——dsh 已修（step_end usage 转发统一 `usage` 事件）、claude 已修（result usage 转发）、codex 半通→全通（reason.usage 补 cacheReadTokens）、pi 半通→全通（reason.usage 补 cacheReadTokens+cost 透传）；尾行与台账均为真实数字。注意：该资产由插件托管，勿在控制台编辑（编辑器只认 rtk/ripgrep，保存会改写 content；删除后下次 reload 自动重注册）。
 
 **未验证项**：codex/pi 资产面真机消费（契约套件覆盖）；TUI 真终端视觉（纯函数快照锁定）；多轮长会话累计 rtk 节省。

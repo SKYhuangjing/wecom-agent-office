@@ -303,6 +303,55 @@ test('engine: no onOutbound middleware → final text and ledger byte-identical 
   assert.equal(h.ledger.turns({ chatKey: K })[0].assistant, '最终答案全文');
 });
 
+// --- 3: ledger persistence (observability wave) ————————————————
+
+test('engine: ledger row carries the run tokens; cost stays null (no pricing)', async () => {
+  const h = makeHarness({
+    runner: fakeRunner({
+      emit: [{ type: 'usage', usage: { inputTokens: 249, outputTokens: 59, totalTokens: 7092 } }],
+    }),
+  });
+  await h.send();
+  const row = h.ledger.turns({ chatKey: K }).at(-1);
+  assert.equal(row.reason, 'completed');
+  assert.equal(row.tokens, 7092, 'tokens = the accumulated totalTokens');
+  assert.equal(row.cost, null, 'cost is never computed (user decision: no pricing)');
+});
+
+test('engine: an aborted run keeps its observed usage in the ledger row too', async () => {
+  let started = false;
+  const h = makeHarness({
+    runner: {
+      async run(args) {
+        started = true;
+        args.onEvent?.({ type: 'usage', usage: { inputTokens: 120, outputTokens: 30, totalTokens: 150 } });
+        // park until abort like a real provider (§5: abort settles, never rejects)
+        await new Promise((resolve) => {
+          const t = setTimeout(resolve, 5_000);
+          args.signal.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });
+        });
+        return { ok: false, code: 'aborted', finalText: '', aborted: true, sessionId: null, reason: 'aborted', detail: {} };
+      },
+    },
+  });
+  h.engine.onMessage(h.bot, {
+    chatKey: K, chatKind: 'group', chatid: 'g1', userid: 'u1', text: '打断我',
+    reqId: `req-${randomUUID()}`,
+  });
+  const settle = h.engine.chains.get(K);
+  // Abort only once the runner is REALLY running — an abort before start is
+  // skipped by design (no row at all), which is not the branch under test.
+  const deadline = Date.now() + 5_000;
+  while (!started && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+  assert.ok(started, 'runner started (abort window reached)');
+  h.engine.inFlight.get(K).abort();
+  await settle;
+  await tick();
+  const row = h.ledger.turns({ chatKey: K }).at(-1);
+  assert.equal(row.reason, 'interrupted', 'the abort branch really ran');
+  assert.equal(row.tokens, 150, 'non-completed branches keep the accumulated usage');
+});
+
 test('engine: middleware returning a non-string is ignored — the reply keeps its text', async () => {
   const h = makeHarness({
     middleware: { maskOutbound, onOutbound: () => null },

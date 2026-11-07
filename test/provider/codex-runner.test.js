@@ -82,6 +82,8 @@ test('runner: ok run — completed shape, FULL event-set mapping, stdin piped ve
     assert.equal(res.finalText, '答案文本');
     assert.equal(res.reason?.kind, 'completed');
     assert.equal(res.reason?.usage?.inputTokens, 22075);
+    // observability wave: the prompt-cache-read bucket normalizes too
+    assert.equal(res.reason?.usage?.cacheReadTokens, 3712);
     assert.equal(res.detail.exitCode, 0);
     // session comes from thread.started
     assert.equal(events[0]?.type, 'session');

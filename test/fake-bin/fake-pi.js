@@ -133,7 +133,7 @@ async function okStream(finalText = '答案文本') {
   await turnPrologue();
   emit({ type: 'message_start', message: { role: 'assistant', content: [], stopReason: 'pending' } });
   await sleep(30);
-  emit({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: finalText }], usage: { input: 3516, output: 6, cacheRead: 0, cacheWrite: 0, totalTokens: 3522 }, stopReason: 'stop' } });
+  emit({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: finalText }], usage: { input: 3516, output: 6, cacheRead: 0, cacheWrite: 0, totalTokens: 3522, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, totalFromProvider: false } }, stopReason: 'stop' } });
   emit({ type: 'turn_end', message: { role: 'assistant', content: [{ type: 'text', text: finalText }], stopReason: 'stop' }, toolResults: [] });
   emit({ type: 'agent_end', messages: [] });
   emit({ type: 'agent_settled', aborted: false });

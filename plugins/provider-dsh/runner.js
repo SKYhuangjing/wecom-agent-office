@@ -116,6 +116,10 @@ export function createRunner({ bot, providerConfig, log, escalationMs = DEFAULT_
             // rc.5 carries the turn outcome on a status{phase:'turn_end'}
             // event, NOT on `final` — capture it here (ported comment).
             if (ev.reason && ev.reason.kind) state.reason = ev.reason;
+            // step_end carries the turn-so-far usage (camelCase dialect,
+            // probe-baselines/dsh.ndjson) — forward it so the engine's
+            // cost-tracker accumulator sees the run's real numbers.
+            if (ev.usage) emit({ type: 'usage', usage: ev.usage });
             if (ev.phase === 'step_start' || ev.phase === 'step_end') {
               emit({ type: 'step', n: ev.step, phase: ev.phase });
             }

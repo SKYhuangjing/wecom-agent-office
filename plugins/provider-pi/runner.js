@@ -212,9 +212,15 @@ export function createRunner({ bot, providerConfig, assets, log, escalationMs = 
           state.error = state.error || message.errorMessage;
         }
         if (message.usage && typeof message.usage === 'object') {
+          // pi's dialect (probe-baselines/pi.ndjson): {input, output, cacheRead,
+          // cacheWrite, totalTokens, cost:{…, total}} — cacheRead and cost.total
+          // ride along so the observability layer sees the full picture (cost is
+          // carried, never priced into the ledger — user decision).
           state.usage = {
             inputTokens: message.usage.input ?? null,
             outputTokens: message.usage.output ?? null,
+            cacheReadTokens: message.usage.cacheRead ?? null,
+            cost: message.usage.cost?.total ?? null,
           };
         }
       };

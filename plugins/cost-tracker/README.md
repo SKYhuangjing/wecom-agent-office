@@ -11,9 +11,9 @@ fake 完成：你好
 
 ## 行为
 
-- **只统计，不定价，不落库**：数字来自引擎按轮累计的 usage（输入/输出；
-  累计口径为各 provider 上报的运行总量取最大值）。台账（ledger）里的回复正文
-  保持原样，不含播报行。
+- **只统计，不定价**：数字来自引擎按轮累计的 usage（输入/输出；
+  累计口径为各 provider 上报的运行总量取最大值）。本插件只追加尾行，不落库——
+  台账的 `tokens` 列由引擎 bookkeep 写入（见下），台账正文保持原样，不含播报行。
 - **只挂在最终回复**：进度帧 / 心跳 / 超时与打断的维护文案永远不会带播报行。
 - **开关 = 资产绑定**：插件激活时自动注册 `tool` 型资产 `cost-tracker`
   （`data/assets.json`，origin `plugin`）。绑定即开启，解绑即关闭：
@@ -31,21 +31,26 @@ fake 完成：你好
 
 ## usage 数据来源（provider 现状）
 
-引擎的累计器（`plugins/core-engine/engine.js` `createUsageAccumulator`）识别三种上报方言：
+引擎的累计器（`plugins/core-engine/engine.js` `createUsageAccumulator`）识别四种上报方言：
 
 | provider | 事件形状 | 当前是否上报 |
 | --- | --- | --- |
-| codex | `result.reason.usage`（runner 已归一化） | ✅ 已有 |
-| dsh | `status{phase:'step_end', usage:{…camelCase}}` | ⛔ runner 未转发，显示 0 |
-| claude | `result{usage:{…snake_case}}` | ⛔ runner 未转发，显示 0 |
+| dsh | `status{phase:'step_end', usage:{…camelCase}}` → 统一 `usage` 事件 | ✅ 已修（observability wave） |
+| claude | `result{usage:{…snake_case}}` → 统一 `usage` 事件 | ✅ 已修 |
+| codex | `result.reason.usage`（runner 已归一化，含 `cacheReadTokens`） | ✅ 全通（cacheRead 已补） |
+| pi | `result.reason.usage`（runner 已归一化，含 `cacheReadTokens` + `cost` 透传） | ✅ 全通（cacheRead/cost 已补） |
 
-即：codex 岗位现在是真实数字；dsh / claude 岗位要等各自 runner 把 usage
-转发到统一事件后再显示真实值（本插件与引擎侧已就绪，方言已覆盖）。
+即：四 provider 岗位均出真实数字（输入/输出/cacheRead），无待办。
+
+台账联动（observability wave）：`defaultRunTurn` 的 bookkeep 对**每个结局**（completed /
+aborted / timeout / error）落 `tokens` = 该轮累计 `totalTokens`（台账正文不含播报行不变）；
+`cost` 恒为 null——不算价格（pi 上报的 `cost` 由 runner 透传在 `reason.usage` 上，不进台账）。
 
 ## 不做的事
 
-- 不算价格（无价目表）。
-- 不持久化用量（无新文件、无新字段；manifest/台账均不记录）。
+- 不算价格（无价目表；台账 `cost` 恒 null）。
+- 不新增持久化字段：台账复用既有 `tokens` 列落每轮累计 totalTokens（引擎侧写入，
+  本插件不写文件）；正文永不带播报行。
 - 不向进度帧注入任何内容。
 
 ## 注意事项

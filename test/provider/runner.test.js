@@ -87,6 +87,11 @@ test('runner: ok run — completed shape, unified events, stdin piped verbatim',
     assert.equal(step.phase, 'step_start');
     assert.equal(step.n, 1);
     assert.ok(events.some((e) => e.type === 'step' && e.phase === 'step_end'), 'step_end event present');
+    // usage forwarding (observability wave): status{phase:'step_end'} carries
+    // usage → a unified usage event reaches the engine's accumulator.
+    const usage = events.find((e) => e.type === 'usage');
+    assert.ok(usage, 'usage event present (fake-dsh ok reports usage on step_end)');
+    assert.deepEqual(usage.usage, { inputTokens: 120, outputTokens: 60 });
     const tool = events.find((e) => e.type === 'tool');
     assert.ok(tool, 'tool event present');
     assert.equal(tool.name, 'Bash');

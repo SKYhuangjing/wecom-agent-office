@@ -92,6 +92,11 @@ test('runner: ok run — completed shape, unified events, stdin piped verbatim',
     const text = events.find((e) => e.type === 'text');
     assert.equal(text?.text, '答案文本');
     assert.ok(!events.some((e) => e.type === 'step'), 'claude has no step events');
+    // usage forwarding (observability wave): the result event's usage reaches
+    // the engine's accumulator as a unified usage event, snake_case verbatim.
+    const usage = events.find((e) => e.type === 'usage');
+    assert.ok(usage, 'usage event present (fake-claude ok reports usage on result)');
+    assert.deepEqual(usage.usage, { input_tokens: 10, output_tokens: 2 });
     assert.equal(readFileSync(join(dir, 'fake-home', 'last-prompt'), 'utf8'), PROMPT, 'prompt piped verbatim via stdin');
     const argv = readFileSync(join(dir, 'fake-home', 'last-argv'), 'utf8');
     assert.match(argv, /-p --output-format stream-json --verbose/, 'spawn argv shape');

@@ -235,6 +235,10 @@ export function createRunner({ bot, providerConfig, log, escalationMs = DEFAULT_
               usage: ev.usage && typeof ev.usage === 'object' ? {
                 inputTokens: ev.usage.input_tokens ?? null,
                 outputTokens: ev.usage.output_tokens ?? null,
+                // cached_input_tokens is the prompt-cache-read bucket (baseline
+                // 3712 on the pinned probe) — same field the accumulator's
+                // cacheReadTokens summary reads.
+                cacheReadTokens: ev.usage.cached_input_tokens ?? null,
               } : null,
             };
             break;

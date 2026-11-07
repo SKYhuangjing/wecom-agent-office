@@ -83,13 +83,16 @@ const HANDOFF_HEADER = '以下是本对话此前的记录（供上下文参考�
 const EV_TO_KIND = { step: 'step', tool: 'tool', thinking: 'thinking', text: 'turn' };
 
 // —— per-run token usage accumulator (cost-tracker & co) ————————————————————
-// Providers report usage in three dialects on their events:
+// Providers report usage in four dialects on their events:
 //   dsh     status{phase:'step_end', usage:{inputTokens, outputTokens,
 //           totalTokens, cacheReadTokens}}                     (camelCase)
 //   claude  result {usage:{input_tokens, output_tokens, cache_read_input_tokens}}
 //   codex   turn.completed {usage:{input_tokens, cached_input_tokens,
 //           output_tokens}} — the codex runner also hands a normalized copy
 //           back on result.reason.usage
+//   pi      message_end {usage:{input, output, cacheRead, cost:{total}}} —
+//           also normalized onto result.reason.usage by the runner (cost rides
+//           along there but no summary field prices it)
 // (probe-baselines/*.ndjson are the pinned sources). Everything normalizes to
 // one camelCase shape. Counts are RUNNING TOTALS of the same run — dsh
 // step_end re-reports the turn-so-far — so each field keeps the MAX seen,
@@ -440,13 +443,17 @@ export async function defaultRunTurn(bot, msg, ac) {
     // and a timed-out brand-new session must END dirty.
     if (effCode === 'timeout') cache.markDirty(chatKey, provider);
     const seq = ledger.nextSeq();
+    // tokens: the run's accumulated total (observability wave) — bookkeep runs
+    // for EVERY outcome, so aborted/timeout/error rows keep what the run
+    // burned before it ended. cost stays null: no pricing, by decision.
     ledger.recordTurn({
       seq, at: Date.now(), chatKey,
       channel: bot.channel ?? chatKey.split(':')[0], chatKind: msg.chatKind,
       chatid: msg.chatid ?? chatKey.split(':')[2] ?? '', userid: msg.userid,
       user: msg.text, assistant: result?.finalText || '', provider,
       sessionId: result?.sessionId || sessionId || '',
-      ok: reason === 'completed', reason, tokens: null, cost: null,
+      ok: reason === 'completed', reason,
+      tokens: usageAcc.summary().totalTokens, cost: null,
     });
     // UI bridge (§8 SSE ledger/turn): the row is durable — announce it right
     // after the append so session/timeline pages can refetch immediately

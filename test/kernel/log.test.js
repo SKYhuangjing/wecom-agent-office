@@ -6,16 +6,26 @@ import { mkdtempSync, readdirSync, readFileSync, chmodSync, existsSync, unlinkSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-test('rotates by size and mirrors to stderr', () => {
+test('rotates by size; healthy file mode writes the file only (no stderr mirror)', () => {
   const dir = mkdtempSync(join(tmpdir(), 'wao-log-'));
   const file = join(dir, 'wao.log');
   const log = createLogger({ file, level: 'debug', maxBytes: 200, keep: 3 });
+  // launchd log governance: while the file is healthy, stderr (and thus
+  // launchd.err.log) must stay silent — the file is the single sink.
+  const quiet = captureStderr(() => { log.info('quiet-0-padpadpadpadpadpad'); });
+  assert.equal(quiet.length, 0, `healthy file logging mirrors nothing to stderr (got ${JSON.stringify(quiet)})`);
   for (let i = 0; i < 30; i++) log.info(`line-${i}-padpadpadpadpadpadpad`);
   const names = readdirSync(dir).sort();
   assert.ok(names.includes('wao.log'), `current exists: ${names}`);
   assert.ok(names.some((n) => n.startsWith('wao.log.')), `rotated exists: ${names}`);
   const cur = readFileSync(file, 'utf8');
   assert.match(cur, /line-\d+/);
+});
+
+test('pure stderr mode (no file) keeps mirroring to stderr', () => {
+  const log = createLogger({ level: 'info' });
+  const lines = captureStderr(() => { log.info('stderr only line'); });
+  assert.ok(lines.some((l) => l.includes('stderr only line')), 'no-file logger still writes stderr');
 });
 
 // ENOSPC hardening (M1 minor #3, done in M3-T9): file-side failures must
