@@ -30,6 +30,7 @@
 //     configOverrides + credential env CODEX_API_KEY (apiKeyEnv overridable);
 //     there is NO OPENAI_BASE_URL route for codex.
 import { spawnCli } from '../../src/kernel/spawn.js';
+import { childEnv } from '../../src/kernel/safeEnv.js';
 import { readHistory } from './history.js';
 
 // codex's exact thread-conflict wording is UNKNOWN until M3 real-CLI
@@ -130,7 +131,7 @@ export function createRunner({ bot, providerConfig, log, escalationMs = DEFAULT_
         // npm's .cmd shims EINVAL without a shell; see src/kernel/spawn.js).
         child = spawnCli(codexBin, args, {
           cwd: pc.cwd || undefined,
-          env: { ...process.env, ...extraEnv, ...(pc.env && typeof pc.env === 'object' ? pc.env : {}) },
+          env: childEnv({ ...extraEnv, ...(pc.env && typeof pc.env === 'object' ? pc.env : {}) }),
           stdio: ['pipe', 'pipe', 'pipe'],
         });
       } catch (err) {

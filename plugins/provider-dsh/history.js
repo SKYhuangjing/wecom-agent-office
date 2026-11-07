@@ -48,19 +48,22 @@ export function dshHomeOf(providerConfig) {
 }
 
 // Candidate session files for (providerConfig, sessionId), most specific
-// first. Exported for tests and the diagnostics page.
+// first. Exported for tests and the diagnostics page. sessionIds come from
+// dsh itself, but readHistory also receives caller-supplied ids — strip
+// anything that could traverse out of the session roots (untrusted-input
+// guard, same policy as provider-claude/history.js).
 export function historyCandidates(providerConfig, sessionId) {
   const cwd = providerConfig?.cwd;
-  const id = String(sessionId ?? '');
+  const safeId = String(sessionId ?? '').replace(/[^a-zA-Z0-9-]/g, '');
   const out = [];
-  if (typeof cwd === 'string' && cwd !== '') out.push(join(cwd, 'sessions', `${id}.zst`));
+  if (typeof cwd === 'string' && cwd !== '' && safeId !== '') out.push(join(cwd, 'sessions', `${safeId}.zst`));
   for (const esc of cwdEscapes(cwd)) {
     // Session dir naming drift: dsh 0.2.1-rc.5 emits sessionIds that ALREADY
     // carry the "session-" prefix (dir name === sessionId verbatim); older
     // shapes prefixed at the path. Probe both spellings — §5.1 宽松解析.
-    out.push(join(dshHomeOf(providerConfig), 'sessions', esc, `session-${id}`, 'session.v4.jsonl.zstd'));
-    if (id !== '' && `session-${id}` !== id) {
-      out.push(join(dshHomeOf(providerConfig), 'sessions', esc, id, 'session.v4.jsonl.zstd'));
+    out.push(join(dshHomeOf(providerConfig), 'sessions', esc, `session-${safeId}`, 'session.v4.jsonl.zstd'));
+    if (safeId !== '' && `session-${safeId}` !== safeId) {
+      out.push(join(dshHomeOf(providerConfig), 'sessions', esc, safeId, 'session.v4.jsonl.zstd'));
     }
   }
   return out;

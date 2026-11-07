@@ -226,6 +226,29 @@ test('A3: POST/PATCH run provider validate() and merge its errors into the 400',
   assert.ok((pbody.errors ?? []).some((e) => e.includes('wireprov validate')), `PATCH 400 carries provider error: ${JSON.stringify(pbody)}`);
 });
 
+// A5 — security audit P0-1: bot.id is a path segment (ledger/sessions/
+// manifest/profile dirs) — traversal-shaped ids are 400'd at the API face
+// with the operator copy, and PATCH can never smuggle one in (id immutable).
+test('A5: traversal bot ids → POST 400 with the slug copy; PATCH id immutable', async () => {
+  const MSG = 'bot id 仅限字母/数字/下划线/连字符（≤64 字符），且以字母或数字开头';
+  for (const bad of ['../..', '..\\', 'a/b', 'a\nb']) {
+    const resp = await post('/api/bots', BOT(bad));
+    assert.equal(resp.status, 400, `POST id ${JSON.stringify(bad)} → 400`);
+    const body = await resp.json();
+    assert.ok((body.errors ?? []).includes(MSG), `exact slug copy in 400 errors: ${JSON.stringify(body)}`);
+  }
+  // registry stays clean: none of the refused records landed
+  const agents = await agentsOf();
+  assert.ok(agents.every((a) => !/[/\\\n]/.test(a.id)), `no traversal id in the registry: ${JSON.stringify(agents.map((a) => a.id))}`);
+  // PATCH cannot retarget id (merged record keeps the original slug)
+  await post('/api/bots', BOT('w5slug'));
+  const patched = await patch('/api/bots/w5slug', { id: '../..', name: '改名' });
+  assert.equal(patched.status, 200, 'patch merges without adopting the body id');
+  const after = (await agentsOf()).find((a) => a.id === 'w5slug');
+  assert.ok(after != null, 'original slug id survives the patch');
+  assert.equal(after.name, '改名');
+});
+
 // A4 — the handled contract through the real assembly facade + the engine seam.
 test('A4: facade onChannelEvent returns false by default → default welcome; true → channel skips it', async () => {
   await post('/api/bots', BOT('w4'));

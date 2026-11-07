@@ -33,6 +33,8 @@ import { createHash } from 'node:crypto';
 import process from 'node:process';
 import { spawn, spawnSync } from 'node:child_process';
 import { atomicWrite } from '../../src/kernel/config.js';
+import { childEnv } from '../../src/kernel/safeEnv.js';
+import { BOT_ID_RE } from './bots.js';
 
 const MARKER_RE = /^(?:<!--\s*)?# wao:assets:(begin|end):v(\d+):bot=([^\s>]*?)(?:\s*-->)?$/;
 export const MARKER_VERSION = 1;
@@ -136,7 +138,7 @@ export function probeBin(bin, timeoutMs = 3000) {
 // spawnSync call sites consumed: {status, stdout, stderr, error} (status -1 +
 // error message on spawn failure or timeout).
 const runRtk = (rtkBin, args, flavor, target, timeoutMs = 30000) => new Promise((resolve) => {
-  const env = { ...process.env };
+  const env = childEnv(); // audit P0-2: no auth-shaped parent secrets into the rtk child
   const spec = RTK_FLAVORS[flavor];
   if (spec?.envKey) env[spec.envKey] = target;
   let child;
@@ -341,10 +343,19 @@ export function removeJsonEntry(doc, pointer, recordedEntry) {
 export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
   const assetsDir = join(dataDir, 'assets');
   const logger = log ?? console;
-  const manifestFileOf = (botId) => join(assetsDir, botId, 'manifest.json');
+  // Defensive second check (audit P0-1): botId is a path segment under
+  // data/assets/ and removeAssets rmSync's its directory recursively —
+  // anything that is not a slug must never reach join().
+  const manifestFileOf = (botId) => {
+    if (typeof botId !== 'string' || !BOT_ID_RE.test(botId)) {
+      throw new Error(`materializer: bot id ${JSON.stringify(botId)} 不是合法 slug（仅限字母/数字/下划线/连字符，≤64 字符）`);
+    }
+    return join(assetsDir, botId, 'manifest.json');
+  };
   const readManifest = (botId) => {
+    const file = manifestFileOf(botId); // slug guard throws OUTSIDE the catch below (audit P0-1)
     const doc = (() => {
-      try { return JSON.parse(readFileSync(manifestFileOf(botId), 'utf8')); } catch { return null; }
+      try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return null; }
     })();
     return isObject(doc) && doc.botId === botId ? doc : null;
   };

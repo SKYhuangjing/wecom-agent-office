@@ -159,3 +159,25 @@ test('history: huge session (contract fixture writer) → truncated=true, 2000 t
     assert.equal(r.turns[1999].assistant, '回答 2499');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// P1-3 (security audit): readHistory also receives caller-supplied ids —
+// '../../etc/passwd' must sanitize to a basename inside the session roots,
+// never a path leaving cwd/sessions or <dshHome>/sessions (same policy as
+// provider-claude/history.js).
+test('history: garbage sessionId cannot traverse out of the session roots (untrusted-input guard)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wa' + 'o-h-trav-'));
+  const dshHome = join(dir, 'dsh-home');
+  try {
+    const candidates = historyCandidates({ cwd: dir, dshHome }, '../../etc/passwd');
+    assert.ok(candidates.length >= 1);
+    assert.ok(candidates.every((f) => !f.includes('..')), `no traversal segments survive (${candidates.join(',')})`);
+    assert.ok(candidates.every((f) => !f.includes('/etc/passwd')), 'the hostile path itself is gone');
+    assert.ok(
+      candidates.every((f) => f.startsWith(join(dir, 'sessions')) || f.startsWith(join(dshHome, 'sessions'))),
+      `candidates stay under the session roots (${candidates.join(',')})`,
+    );
+    const r = await readHistory({ cwd: dir, dshHome }, '../../etc/passwd');
+    assert.deepEqual(r.turns, []);
+    assert.ok(r.warnings.length >= 1, 'no file found → warning, not a traversal read');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

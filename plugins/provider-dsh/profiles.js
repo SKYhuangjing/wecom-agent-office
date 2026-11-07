@@ -20,8 +20,15 @@ import { join, delimiter } from 'node:path';
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { atomicWrite } from '../../src/kernel/config.js';
+import { childEnv } from '../../src/kernel/safeEnv.js';
 
 const PERM = new Set(['workspace-write', 'read-only', 'danger-full-access']);
+
+// Same slug as core-engine's BOT_ID_RE (bots.js) — inlined, not imported:
+// plugin-to-plugin imports are banned (复制即契约 discipline). A profile
+// name is a path segment under ~/.dsh/profiles/ and removeProfile rmSync's
+// it recursively, so a traversal-shaped name must never reach join().
+const PROFILE_SLUG_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 
 // Single source for the dsh home (P1 跨平台): os.homedir(), NOT $HOME —
 // under a Windows service (no HOME env) process.env.HOME is undefined and the
@@ -47,7 +54,9 @@ export function ensureProfileExists(profile, { dshBin, nodeBin }) {
   const dir = join(profileHome(), 'profiles', profile);
   if (existsSync(join(dir, 'cordis.patch.yml'))) return { created: false, dir };
   const r = spawnSync(dshBin, ['--profile', profile, '--from-default-profile', 'headless', '--help'], {
-    env: withDirOnPath(process.env, join(nodeBin, '..')),
+    // childEnv (audit P0-2): the dsh bootstrap child gets the parent env
+    // minus auth-shaped secrets — WAO_TOKEN must not ride into agent land.
+    env: withDirOnPath(childEnv(), join(nodeBin, '..')),
     encoding: 'utf8',
     timeout: 60000,
   });
@@ -179,8 +188,8 @@ export function buildBotPatch({
     providers:
       ${effProvider}:
         displayName: ${JSON.stringify('Bot ' + profile)}
-        apiKeyEnv: ${apiKeyEnv}
-        api: ${model.api}
+        apiKeyEnv: ${JSON.stringify(apiKeyEnv)}
+        api: ${JSON.stringify(model.api)}
         baseURL: ${JSON.stringify(model.baseURL)}
         models:
           - id: ${JSON.stringify(model.model)}
@@ -205,7 +214,7 @@ export function buildBotPatch({
   name: '@deepseek-ai/dsh-agent-default-model'
   config:
     provider: ${effProvider}
-    model: ${model.model}
+    model: ${JSON.stringify(model.model)}
 `;
 
   // permission preset
@@ -304,8 +313,12 @@ const effProviderOf = (opts) => {
 
 // Remove a bot's profile directory (used on delete). 前身 shelled out to
 // `rm -rf`; node's rmSync does the same job without the subprocess.
+// Defensive slug check (audit P0-1): a non-slug profile name (e.g. '..')
+// is refused — false ("absent") is the safe answer, never a recursive
+// delete outside the profiles tree.
 export function removeProfile(profile) {
   try {
+    if (typeof profile !== 'string' || !PROFILE_SLUG_RE.test(profile)) return false;
     const dir = join(profileHome(), 'profiles', profile);
     if (existsSync(dir)) {
       rmSync(dir, { recursive: true, force: true, maxRetries: 2, retryDelay: 100 });

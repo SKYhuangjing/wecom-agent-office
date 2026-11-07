@@ -68,6 +68,14 @@ export function sendFile(res, file) {
   res.end(data);
 }
 
+// Host-header whitelist (security audit P1-6): the shell is a loopback
+// service. A request whose Host names something else (DNS-rebinding probe,
+// cross-origin smuggling against a name the attacker controls) is refused
+// before any route, auth or static branch runs. '' (HTTP/1.0, no Host) and
+// the IPv6 bracket forms are the only spellings beyond 127.0.0.1/localhost.
+const ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '']);
+const hostOf = (req) => String(req.headers?.host ?? '').toLowerCase().replace(/:\d+$/, '');
+
 // The one 404 shape every static miss answers with (kept next to sendFile so
 // the pair reads as one contract).
 const json404 = (res) => {
@@ -143,6 +151,11 @@ export function createHttpShell({ log, webDir = null, auth = null, healthExtra =
       url = new URL(req.url, 'http://localhost'); // base makes relative req.url well-formed
     } catch {
       return json(res, 400, { error: 'malformed request target' });
+    }
+    // Host gate ahead of every branch (auth included — an unexpected Host
+    // never learns whether a token would have worked).
+    if (!ALLOWED_HOSTS.has(hostOf(req))) {
+      return json(res, 403, { error: 'forbidden: unexpected Host header' });
     }
     const pathname = url.pathname;
     // Auth gate first: one check ahead of every branch (health, SSE, static,

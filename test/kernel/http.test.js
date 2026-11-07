@@ -342,3 +342,52 @@ test('listen(0) binds an ephemeral port; close() ends SSE and shuts down', async
   assert.equal(next.done, true);
   await assert.rejects(fetch(base + '/healthz')); // port is really gone
 });
+
+// P1-6 (security audit): the shell is a loopback service — a request whose
+// Host header names anything but 127.0.0.1/localhost/[::1] (DNS-rebinding
+// probe) is refused 403 ahead of every branch, while the loopback spellings
+// (with or without port) serve normally. fetch() will not override Host, so
+// the custom spellings ride a raw socket (same trick as the malformed-
+// target test above).
+const rawReq = (port, hostHeader, path = '/healthz', extra = '') => new Promise((resolve, reject) => {
+  const sock = netConnect(port, '127.0.0.1');
+  let buf = '';
+  sock.on('connect', () => sock.write(`GET ${path} HTTP/1.1\r\nHost: ${hostHeader}\r\n${extra}Connection: close\r\n\r\n`));
+  sock.on('data', (d) => { buf += d; });
+  sock.on('error', reject);
+  sock.on('close', () => resolve(buf));
+  setTimeout(() => reject(new Error(`no response (host=${hostHeader}), got: ${JSON.stringify(buf)}`)), 2000);
+});
+
+test('Host whitelist: unexpected Host → 403; loopback hosts (with port) serve normally', async () => {
+  const t = await boot();
+  t.shell.register({ prefix: '/api/alive', owner: 'test', handler: jsonHandler({ ok: 1 }) });
+  const port = Number(new URL(t.base).port);
+  try {
+    for (const evil of ['evil.com', 'evil.com:8792', '192.168.1.9', '127.0.0.1.evil.com', 'localhost.evil.com']) {
+      const raw = await rawReq(port, evil);
+      assert.match(raw.split('\r\n')[0], /^HTTP\/1\.1 403 /, `Host ${evil} → 403, got: ${raw.split('\r\n')[0]}`);
+      assert.ok(raw.includes('forbidden: unexpected Host header'), 'the 403 body names the Host rule');
+    }
+    // loopback spellings (with and without port) keep serving
+    assert.equal((await getJson(t.base, '/healthz')).status, 200, 'default fetch host (127.0.0.1:<port>) serves');
+    for (const good of [`localhost:${port}`, `127.0.0.1:${port}`, 'localhost', '127.0.0.1', '[::1]', '[::1]:8792']) {
+      const raw = await rawReq(port, good, '/api/alive');
+      assert.match(raw.split('\r\n')[0], /^HTTP\/1\.1 200 /, `Host ${good} serves, got: ${raw.split('\r\n')[0]}`);
+    }
+    // the 403 fires BEFORE auth: a gated shell must not leak whether the
+    // token would have been accepted
+    const { log: log2 } = fakeLog();
+    const shell2 = createHttpShell({ log: log2, auth: { token: 't0' } });
+    const srv2 = createServer(shell2.handle);
+    await new Promise((resolve) => srv2.listen(0, '127.0.0.1', resolve));
+    try {
+      const raw = await rawReq(srv2.address().port, 'evil.com', '/api/state', 'Authorization: Bearer t0\r\n');
+      assert.match(raw.split('\r\n')[0], /^HTTP\/1\.1 403 /, 'even a VALID token does not pass an unexpected Host');
+      assert.ok(raw.includes('forbidden: unexpected Host header'));
+    } finally {
+      srv2.closeAllConnections?.();
+      await new Promise((r) => srv2.close(r));
+    }
+  } finally { await t.close(); }
+});

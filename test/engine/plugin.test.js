@@ -797,6 +797,23 @@ test('bots.js unit: load tolerance, schema validation, revalidateAll split', () 
   );
   assert.ok(validateBot({ id: 'b', name: 'B', channel: 'zz', provider: 'p' }, liveReg).includes('unknown channel: "zz"'));
 
+  // P0-1 slug rule: bot.id is a path segment (ledger/sessions/manifest/dsh
+  // profile) — traversal shapes are rejected with the exact operator copy.
+  const ID_MSG = 'bot id 仅限字母/数字/下划线/连字符（≤64 字符），且以字母或数字开头';
+  const goodBot = (id) => ({ id, name: 'B', channel: 'c', account: { endpoint: 'e' }, provider: 'p', providerConfig: { cwd: '/x' } });
+  for (const bad of ['../..', '..\\', 'a/b', 'a\nb', 'a b', '.hidden', '-lead', '_lead', 'a.b', 'a'.repeat(65)]) {
+    const errs = validateBot(goodBot(bad), liveReg);
+    assert.ok(errs.includes(ID_MSG), `id ${JSON.stringify(bad)} rejected: ${JSON.stringify(errs)}`);
+  }
+  assert.equal(validateBot(goodBot('a'), liveReg).length, 0, 'single alnum id passes');
+  assert.equal(validateBot(goodBot('A-b_9'), liveReg).length, 0, 'mixed slug passes');
+  assert.equal(validateBot(goodBot('a'.repeat(64)), liveReg).length, 0, '64 chars (at the cap) passes');
+  assert.ok(validateBot(null, liveReg).includes('bot must be a plain object'));
+  // revalidateAll inherits the rule: a traversal id lands in `bad` at boot
+  const rv = revalidateAll([goodBot('..')], { channel: channels, provider: providers });
+  assert.equal(rv.ok.length, 0);
+  assert.ok(rv.bad[0].errors.includes(ID_MSG));
+
   // provider validate restating a schema-flagged field minus the record prefix
   // → collapse: the prefixed (more specific) schema message is kept alone
   const providersV = new Map([['pv', {

@@ -183,6 +183,16 @@ test('materialize: writes files, 0600 for mode-bearing files, manifest carries a
   assert.equal(statSync(join(dataDir, 'assets', 'b1', 'manifest.json')).mode & 0o777, 0o600);
 });
 
+// P0-1 defensive second check: a non-slug botId must throw before any join()
+// — removeAssets rmSync's the manifest dir recursively, so '../..' must
+// never become a path.
+test('manifestFileOf slug guard: non-slug botId throws, never joins (audit P0-1)', () => {
+  const mat = mkMat(stubPort('p1'), botDir('d-slug'));
+  for (const bad of ['../..', 'a/b', 'a\nb', '', null, 42]) {
+    assert.throws(() => mat.getManifest(bad), /不是合法 slug/, `getManifest(${JSON.stringify(bad)}) throws`);
+  }
+});
+
 test('getManifest: §3.8 read access for the roster — null when absent, deep clone of the stored doc', async () => {
   const dataDir = botDir('d-getm');
   const mat = mkMat(stubPort('p1'), dataDir);

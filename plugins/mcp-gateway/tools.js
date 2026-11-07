@@ -56,6 +56,12 @@ const unavailable = (message) => {
   return err;
 };
 
+// The dangerous 7 (security audit P1-5): destructive or company-wide impact —
+// offboard / broadcast / department_toggle + the four asset-mutation tools.
+// With plugin option dangerousTools=false their callTool answers isError
+// with an admin-disabled notice BEFORE any service is touched.
+const DISABLED_NOTICE = '⚠️ 该操作已被管理员禁用（dangerousTools=false）';
+
 // Op-layer failures (httpError-shaped {status, message, errors?}) → isError
 // tool result carrying the API's own semantics (400 校验 / 404 查无 / 409 离线广播).
 const opFail = (toolName, err) => {
@@ -228,6 +234,7 @@ const TOOLS = [
   },
   {
     name: 'offboard',
+    dangerous: true,
     description: '⚠️ 危险操作：办离职（删除该员工）。在途工作收尾后断开连接、清理物化工位文件、从名册移除；台账文件与时间线历史保留。同工牌号可重新 hire（历史台账不自动接续）。执行前务必向用户复述后果并确认。',
     inputSchema: {
       type: 'object',
@@ -303,6 +310,7 @@ const TOOLS = [
   },
   {
     name: 'broadcast',
+    dangerous: true,
     description: '⚠️ 危险操作：以某员工身份向指定会话推送广播（服务端主动推送）。内容会真实送达企业微信目标会话、无法撤回——执行前务必向用户确认会话与内容。',
     inputSchema: {
       type: 'object',
@@ -342,6 +350,7 @@ const TOOLS = [
   },
   {
     name: 'department_toggle',
+    dangerous: true,
     description: '⚠️ 危险操作：部门启停（插件 enable/disable）。停用会触发部门重组（四阶段重载：在途工作收尾→卸载→重扫→调和），依赖其通道/岗位的员工立即下线；重新启用后员工自动返岗。注意：重组会重建 MCP 会话（若下次调用收到 -32002 请重新 initialize）。执行前向用户说明受影响员工清单。',
     inputSchema: {
       type: 'object',
@@ -526,6 +535,7 @@ const TOOLS = [
   },
   {
     name: 'delete_asset',
+    dangerous: true,
     description: '删除资产：配发（shared）绑定随删除解绑并重物化清理；私发（exclusive）副本保留快照继续生效。分级：共享（配发）资产的删除请走控制台/REST——本工具仅允许删除 Agent 自建（origin:mcp）的资产。执行前务必向用户复述后果并确认。',
     inputSchema: {
       type: 'object',
@@ -547,6 +557,7 @@ const TOOLS = [
   },
   {
     name: 'bind_asset',
+    dangerous: true,
     description: '⚠️ 危险操作：将资产绑定到 bot（配发 shared=同源跟随更新／私发 exclusive=绑定时刻内容快照）。将向 bot 磁盘写入技能/配置文件并重建 runner，下一轮生效。Agent 自建资产（origin:mcp）仅可私发。同名资产/同 serverId MCP/跨 bot 同文件等冲突会被拒绑并指名。执行前务必向用户复述后果并确认。',
     inputSchema: {
       type: 'object',
@@ -576,6 +587,7 @@ const TOOLS = [
   },
   {
     name: 'unbind_asset',
+    dangerous: true,
     description: '⚠️ 危险操作：解绑 bot 的资产。将删除该 bot 盘上的资产产物；私发（exclusive）副本内容随卸载丢失。执行前务必向用户复述后果并确认。',
     inputSchema: {
       type: 'object',
@@ -601,6 +613,7 @@ const TOOLS = [
   },
   {
     name: 'rematerialize',
+    dangerous: true,
     description: '⚠️ 危险操作：按当前绑定强制重写该 bot 的全部资产产物文件（确定性序列化，幂等可重试；漂移修复/扇出失败重试用）。将按当前绑定重写该 bot 的全部资产产物文件。执行前务必向用户确认。',
     inputSchema: {
       type: 'object',
@@ -623,9 +636,11 @@ const TOOLS = [
   },
 ];
 
-// createToolSurface({services, log}) → { listTools, callTool } — the T2 seam
-// server.js's createMcpHandler consumes.
-export function createToolSurface({ services, log }) {
+// createToolSurface({services, log, dangerousTools}) → { listTools, callTool }
+// — the T2 seam server.js's createMcpHandler consumes. dangerousTools (P1-5,
+// default true) gates the dangerous 7 at callTool time; listTools still
+// advertises them so the Agent can read WHY the call was refused.
+export function createToolSurface({ services, log, dangerousTools = true } = {}) {
   const listTools = () => TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
 
   const callTool = async (params) => {
@@ -639,6 +654,11 @@ export function createToolSurface({ services, log }) {
     const tool = TOOLS.find((t) => t.name === name);
     if (tool == null) {
       throw rpcError(-32602, `未知工具：${name}（可用工具见 tools/list）`);
+    }
+    // Admin gate BEFORE args validation or any service lookup: a disabled
+    // operation is refused with the notice, whatever the arguments say.
+    if (tool.dangerous === true && dangerousTools !== true) {
+      return fail(DISABLED_NOTICE, { tool: name, disabled: 'dangerousTools=false' });
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
       throw rpcError(-32602, 'arguments 必须是 JSON 对象');

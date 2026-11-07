@@ -18,7 +18,7 @@ import { SessionCache } from './sessionCache.js';
 import { Timeline } from './timeline.js';
 import { createProgressor } from './progressor.js';
 import { maskOutbound } from './middleware.js';
-import { loadBots, revalidateAll, validateBot } from './bots.js';
+import { loadBots, revalidateAll, validateBot, BOT_ID_RE } from './bots.js';
 import { loadAssets, buildPlan } from './assets.js';
 import { createMaterializer } from './materializer.js';
 import { companyOps, createApi, rosterSummary } from './api.js';
@@ -109,6 +109,12 @@ export default {
     });
 
     const ledgerFor = (botId) => {
+      // Defensive second check (audit P0-1): validateBot already rejects
+      // non-slug ids at every API face, but this id becomes a file path
+      // segment — a stale/hand-edited bots.json entry must never reach join().
+      if (typeof botId !== 'string' || !BOT_ID_RE.test(botId)) {
+        throw new Error(`ledgerFor: bot id ${JSON.stringify(botId)} 不是合法 slug（仅限字母/数字/下划线/连字符，≤64 字符）`);
+      }
       let pair = ledgers.get(botId);
       if (pair == null) {
         const ledger = new Ledger({ file: join(dataDir, 'ledger', `${botId}.jsonl`), log });

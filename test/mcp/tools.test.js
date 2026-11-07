@@ -620,3 +620,53 @@ test('secret red line: no fake secret literal appears in ANY captured response b
     assert.deepEqual(hits, [], `secret ${secret} must never appear in a tool response`);
   }
 });
+
+// P1-5 (security audit): plugins.json option dangerousTools=false — the
+// dangerous 7 answer isError with the admin-disabled notice BEFORE any
+// service runs, while read-only tools stay available and the default kernel
+// (no option set) keeps them callable (pinned by the journey above).
+test('dangerousTools=false: dangerous 7 → isError + admin notice; read tools unaffected', async () => {
+  const gdataDir = mkdtempSync(join(tmpdir(), 'wao-mcp-gate-data-'));
+  writeFileSync(join(gdataDir, 'plugins.json'), JSON.stringify({
+    plugins: { 'mcp-gateway': { options: { dangerousTools: false } } },
+  }));
+  let gkernel = null;
+  try {
+    gkernel = await createKernel({ port: 0, dataDir: gdataDir, pluginsDirs: [join(repoRoot, 'plugins')] });
+    const gbase = `http://127.0.0.1:${gkernel.http.port}`;
+    const init = await fetch(`${gbase}/mcp`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 'init', method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'gate-test', version: '0.0.0' } } }),
+    });
+    const sid = init.headers.get('mcp-session-id');
+    const rpc = async (name, args = {}) => {
+      const res = await fetch(`${gbase}/mcp`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'mcp-session-id': sid },
+        body: JSON.stringify({ jsonrpc: '2.0', id: name, method: 'tools/call', params: { name, arguments: args } }),
+      });
+      const body = await res.json();
+      assert.equal(body.error, undefined, `${name} answers a result`);
+      return body.result;
+    };
+    for (const name of ['offboard', 'broadcast', 'department_toggle', 'delete_asset', 'bind_asset', 'unbind_asset', 'rematerialize']) {
+      const r = await rpc(name, name === 'broadcast' ? { botId: 'x', chatKey: 'k', content: 'c' } : { botId: 'x' });
+      assert.equal(r.isError, true, `${name} refused with isError`);
+      assert.equal(r.content[0].text, '⚠️ 该操作已被管理员禁用（dangerousTools=false）', `${name} carries the admin notice`);
+      assert.equal(r.structuredContent.disabled, 'dangerousTools=false');
+    }
+    // read-only tools keep working on the gated kernel
+    const roster = await rpc('list_employees');
+    assert.equal(roster.isError, undefined, 'list_employees unaffected by the gate');
+    // the tools are still ADVERTISED (the Agent must be able to read why not)
+    const listed = await fetch(`${gbase}/mcp`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'mcp-session-id': sid },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 'ls', method: 'tools/list' }),
+    });
+    const names = (await listed.json()).result.tools.map((t) => t.name);
+    assert.ok(names.includes('offboard'), 'dangerous tools stay listed');
+  } finally {
+    if (gkernel != null) await gkernel.stop();
+    rmSync(gdataDir, { recursive: true, force: true });
+  }
+});

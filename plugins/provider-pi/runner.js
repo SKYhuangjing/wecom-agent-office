@@ -35,6 +35,7 @@
 //     missing-credential shape is UNVERIFIED; the mapping is regex + fake
 //     layer, same closure path as codex's unknown lock wording.
 import { spawnCli } from '../../src/kernel/spawn.js';
+import { childEnv } from '../../src/kernel/safeEnv.js';
 import { readFileSync } from 'node:fs';
 import { readHistory } from './history.js';
 import { piAgentDirFor } from './models.js';
@@ -157,7 +158,7 @@ export function createRunner({ bot, providerConfig, assets, log, escalationMs = 
         // npm's .cmd shims EINVAL without a shell; see src/kernel/spawn.js).
         child = spawnCli(piBin, args, {
           cwd: pc.cwd || undefined,
-          env: { ...process.env, ...extraEnv, ...(pc.env && typeof pc.env === 'object' ? pc.env : {}) },
+          env: childEnv({ ...extraEnv, ...(pc.env && typeof pc.env === 'object' ? pc.env : {}) }),
           stdio: ['pipe', 'pipe', 'pipe'],
         });
       } catch (err) {

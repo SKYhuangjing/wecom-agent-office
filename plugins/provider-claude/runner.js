@@ -17,6 +17,7 @@
 //     model.apiKey → ANTHROPIC_AUTH_TOKEN (or model.apiKeyEnv); there is no
 //     OPENAI_BASE_URL route for claude.
 import { spawnCli } from '../../src/kernel/spawn.js';
+import { childEnv } from '../../src/kernel/safeEnv.js';
 import { readHistory } from './history.js';
 
 // ripgrep tool-asset guidance (§7.2) — byte-identical copy of the dsh/codex/pi
@@ -125,7 +126,7 @@ export function createRunner({ bot, providerConfig, assets, log, escalationMs = 
         // npm's .cmd shims EINVAL without a shell; see src/kernel/spawn.js).
         child = spawnCli(claudeBin, args, {
           cwd: pc.cwd || undefined,
-          env: { ...process.env, ...extraEnv, ...(pc.env && typeof pc.env === 'object' ? pc.env : {}) },
+          env: childEnv({ ...extraEnv, ...(pc.env && typeof pc.env === 'object' ? pc.env : {}) }),
           stdio: ['pipe', 'pipe', 'pipe'],
         });
       } catch (err) {

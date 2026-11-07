@@ -155,7 +155,7 @@ test('dsh: skill/prompt/memory/ripgrep ride personaPrefix + .wao skills; rtk ref
     const botV2 = { ...bot, providerConfig: { ...bot.providerConfig, model: { provider: 'x', model: 'm2-CHANGED', baseURL: 'http://gw.local', api: 'anthropic-messages', contextWindow: 256000 } } };
     await booted.impl.materializeConfig(botV2, { assets: plan, log: fakeLog().log });
     const patchV2 = readFileSync(patch, 'utf8');
-    assert.match(patchV2, /model: m2-CHANGED/, 'model row actually changed');
+    assert.match(patchV2, /model: "m2-CHANGED"/, 'model row actually changed');
     assert.equal(prefixOf(patchV2), prefixOf(patchText), 'personaPrefix asset section byte-identical after model-only change');
     // and materializeConfig WITHOUT the plan (old callers) drops nothing here
     // because assets are absent → operator prompt only; that is the empty-plan
@@ -237,14 +237,14 @@ test('dsh: mcp stdio+streamable-http rows ride the profile patch (dsh-mcp-client
     const botV2 = { ...bot, providerConfig: { ...bot.providerConfig, model: { provider: 'x', model: 'm2-CHANGED', baseURL: 'http://gw.local', api: 'anthropic-messages', contextWindow: 256000 } } };
     await booted.impl.materializeConfig(botV2, { assets: plan, log: fakeLog().log });
     const textV2 = readFileSync(patch, 'utf8');
-    assert.match(textV2, /model: m2-CHANGED/, 'model row actually changed');
+    assert.match(textV2, /model: "m2-CHANGED"/, 'model row actually changed');
     assert.equal(rowsOf(textV2), rowsOf(text), 'mcp rows byte-identical after a model-only change (P0-4 同型防线)');
 
     // unload: empty plan → mcp rows gone (whole-file rebuild), patch survives
     await mat.materialize(botV2, []);
     const textAfter = readFileSync(patch, 'utf8');
     assert.ok(!textAfter.includes('mcp-'), 'mcp rows dropped on unload');
-    assert.match(textAfter, /model: m2-CHANGED/, 'providerConfig rows survive (materializeConfig owns them)');
+    assert.match(textAfter, /model: "m2-CHANGED"/, 'providerConfig rows survive (materializeConfig owns them)');
   } finally {
     delete process.env.DSH_HOME;
     await booted.stop();

@@ -72,7 +72,7 @@ test('profiles: writeBotProfile borrowed route — all sections written', async 
     const text = readFileSync(profilePatchPath('wecom-b1'), 'utf8');
     assert.match(text, /- id: llm-pi-ai\n/, 'borrowed provider table present');
     assert.ok(!text.includes('some-other-row'), 'only the llm-pi-ai block is borrowed');
-    assert.match(text, /- id: agent-default-model\n[\s\S]*?provider: magpie\n\s+model: workbuddy\/deepseek-v4\.1-flash/);
+    assert.match(text, /- id: agent-default-model\n[\s\S]*?provider: magpie\n\s+model: "workbuddy\/deepseek-v4\.1-flash"/);
     assert.match(text, /- id: permission-presets\n[\s\S]*?defaultPreset: read-only/);
     assert.match(text, /- id: compaction-basic\n[\s\S]*?thresholdRatio: 0\.7\n\s+headroomTokens: 65536\n\s+retainRatio: 0\.16/);
     assert.match(text, /- id: system-prompt\n[\s\S]*?personaPrefix: \|-\n\s+你是严谨的助手。\n\s+回答保持简短。/);
@@ -95,9 +95,9 @@ test('profiles: custom provider route — slug, apiKeyEnv, contextWindow', async
     assert.equal(res.customProvider, true);
     assert.equal(res.model.provider, 'my-prov', 'provider id slugified');
     const text = readFileSync(profilePatchPath('wecom-b2'), 'utf8');
-    assert.match(text, /my-prov:\n\s+displayName: "Bot wecom-b2"\n\s+apiKeyEnv: BOT_KEY\n\s+api: pi-ai\n\s+baseURL: "\{\{BASEURL_3c80cb\}\}"/);
+    assert.match(text, /my-prov:\n\s+displayName: "Bot wecom-b2"\n\s+apiKeyEnv: "BOT_KEY"\n\s+api: "pi-ai"\n\s+baseURL: "\{\{BASEURL_3c80cb\}\}"/);
     assert.match(text, /contextWindow: 200000\n\s+maxTokens: 8192/);
-    assert.match(text, /- id: agent-default-model\n[\s\S]*?provider: my-prov\n\s+model: big-model/);
+    assert.match(text, /- id: agent-default-model\n[\s\S]*?provider: my-prov\n\s+model: "big-model"/);
     assert.match(text, /- id: sandbox-policy\n[\s\S]*?mode: workspace-write\n\s+workspaceRoot: "\/ws\/b2"/);
   });
 });
@@ -286,8 +286,60 @@ test('buildBotPatch/writeBotProfile: assetsPlan mcp rows ride the SAME patch bui
     // materializeConfig passes the effective plan as assetsPlan
     writeBotProfile({ ...opts, model: { provider: 'magpie', model: 'm2-CHANGED' }, assetsPlan: MCP_PLAN });
     const v2 = readFileSync(profilePatchPath('wecom-b9'), 'utf8');
-    assert.match(v2, /model: m2-CHANGED/);
+    assert.match(v2, /model: "m2-CHANGED"/);
     const rowsOf = (t) => t.slice(t.indexOf('\n- id: mcp-'));
     assert.equal(rowsOf(v2), rowsOf(withMcp), 'mcp rows byte-identical after a model-only change');
+  });
+});
+
+// P1-4 (security audit): model.api / model.model / apiKeyEnv are operator
+// input interpolated into YAML — a value carrying a raw newline + YAML
+// syntax must land as a JSON-quoted (escaped, single-line) scalar, never as
+// live YAML structure.
+test('buildBotPatch: newline/YAML-carrying model values are quoted — no injection into the patch', async () => {
+  await withHome(async (home) => {
+    seedHome(home, 'wecom-sec1');
+    const evil = 'm1\n        api: evil-injected\n      x: 1';
+    const patch = buildBotPatch({
+      profile: 'wecom-sec1',
+      model: { provider: 'x', model: evil, baseURL: 'http://gw.local', api: 'a"pi\nx: 2', apiKeyEnv: 'K\nv: 3', contextWindow: 1000 },
+      workspaceRoot: '/ws/sec',
+    });
+    const lines = patch.split('\n');
+    // every interpolated value stays on ONE physical line, JSON-escaped
+    assert.ok(lines.includes('        apiKeyEnv: "K\\nv: 3"'), 'apiKeyEnv quoted+escaped');
+    assert.ok(lines.includes('        api: "a\\"pi\\nx: 2"'), 'api quoted+escaped');
+    assert.ok(lines.some((l) => l === '    model: "m1\\n        api: evil-injected\\n      x: 1"'), 'agent-default-model value quoted on one line');
+    assert.ok(!lines.some((l) => l.trim() === 'api: evil-injected'), 'injected YAML key never becomes a real mapping line');
+    assert.ok(!lines.some((l) => l.trim() === 'x: 1' || l.trim() === 'x: 2' || l.trim() === 'v: 3'), 'injected follow-up keys never become real lines');
+    // borrowed route hits the same agent-default-model interpolation
+    const borrowed = buildBotPatch({
+      profile: 'wecom-sec1',
+      model: { provider: 'magpie', model: evil },
+      sourceProfile: 'headless',
+    });
+    assert.ok(borrowed.split('\n').some((l) => l === '    model: "m1\\n        api: evil-injected\\n      x: 1"'), 'borrowed route model quoted too');
+  });
+});
+
+// P1-1 defensive second check: removeProfile rmSync's recursively — a
+// traversal-shaped profile name is refused (false), and the directory it
+// pointed at survives.
+test('removeProfile: non-slug profile names are refused, nothing outside profiles/ is touched (audit P0-1)', async () => {
+  await withHome(async (home) => {
+    const outside = join(home, 'outside-keep');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'cordis.patch.yml'), 'x');
+    // hostile "profile" that would resolve to <home>/profiles/../../outside-keep
+    for (const bad of ['../..', '..\\outside-keep', 'a/b', '.hidden', 'a b', '']) {
+      assert.equal(removeProfile(bad), false, `removeProfile(${JSON.stringify(bad)}) refuses`);
+    }
+    assert.ok(existsSync(join(outside, 'cordis.patch.yml')), 'the outside dir survives');
+    // a legal slug name still deletes normally
+    const ok2 = join(home, 'profiles', 'wecom-sec2');
+    mkdirSync(ok2, { recursive: true });
+    writeFileSync(join(ok2, 'cordis.patch.yml'), 'x');
+    assert.equal(removeProfile('wecom-sec2'), true);
+    assert.ok(!existsSync(ok2));
   });
 });
