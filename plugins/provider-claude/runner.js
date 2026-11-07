@@ -201,6 +201,11 @@ export function createRunner({ bot, providerConfig, assets, log, escalationMs = 
               subtype: ev.subtype ?? null,
               numTurns: typeof ev.num_turns === 'number' ? ev.num_turns : null,
             };
+            // Forward token usage to the engine's cost-tracker accumulator.
+            // claude's result event carries usage in snake_case fields.
+            if (ev.usage && typeof ev.usage === 'object') {
+              emit({ type: 'usage', usage: ev.usage });
+            }
             if (typeof ev.result === 'string' && ev.result !== '') {
               if (okResult) state.finalText = ev.result; // canonical final text
               else state.error = state.error || ev.result;
