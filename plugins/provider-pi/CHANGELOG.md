@@ -6,6 +6,9 @@
 
 ### Added
 
+- rtk 计划面 + ripgrep 预检（W3 T3，§7.1/§7.2）：rtk→`{kind:'rtk-init', flavor:'pi',
+  target:agentDir}`（自定义或 WAO 默认目录——pi 装备面本就是 per-bot 命名空间；V5 实证
+  `--agent pi` 尊重 PI_CODING_AGENT_DIR）；ripgrep 预检同他款（tools 行 + 缺失 note，预检不失败）。
 - 资产面（W3 T2，§3.3 pi 列）：`materializeAssets` 纯计划钩子——skill→`<agentDir>/skills/` + runner
   `--skill`；memory→`wao-memory.md` + runner 读文件拼文本传参（设计 V3 回退形态，不依赖文件旗标）；
   prompt/ripgrep→`--append-system-prompt`（F19 可重复）；mcp→`<agentDir>/mcp.json` 整文件重写 0600，

@@ -71,7 +71,15 @@ export default {
     // mutation (jail guard/atomicity/manifest/精确卸载/回验). All bind/unbind/
     // patch/delete/rematerialize paths fan out through the same seam T1
     // established; the noop survives only in unit tests as the seam contract.
-    const materializer = createMaterializer({ ports, dataDir, log });
+    // rtkBin (§7.1 W3 T3): the rtk CLI the executor drives — plugin config
+    // `rtkBin` / $WAO_RTK_BIN overrides the PATH default (tests point it at
+    // fakes; ops can pin an absolute binary).
+    const materializer = createMaterializer({
+      ports,
+      dataDir,
+      log,
+      rtkBin: ctx.config?.rtkBin || process.env.WAO_RTK_BIN || 'rtk',
+    });
 
     const ledgerFor = (botId) => {
       let pair = ledgers.get(botId);

@@ -32,6 +32,8 @@
 
 **T2 实现勘误（2026-11-07，W3 T2 落地）**：§3.1 端口形状按实现细化为**纯计划者**——`materializeAssets(bot, plan, {log, dryRun, assetsDir})` 返回写计划（`file-create | marker-section | hook-entry | argv` 四型，含 `for`/`appliesTo` 归属标记），**不落盘**；一切盘面纪律（§8.3 越狱防护、§3.4 标记节手术、§3.7 原子/回滚、§3.8 manifest、§3.6 卸载）收敛到 core-engine 的 materializer.js 单点，provider 只做格式翻译（dsh patch.yml 例外说明：组合器仍走 profiles.js 的纯构建 `buildBotPatch`，profile 引导留在 materializeConfig）。§3.1 的 `removeAssets` 端口钩子随之上收到 core（manifest 驱动精确清理）；`createRunner` 的 `assets` 计划由 core 以 manifest 富集文件目标（`--mcp-config`/`--skill`/记忆文件路径）后传入。**V 项实证结论（§9 记录）已按冻结点落地**：claude mcp `${VAR}` 引用态经 V8 实证 spawn 期展开（缺变量=字面量透传）→ 引用串原样落 claude-mcp.json；codex 引用态=env_vars 转发（V8 实证从 codex 自身环境转发）；pi `x-wao-managed` 注记经 V9 实证可落文件（pi 容忍且自身重写保留，manifest 回退判据不需要）；claude `--mcp-config` 经 V7 实证覆盖用户 scope 同名（旗标即权威面），且该旗标为 variadic——runner argv 中置末位。
 
+**T3 实现勘误（2026-11-07，W3 T3 落地）**：写计划扩第五型 `rtk-init`（`{target:<config dir>, flavor}`）+ 计划返回值新增 `tools` 行（§7.2 ripgrep 预检结论；rtk 态由执行器补记）——外部命令执行（dry-run 前缀校验/真跑/回读断言/卸载）全部收敛在 materializer.js（§8.3「rtk 物化的外部命令写盘」单点纪律），providers 仍纯计划。manifest 新增 `tools` 数组（§7.1 三态 + §7.2 预检）；绑定/解绑/rematerialize 回执新增 `notes`（装备注记随回执出）；agents `assetWarnings` 扩 `toolWarnings` 面（rtk/rg 缺失常驻警示）。装备面形状修正：codex hook 面=**hooks.json**（独立文件，非 config.toml）；pi 面=extensions/rtk.ts（版本耦合，回退路径对 pi 不可用=failed）。rtk 装备用 `rtkBin` 可注入（plugins.json `core-engine.options.rtkBin` / `$WAO_RTK_BIN`，测试指向 fake，运维可钉绝对路径）。
+
 ### 目标（W3）
 
 1. **五类资产**：`skill | memory | mcp | prompt | tool`，统一注册表 `data/assets.json`，统一绑定模型（bot × 资产 × 共享/独享）。
@@ -113,9 +115,9 @@
 
 | # | 事实 | 证据 |
 |---|---|---|
-| F25 | `rtk` **本机未安装**（`which rtk` → not found；npm 上的 `rtk` 是同名发布工具，无关） | `which rtk`、`npm view rtk` 实测 |
-| F26 | 目标工具=rtk-ai/rtk（Rust Token Killer）：单一 Rust 二进制（brew install rtk / install.sh）；`rtk init -g` 装 Claude Code **PreToolUse hook**（仅拦 Bash 工具调用，把 `cargo test` 改写为 `rtk cargo test` 过滤输出）；`rtk init`（无 -g）=项目级**仅写 CLAUDE.md 指引不装 hook**；`rtk init -g --codex` / `--agent pi` / `--gemini` / `--agent cursor` 等 flavor；`--dry-run` 打印将写文件不动盘（`-v` 附全文）；`--uninstall` flavor 存在；`rtk gain` 看节省；配置在 `~/.config/rtk/` | github.com/rtk-ai/rtk README + rtk-ai.app/docs/getting-started/quick-start |
-| F27 | `rtk init` 对自定义 `CLAUDE_CONFIG_DIR`/`CODEX_HOME` 的支持**未验证**（本机无二进制）——T3 首步装沙箱实测；**dsh 不在 rtk 支持列表** | README Supported Agents 表 |
+| F25 | **T3 已装**：rtk 1.1.0（aarch64-apple-darwin tar.gz，checksum 校验后 `install -m 0755` 到 `~/.local/bin/rtk`，用户级不动系统；npm 上的 `rtk` 是同名发布工具，无关） | `which rtk`→`~/.local/bin/rtk`、`rtk --version`→`rtk 1.1.0`（2026-11-07） |
+| F26 | 目标工具=rtk-ai/rtk（Rust Token Killer）：单一 Rust 二进制（brew install rtk / GitHub releases / install.sh）；`rtk init -g` 装 Claude Code **PreToolUse hook**（仅拦 Bash 工具调用，把 `git status` 改写为 `rtk git status` 过滤输出）；`rtk init`（无 -g）=项目级**仅写 CLAUDE.md 指引不装 hook**；`rtk init -g --codex` / `--agent pi` / `--gemini` / `--agent cursor` 等 flavor；`--dry-run` 打印将写文件不动盘（**1.1.0 无 `-v`/`--verbose`**，README 旧文）；`--uninstall` flavor 存在；`rtk gain` 看节省。**1.1.0 实测补充**：claude 免交互=`--auto-patch --no-trust-filters`（裸跑会 prompt settings.json 补丁）；`--codex` 与 `--auto-patch`/`--no-patch` **互斥**（codex/pi flavor 关闭 stdin 即免交互）；install/uninstall 都会留 `<被改文件>.bak` 残片；自有配置域在 macOS=`~/Library/Application Support/rtk/`（filters.toml 模板 + history.db），Linux=`~/.config/rtk/` | github.com/rtk-ai/rtk README + rtk-ai.app/docs + 本机 1.1.0 全程实测（2026-11-07，探针 /tmp/wao-t3-v5*） |
+| F27 | **已验证（V5，2026-11-07）**：`rtk init -g` **尊重** `CLAUDE_CONFIG_DIR`/`CODEX_HOME`/`PI_CODING_AGENT_DIR` 重定向——三 flavor 的 bot 面产物全落重定向目录（见 §7.1 形状表）；**dsh 不在 rtk 支持列表**（agent 枚举：claude/cursor/trae/windsurf/cline/kilocode/antigravity/kimi/**pi**/hermes/droid/vibe/omp） | `rtk init --help` agent 枚举 + 三 flavor dry-run/真跑实测（2026-11-07） |
 | F28 | `rg` 已装：ripgrep 15.2.0，/opt/homebrew/bin/rg | `rg --version` 实测 |
 
 ### 1.7 core-engine 现状（物化管线挂点）
@@ -439,29 +441,31 @@ doctor 漂移比对（§8.1）、pi 外来文件判据回退（V9 不容忍时�
 
 ### 7.1 RTK（kind: 'rtk'）状态机 + 物化
 
-**前置事实**：F25 本机未装、F26 机制=PreToolUse hook、F27 自定义 config dir 支持未验证、dsh 不支持。
+**前置事实**：F25 已装 rtk 1.1.0（~/.local/bin）；F26 机制=PreToolUse hook；F27/V5 已验证三 flavor 全部尊重重定向；dsh 不支持。
 
-状态机（per bot×asset 绑定，状态存注册表侧 `bindings-state`（内存+启动重查），不进 bots.json）：
+状态机（per bot×asset 绑定，态存物化清单 `manifest.tools`（§3.8），不进 bots.json；绑定本身永不因装备态回滚）：
 
 ```
-未安装(unavailable) --装 rtk 二进制--> 未装备(unarmed)
-未装备 --materialize--> 已装备(armed) | 失败(failed: 原因)
-已装备 --unmaterialize--> 未装备
-（CLI 缺失时任何态 → unavailable，agents 页指引安装：brew install rtk）
+未安装(unavailable) ——rtk 二进制缺失：绑定保留、零产物，回执 notes + agents assetWarnings 指引安装
+已装备(armed)       ——主路径（rtk init 主导）或回退路径（WAO 自写 hook 条目），version 记 manifest.tools
+失败(failed)        ——rtk init 非零/超时：物化 throw→回执 failed[]（stderr 摘要随 error），manifest lastResult 记因
 ```
 
-物化流程（T3 实装时按 F27 验证结果二选一）：
+物化流程（**T3 实装，V5 已解冻——主路径为常路径**）：providers 纯计划 `{kind:'rtk-init', target:<config dir>, flavor}` 写，core-engine 物化器独占执行（§8.3「外部命令写盘」纪律归一处）：
 
-- **主路径（rtk init 支持自定义目录）**：对 bot 的 `CLAUDE_CONFIG_DIR`/`CODEX_HOME`/`PI_CODING_AGENT_DIR` 执行 `rtk init -g [--codex|--agent pi] --dry-run -v` 采集将写内容→确认仅落在 bot 声明目录内（§8.3 白名单）→去掉 --dry-run 真跑→回读断言。
-- **回退路径（不支持自定义目录/写到了共享 ~/.claude）**：WAO 依据 dry-run 学到的 hook 条目形状，**自行写入** bot 域文件（claude=`$CLAUDE_CONFIG_DIR/settings.json` 的 `hooks.PreToolUse[]`——**JSON 条目型**，§3.6：清单记条目全文、卸载精确匹配删；codex=config.toml hook 条目入 TOML 标记节；pi=agent 目录对应文件），command 指向同一 rtk 二进制。
-- **硬红线**：bot 未设 claudeConfigDir/codexHome/piAgentDir（即共享用户主目录）时**拒绑 RTK**——绝不动用户自己的 ~/.claude/settings.json（与 F18 同族的串扰防线）。
-- 卸载=`rtk … --uninstall`（同域验证）或回退路径按 §3.6 语义删（标记节型剥节；**JSON 条目型=按清单记录的条目全文精确匹配删——条目已被用户手改而不匹配时告警不删**，回执/agents 标注请人工确认）；hook 移除后跑一轮岗前测试确认无残留报错。
+- **主路径（V5 已验证）**：`rtk init -g [flavor] --dry-run` 采集将写路径 → 逐条过 §8.3 前缀校验（**符号链接规范化后比较**——rtk 吐 realpath 化路径，macOS /tmp→/private/tmp；白名单=允许根 ∪ rtk 自有配置域 `~/Library/Application Support/rtk`、`~/.config/rtk`——filters.toml 模板/history.db 是二进制自身域，非 bot 面）→ 去掉 --dry-run 真跑（claude 加 `--auto-patch --no-trust-filters` 免交互；codex/pi 关闭 stdin 即免交互——`--codex` 与 `--auto-patch` 互斥）→ 回读断言（hook 条目全文记 manifest.entries、`via:'rtk'`）→ 清 install 期 `.bak` 残片。三 flavor 产物形状（实证）：
+  - claude：`$CLAUDE_CONFIG_DIR/RTK.md` + `CLAUDE.md` 追加 `@RTK.md` 行 + `settings.json` 的 `hooks.PreToolUse[]` 条目 `{matcher:'Bash', hooks:[{type:'command', command:'rtk hook claude'}]}`（宿主文件则追加，幂等）；
+  - codex：`$CODEX_HOME/RTK.md` + `AGENTS.md` 追加 `@/abs/RTK.md` + **`hooks.json`**（独立文件）同形条目（command `rtk hook codex`）；卸载后留空骨架 `{"hooks":{"PreToolUse":[]}}`；
+  - pi：`$PI_CODING_AGENT_DIR/extensions/rtk.ts`（版本耦合 TS 扩展）+ `extensions/.rtk-agents` 属主记。
+- **回退路径（dry-run 非零/无路径/越界→WAO 自写）**：claude/codex 有 JSON hook 面——WAO 依实证形状**自行写入** `$CLAUDE_CONFIG_DIR/settings.json` / `$CODEX_HOME/hooks.json` 的 `hooks.PreToolUse[]`（**JSON 条目型**，§3.6：清单记条目全文、卸载精确匹配删）；**pi 无 JSON hook 面**——extensions/rtk.ts 与 rtk 版本耦合，伪造比失败更糟，主路径不可用即 **failed**（指名文案），不降级不静默。
+- **硬红线**：bot 未设 claudeConfigDir/codexHome（即共享用户主目录）时**拒绑 RTK**——绝不动用户自己的 ~/.claude/settings.json。**pi 例外形状（T3 判定）**：无 piAgentDir 的 pi bot 装备面是 WAO 命名空间默认目录 `~/.pi/agent-wao-<botId>`（per-bot，非共享主目录，§8.3 已列允许根）——放行，与 T2 评审 C1 同款判定。
+- 卸载=`rtk init -g [flavor] --uninstall`（实证三 flavor 均尊重重定向且幂等，hook 条目已被手删时 exit 0）+ `.bak` 残片清扫；rtk 二进制缺失/卸载非零时按 §3.6 条目型精确匹配删兜底（清单已记全文；不匹配=告警不删，回执/agents 标注请人工确认）。装备态重物化不误删：rtk 仍绑定期间其 hook 条目不进 stale 清理（3.5 步重跑自会核对，rtk init 幂等）。
 - **弃 PATH-shim（P2 裁定注记，rev.2）**：评审议过「PATH 前置垫片目录改写命令（如 grep/find→rg、cargo→rtk cargo）」方案——**弃**：垫片=发明私有装载器语义（违 §0「不发明私有装载器」红线），且对 provider 子进程 PATH 环境的侵入面大于收益；工具资产维持 hook（rtk）与指引段（ripgrep）两条既有路径。
-- 装备效果验收（W3-T3 硬门）：装/卸各跑一轮同 prompt 岗前测试，对比台账 tokens 字段与 `rtk gain`，证据入报告。
+- 装备效果验收（W3-T3 硬门，**已达成 2026-11-07**）：装/不装各跑一轮同 prompt 岗前测试（真 claude + Bash `git status` 原样复述，60 untracked+10 modified 确定性 repo）：baseline **1668 chars/79 行**（~417 tok）vs armed **1366 chars/71 行**（~342 tok）= **-302 chars / -18%，rtk gain 独立记账 76 tokens saved（18.2%）**，两轮复现逐字一致；证据在 T3 报告与 `test/e2e/rtk-token.realtest.js`（真 CLI，不入 npm test）。附带实证：stream-json 的 tool_use 事件回显**改写前**原文——改写判定源=rtk gain 记账，非事件原文。
 
 ### 7.2 ripgrep（kind: 'ripgrep'）
 
-- 物化=环境预检（`rg --version` spawn 探测，超时 3s）+ 指引段注入（「代码检索一律用 `rg` 而非 grep/find，示例：`rg -t js 'pattern'`…」+ options.extraHints）。预检失败→绑定仍成功但回执/agents 标注「rg 未安装，指引已注入但无效」+ 指引段内含安装指引一句。
+- 物化=环境预检（`rg --version` spawn 探测，超时 3s）+ 指引段注入（「代码检索一律用 `rg` 而非 grep/find，示例：`rg -t js 'pattern'`…」+ options.extraHints）。预检结论（available/unavailable+version）随 provider 计划**记入 manifest.tools**；预检失败→绑定仍成功但回执 notes + agents assetWarnings 标注「rg 未安装，指引已注入但无效」+ 指引段内含安装指引一句（**预检不失败**，装上即生效）。
 - 四家注入口同 prompt 类（§3.3 矩阵末行）。
 
 ### 7.3 memory 语义边界（与 claude auto-memory 划界）
@@ -524,7 +528,11 @@ doctor 漂移比对（§8.1）、pi 外来文件判据回退（V9 不容忍时�
 > - **V8 ✅ 已验证**：claude 在**spawn server 时**对 env 值与 **headers 值**展开 `${VAR}`（展开自 claude 进程环境）；**缺失变量=字面量原样透传**（不报错/不清空）；父环境整体透传给 stdio server。codex `env` 表值原样透传给子进程；`env_vars=["X"]` 从 codex 自身进程环境转发 X（父缺 X→子进程无此变量，不报错）。
 > - **V9 ✅ 已验证**：pi 容忍 mcp.json 未知顶层键（`pi mcp list` 正常列出 server），**且 pi 自身重写（`pi mcp add`）保留未知键**——`x-wao-managed` 注记既作外来判据又抗 pi 改写，manifest 回退判据不需要。
 > - V3（pi --append-system-prompt 文件形态）不在 T2 清单：runner 采用设计回退「WAO 读文件拼文本传参」，不依赖文件形态。
-> - V4/V5/V6 留 T3（rtk/项目级 config.toml/目录外 mcp-config）。
+> - V4/V6 留后续（项目级 config.toml/目录外 mcp-config）。
+
+> **T3 实证记录（2026-11-07，W3 T3 首步，全部真跑，探针 /tmp/wao-t3-v5\* + rtk 1.1.0 ~/.local/bin）**：
+> - **V5 ✅ 已验证**：`rtk init -g` 三 flavor 全部尊重重定向——claude（CLAUDE_CONFIG_DIR：RTK.md+CLAUDE.md `@RTK.md`+settings.json PreToolUse 条目）/codex（CODEX_HOME：RTK.md+AGENTS.md `@/abs/RTK.md`+**hooks.json** 条目）/pi（PI_CODING_AGENT_DIR：extensions/rtk.ts+.rtk-agents）；`--uninstall` 同样尊重且幂等。附带发现：1.1.0 无 `-v`；`--codex`×`--auto-patch` 互斥；install/uninstall 留 `.bak` 残片（WAO 清扫）；rtk 自有域写 filters.toml 模板+history.db（macOS `~/Library/Application Support/rtk`）；dry-run 路径 realpath 化（前缀校验需符号链接规范化）；stream-json tool_use 事件回显改写前原文（改写判定源=rtk gain）。装备效果硬门数字见 §7.1（-18% / 76 tokens）。
+> - 装备面形状变化：codex 的 hook 面是 **hooks.json**（非 config.toml——T0 设计时未知）；pi 的面是 **TS 扩展文件**（无 JSON hook 面→回退路径对 pi 不可用=failed，见 §7.1）。
 
 | # | 待验证 | 方法 | 回退 |
 |---|---|---|---|
@@ -532,7 +540,7 @@ doctor 漂移比对（§8.1）、pi 外来文件判据回退（V9 不容忍时�
 | V2 | codex CODEX_HOME 重定向后 `<CODEX_HOME>/skills` 是否仍被发现（F1↔F3 缝隙）；**且（rev.2 扩）`<CODEX_HOME>/AGENTS.md` 是否随重定向被读**（F10 只证默认位 `~/.codex/AGENTS.md`，未证重定向） | 临时 CODEX_HOME（auth 从 ~/.codex 复制）+ 放技能与 AGENTS.md 标记节，`codex exec` 问可用技能/引用标记节内容 | skills→`<cwd>/.agents/skills/`；AGENTS.md→`<cwd>/AGENTS.md` 标记节（§3.3 ②级面；两级均为文档保证的项目域） |
 | V3 | pi `--append-system-prompt <文件路径>` 确读文件内容（F19 字面） | `pi -p` 指引文件内容回显探针 | WAO 读文件拼文本传参 |
 | V4 | codex 项目级 `.codex/config.toml` 在非 trusted 目录是否生效（F9 限定语） | 临时 cwd 放 `.codex/config.toml`（假 server），`codex exec` 观察 MCP 装载报错 | 要求 codexHome（绑定校验前置） |
-| V5 | `rtk init` 对自定义 CLAUDE_CONFIG_DIR/CODEX_HOME/PI_CODING_AGENT_DIR 的行为（F27） | 沙箱装 rtk，`--dry-run -v` 逐条核对将写路径 | §7.1 回退路径（WAO 自写 hook 条目） |
+| V5 | ~~`rtk init` 对自定义 CLAUDE_CONFIG_DIR/CODEX_HOME/PI_CODING_AGENT_DIR 的行为（F27）~~ **✅ 已验证（T3，2026-11-07）**：三 flavor 全部尊重重定向，产物形状见 §7.1 | ~~沙箱装 rtk，`--dry-run -v` 逐条核对将写路径~~ 已真跑（rtk 1.1.0，探针 /tmp/wao-t3-v5*） | §7.1 回退路径（WAO 自写 hook 条目；pi=failed 不伪造） |
 | V6 | `--mcp-config` 传**目录外任意路径文件**+claude 装载成功（W1-T4 已有真 claude MCP 探针可复用） | 沿 W1-T4 真链路 | — |
 | V7 | **claude 同名 server 让位方向实证（rev.2）**：`--mcp-config` 传入的 server 与用户既有 local/project/user scope 同名时哪侧生效——F13 只记 scope 间优先级，未记 CLI 旗标面与配置文件的合成方向 | 探针：user scope 放 server A（假 command 甲），`--mcp-config` 同名传 A'（假 command 乙），`claude -p` 经 mcp_server_errors/装载行为辨明生效侧 | 三家统一 `wao-` 前缀（§3.3）后同名冲突仅剩「用户自起 `wao-` 名」的病态情形；实证结果如实写进文档文案 |
 | V8 | **claude `${VAR}` / codex `env_vars` 引用语义（rev.2，§4.2 密钥三态②）**：展开时机（读配置时 vs spawn server 时）、环境变量缺失时的行为（报错/空串/字面量）、claude headers 面是否同样展开、codex `env_vars` 从哪个进程环境继承 | claude：inline mcp-config 传 `${PROBE_VAR}`，分别设/不设变量跑探针；codex：config.toml `env_vars` 条目+`codex exec` 探针 | 引用态不宣传（UI 不暴露），密钥走明文态+落盘 0600（§4.2 ③） |

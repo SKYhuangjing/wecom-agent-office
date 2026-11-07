@@ -6,6 +6,22 @@
 
 ### Added
 
+- rtk 工具资产装备执行器（W3 T3，DESIGN-ASSETS §7.1）：新写计划型 `rtk-init`（providers 纯计划
+  `{target, flavor}`，本执行器独占外部命令执行）——探测（unavailable：绑定保留零产物，notes+
+  agents `toolWarnings` 指引安装）→ dry-run 采集将写路径→§8.3 前缀校验（符号链接规范化后比较，
+  白名单=允许根∪rtk 自有域 `~/Library/Application Support/rtk`、`~/.config/rtk`）→ 真跑（claude
+  `--auto-patch --no-trust-filters` 免交互）→ 回读断言（hook 条目全文进 manifest.entries，
+  `via:'rtk'`）→ install 期 `.bak` 清扫；dry-run 非零/越界→回退路径（claude/codex WAO 自写 JSON
+  hook 条目=§3.6 条目型；pi 无 JSON hook 面=failed 不伪造版本耦合的 extensions/rtk.ts）；真跑非零→
+  throw（回执 failed[]，stderr 摘要）。卸载=`rtk init --uninstall`（V5 实证三 flavor 尊重重定向且
+  幂等）+ rtk 缺失/非零时条目精确匹配删兜底 + `.bak` 清扫；rtk 仍绑定期间其条目不进 stale 清理
+  （rtk init 幂等重跑）。rtk 态（armed/unavailable + version + mode）与 §7.2 ripgrep 预检结论同记
+  manifest 新增 `tools` 数组。`rtkBin` 可注入（plugins.json `core-engine.options.rtkBin`/
+  `$WAO_RTK_BIN`）。checkBind：pi 无 piAgentDir 时默认目录 `~/.pi/agent-wao-<botId>`（per-bot
+  命名空间，非共享主目录）放行 rtk；claude/codex 共享目录仍拒。
+- 资产回执 notes 线程（§3.2）：bind/unbind/rematerialize 回执携带物化 notes（rtk unavailable/
+  rg 未装等装备注记随回执出）；agents 名册 `assetWarnings` 扩 `toolWarnings` 面（rtk/rg 缺失常驻
+  警示，判定源同物化器）。
 - 资产物化管线执行器（W3 T2，DESIGN-ASSETS rev.2 §3）：新模块 materializer.js 替换 T1 noop——
   provider 侧 `materializeAssets` 纯计划（file-create/marker-section/hook-entry/argv 四型写计划），
   本执行器统一持有盘面纪律：§8.3 越狱防护（bot 声明目录+data/ 白名单、`..` 段拒绝）、§3.4 标记节

@@ -35,6 +35,9 @@
 
 - 消息流：企微回调 → channel-wecom adapter → engine 串行链（抢占/队列合并/出站预算）
   → provider runner（`dsh --json -` 子进程，NDJSON → 统一事件）→ 流式回传企微。
+- 资产（W3）：技能/记忆/提示词/MCP/工具五类资产（`data/assets.json` 注册表 + per-bot 绑定），
+  物化到 bot 声明目录（标记节/独立文件/JSON 条目型，卸载精确回收）；工具类 rtk（PreToolUse hook
+  输出裁剪，真机实测省 ~18% tool 输出）与 ripgrep（指引段注入 + 环境预检）——见 docs/DESIGN-ASSETS.md。
 - 会话延续：chatKey → sessionId 缓存（`data/sessions/`），下一条消息带 `--session-id` 续跑。
 - 停机 = SIGINT/SIGTERM 触发四阶段（drain 补终帧 → 逆序拆插件 → 关监听 → 孤儿扫尾 → 释放锁），不是裸 kill；
   每阶段在日志留一行（`wao: stopping (four-phase)` … `wao: stopped (lock released)`），见 `data/logs/wao.log`。

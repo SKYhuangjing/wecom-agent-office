@@ -112,10 +112,16 @@ export function mcpTomlBlock(serverId, server) {
   return lines.join('\n');
 }
 
-const hasBin = (name) => {
+// §7.2 ripgrep 预检（spawn 探测 3s，不失败绑定）：结论随 tools 进 manifest，
+// 缺失时 notes 指引安装（指引段本身仍注入——装上即生效）。
+const probeRg = () => {
   try {
-    return spawnSync(name, ['--version'], { timeout: 3000 }).error == null;
-  } catch { return false; }
+    const r = spawnSync('rg', ['--version'], { timeout: 3000, encoding: 'utf8' });
+    if (r.error != null || r.status !== 0) return { available: false, version: null };
+    return { available: true, version: (r.stdout ?? '').trim().split('\n')[0] || null };
+  } catch {
+    return { available: false, version: null };
+  }
 };
 
 export default {
@@ -226,6 +232,7 @@ export default {
         const configToml = home ? join(home, 'config.toml') : join(pc.cwd, '.codex', 'config.toml');
         const writes = [];
         const notes = [];
+        const tools = [];
         const mdSections = [];
         const tomlBlocks = [];
         for (const entry of plan ?? []) {
@@ -252,10 +259,21 @@ export default {
             case 'tool':
               if (entry.content?.kind === 'ripgrep') {
                 mdSections.push(['## WAO 工具指引：ripgrep', '', RIPGREP_GUIDANCE, ...(entry.content.options?.extraHints ? [String(entry.content.options.extraHints)] : [])].join('\n'));
+                const rg = probeRg();
+                tools.push({ assetId: entry.assetId, kind: 'ripgrep', state: rg.available ? 'available' : 'unavailable', version: rg.version });
+                if (!rg.available) {
+                  notes.push({ assetId: entry.assetId, detail: 'rg 未安装：ripgrep 指引已注入但本机无效（预检不失败）——brew install ripgrep 后生效' });
+                }
               } else if (entry.content?.kind === 'rtk') {
-                notes.push(hasBin('rtk')
-                  ? { assetId: entry.assetId, detail: 'rtk 已安装但 hook 形状待 T3 实证——本轮未写 hook' }
-                  : { assetId: entry.assetId, detail: 'rtk 未安装（unavailable）：brew install rtk 后经 rematerialize-assets 装备' });
+                // §7.1 (W3 T3): plan the rtk-init write — core-engine's
+                // materializer executes（V5 实证 rtk 1.1.0 尊重 CODEX_HOME：
+                // RTK.md + AGENTS.md 引用 + hooks.json PreToolUse 条目）。
+                // 无 codexHome 的 bot 绑定面已拒（§7.1 硬红线）——防御性注记。
+                if (home) {
+                  writes.push({ kind: 'rtk-init', target: home, flavor: 'codex', for: entry.assetId, owned: false });
+                } else {
+                  notes.push({ assetId: entry.assetId, detail: 'rtk 要求 codexHome（绑定面应已拒绝共享目录 bot）——本轮未装备' });
+                }
               }
               break;
             default:
@@ -275,7 +293,7 @@ export default {
           notes.push({ detail: `MCP → ${configToml} 标记节（server 名 wao- 前缀 + 引号键；\${VAR} 引用走 env_vars，V8 已验证转发）` });
         }
         log?.info?.(`provider-codex: asset plan for ${bot.id} → ${writes.length} writes`);
-        return { writes, notes, entries: [] };
+        return { writes, notes, entries: [], tools };
       },
 
       createRunner({ bot, providerConfig, log }) {

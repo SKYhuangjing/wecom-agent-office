@@ -6,6 +6,9 @@
 
 ### Added
 
+- ripgrep 预检（W3 T3，§7.2）：materializeAssets 对 ripgrep 资产做 rg spawn 3s 探测，结论随
+  计划返回值 `tools` 进 manifest；缺失=note 指引安装（personaPrefix 指引节仍注入，预检不失败）。
+  rtk 无面不变（绑定面拒绑，F27）。
 - 资产面（W3 T2，§3.3 dsh 列）：`materializeAssets` 纯计划钩子 + personaPrefix 单一组合器
   `combinePersonaPrefix`（运营者人设永远在前，资产节按绑定序；materializeConfig 与
   materializeAssets 同过组合器，「改模型丢资产节」结构性不可达）+ `.wao/skills/` 技能树；

@@ -88,10 +88,16 @@ export function stableJson(value) {
   return JSON.stringify(value);
 }
 
-const hasBin = (name) => {
+// §7.2 ripgrep 预检（spawn 探测 3s，不失败绑定）：结论随 tools 进 manifest，
+// 缺失时 notes 指引安装（指引段本身仍注入——装上即生效）。
+const probeRg = () => {
   try {
-    return spawnSync(name, ['--version'], { timeout: 3000 }).error == null;
-  } catch { return false; }
+    const r = spawnSync('rg', ['--version'], { timeout: 3000, encoding: 'utf8' });
+    if (r.error != null || r.status !== 0) return { available: false, version: null };
+    return { available: true, version: (r.stdout ?? '').trim().split('\n')[0] || null };
+  } catch {
+    return { available: false, version: null };
+  }
 };
 
 export default {
@@ -189,6 +195,7 @@ export default {
         const claudeMd = join(dir, 'CLAUDE.md');
         const writes = [];
         const notes = [];
+        const tools = [];
         let memorySection = [];
         for (const entry of plan ?? []) {
           switch (entry.type) {
@@ -209,15 +216,23 @@ export default {
             case 'tool':
               if (entry.content?.kind === 'ripgrep') {
                 writes.push({ kind: 'argv', flags: ['--append-system-prompt', ripgrepText(entry)], for: entry.assetId });
+                const rg = probeRg();
+                tools.push({ assetId: entry.assetId, kind: 'ripgrep', state: rg.available ? 'available' : 'unavailable', version: rg.version });
+                if (!rg.available) {
+                  notes.push({ assetId: entry.assetId, detail: 'rg 未安装：ripgrep 指引已注入但本机无效（预检不失败）——brew install ripgrep 后生效' });
+                }
               } else if (entry.content?.kind === 'rtk') {
-                // §7.1 state machine: CLI missing = unavailable — bind stays,
-                // note tells the operator; the PreToolUse hook-entry write is
-                // T3's (F25 本机无 rtk，V5 未实证 hook 形状——不写未经实证的
-                // hook 命令进 bot 域 settings.json). rtk without claudeConfigDir
-                // never reaches here (§2.3/§7.1 hard line refuses at bind).
-                notes.push(hasBin('rtk')
-                  ? { assetId: entry.assetId, detail: 'rtk 已安装但 hook 形状待 T3 经 rtk init --dry-run 实证——本轮未写 hook（重物化不会装备）' }
-                  : { assetId: entry.assetId, detail: 'rtk 未安装（unavailable）：brew install rtk 后经 rematerialize-assets 装备' });
+                // §7.1 (W3 T3): plan the rtk-init write; core-engine's
+                // materializer owns the external-command execution (probe →
+                // dry-run 前缀校验 → 真跑 → 回读断言；unavailable/armed/
+                // failed 三态记 manifest.tools）。V5 已实证 rtk 1.1.0 尊重
+                // CLAUDE_CONFIG_DIR 重定向；无 claudeConfigDir 的 bot 在绑定面
+                // 已被拒（checkBind §7.1 硬红线）——此处防御性注记。
+                if (redirected) {
+                  writes.push({ kind: 'rtk-init', target: dir, flavor: 'claude', for: entry.assetId, owned: false });
+                } else {
+                  notes.push({ assetId: entry.assetId, detail: 'rtk 要求 claudeConfigDir（绑定面应已拒绝共享目录 bot）——本轮未装备' });
+                }
               }
               break;
             default:
@@ -237,7 +252,7 @@ export default {
           notes.push({ detail: `MCP → ${target}（WAO 独立文件 0600，runner 加 --mcp-config；V7 实证旗标覆盖用户 scope 同名）` });
         }
         log?.info?.(`provider-claude: asset plan for ${bot.id} → ${writes.length} writes`);
-        return { writes, notes, entries: [] };
+        return { writes, notes, entries: [], tools };
       },
 
       createRunner({ bot, providerConfig, assets, log }) {

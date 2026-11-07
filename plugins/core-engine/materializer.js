@@ -6,9 +6,11 @@
 //   { writes: [ { kind: 'file-create',   target, content, mode?, for?, appliesTo? }
 //             | { kind: 'marker-section', target, format: 'markdown'|'toml', content, for? }
 //             | { kind: 'hook-entry',    target, pointer: '/hooks/PreToolUse', content, for? }
+//             | { kind: 'rtk-init',      target: <config dir>, flavor: 'claude'|'codex'|'pi', for?, owned: false } // §7.1 W3 T3
 //             | { kind: 'argv',          flags: [...], for? } ],   // audit-only receipt row
 //     notes: [{ assetId?, detail }],
-//     entries: [{ file, pointer, entry }] }   // §3.8 manifest JSON 条目型全文
+//     entries: [{ file, pointer, entry }],   // §3.8 manifest JSON 条目型全文
+//     tools: [{ assetId, kind: 'ripgrep'|'rtk', ...state }] } // §7.2 预检/装备态（ripgrep 由 provider 记，rtk 由本执行器记）
 //
 // THIS file owns every disk mutation: §8.3 jail guard (writes only under the
 // bot's declared roots + data/), §3.4 marker-section surgery with orphan
@@ -24,11 +26,12 @@
 // V8 claude expands ${VAR} in env/headers at spawn (missing → literal passthrough),
 // codex env_vars forwards from its own environment; V9 pi tolerates (and its own
 // rewrites preserve) unknown top-level keys in mcp.json.
-import { chmodSync, existsSync, readdirSync, readFileSync, rmSync, rmdirSync, statSync, unlinkSync } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { chmodSync, existsSync, readdirSync, readFileSync, realpathSync, rmSync, rmdirSync, statSync, unlinkSync } from 'node:fs';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import process from 'node:process';
+import { spawnSync } from 'node:child_process';
 import { atomicWrite } from '../../src/kernel/config.js';
 
 const MARKER_RE = /^(?:<!--\s*)?# wao:assets:(begin|end):v(\d+):bot=([^\s>]*?)(?:\s*-->)?$/;
@@ -53,6 +56,99 @@ export function stableStringify(value) {
 export function planFingerprint(plan) {
   return createHash('sha256').update(stableStringify(plan ?? [])).digest('hex');
 }
+
+// —— §7.1 RTK 装备（W3 T3）——————————————————————————————————————————————————
+// rtk 1.1.0 实证（2026-11-07，本机 ~/.local/bin/rtk，探针 /tmp/wao-t3-v5*）：
+//   V5 已解冻——`rtk init -g` 尊重 CLAUDE_CONFIG_DIR / CODEX_HOME /
+//   PI_CODING_AGENT_DIR 重定向，三 flavor 的全部 bot 面产物都落在重定向目录：
+//     claude: RTK.md + CLAUDE.md(@RTK.md 引用行) + settings.json 的
+//             hooks.PreToolUse[] JSON 条目 {matcher:'Bash', hooks:[{type:'command',
+//             command:'rtk hook claude'}]}（宿主文件则追加，幂等，.bak 备份）
+//     codex:  RTK.md + AGENTS.md(@/abs/RTK.md) + hooks.json 的同形条目
+//             （command:'rtk hook codex'；--codex 与 --auto-patch 互斥→裸跑即可）
+//     pi:     extensions/rtk.ts（版本耦合的 TS 扩展）+ extensions/.rtk-agents
+//   另有两处 rtk 自有域写入（~/Library/Application Support/rtk 的 filters.toml
+//   模板 + history.db）——二进制自身域，非 bot 面，§8.3 前缀校验白名单之。
+//   `rtk init -g … --uninstall` 三 flavor 均尊重重定向且幂等（hook 条目已被
+//   手删时 exit 0），但会留 <被改文件>.bak 残片——卸载后由 WAO 清扫。
+const RTK_FLAVORS = {
+  claude: {
+    envKey: 'CLAUDE_CONFIG_DIR',
+    initArgs: ['--auto-patch', '--no-trust-filters'], // 免交互（实证：裸跑会 prompt settings.json 补丁）
+    hookFile: 'settings.json',
+    hookPointer: '/hooks/PreToolUse',
+    hookCommand: 'rtk hook claude',
+  },
+  codex: {
+    envKey: 'CODEX_HOME',
+    initArgs: [], // 实证：--codex 与 --auto-patch/--no-patch 互斥，stdin 关闭即免交互
+    hookFile: 'hooks.json',
+    hookPointer: '/hooks/PreToolUse',
+    hookCommand: 'rtk hook codex',
+  },
+  pi: {
+    envKey: 'PI_CODING_AGENT_DIR',
+    initArgs: [], // `--agent pi`；无 JSON hook 面（extensions/rtk.ts 是版本耦合 TS）
+  },
+};
+
+const rtkFlavorArgs = (flavor) => (flavor === 'codex' ? ['--codex'] : flavor === 'pi' ? ['--agent', 'pi'] : []);
+
+// rtk 自有配置域（F26「配置在 ~/.config/rtk/」的 macOS 实际形状 + Linux 形状
+// 都放行——dry-run 路径前缀校验用，二进制自身域不是 bot 面）。
+const rtkOwnRoots = () => [
+  join(homedir(), 'Library', 'Application Support', 'rtk'),
+  join(homedir(), '.config', 'rtk'),
+];
+
+const tailOf = (s, n = 300) => String(s ?? '').trim().slice(-n);
+
+// 同步探测一个 CLI（§7.2 3s 超时口径）：{ok, version, error}。
+export function probeBin(bin, timeoutMs = 3000) {
+  try {
+    const r = spawnSync(bin, ['--version'], { timeout: timeoutMs, encoding: 'utf8' });
+    if (r.error != null) return { ok: false, version: null, error: r.error.code === 'ENOENT' ? 'not-found' : String(r.error.message ?? r.error.code) };
+    if (r.status !== 0) return { ok: false, version: null, error: `exit ${r.status}` };
+    return { ok: true, version: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim().split('\n')[0] || null, error: null };
+  } catch (err) {
+    return { ok: false, version: null, error: err?.message ?? String(err) };
+  }
+}
+
+// 跑一条 rtk 命令（stdin 关闭=免交互，30s 上限），env 注入 flavor 重定向变量。
+const runRtk = (rtkBin, args, flavor, target, timeoutMs = 30000) => {
+  const env = { ...process.env };
+  const spec = RTK_FLAVORS[flavor];
+  if (spec?.envKey) env[spec.envKey] = target;
+  try {
+    const r = spawnSync(rtkBin, args, { env, timeout: timeoutMs, encoding: 'utf8', stdin: 'ignore' });
+    return { status: r.error != null ? -1 : r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '', error: r.error?.message ?? null };
+  } catch (err) {
+    return { status: -1, stdout: '', stderr: '', error: err?.message ?? String(err) };
+  }
+};
+
+// 解析 `rtk init --dry-run` 输出里的将写路径（每行一个「…: /abs/path」，路径
+// 可含空格——取冒号后到行尾）。
+const dryRunPaths = (stdout) => {
+  const out = [];
+  for (const line of String(stdout ?? '').split('\n')) {
+    if (!line.includes('[dry-run]')) continue;
+    const m = /:\s+(\/.*)$/.exec(line);
+    if (m != null) out.push(m[1].trim());
+  }
+  return [...new Set(out)];
+};
+
+// 符号链接规范化前缀比较用：rtk 会把路径 realpath 化（macOS 上 /tmp 的
+// dry-run 路径吐成 /private/tmp/…），纯 resolve 不解引用就对不上——对不存在
+// 的目标（将写文件/目录）沿祖先递归到最近存在的一层再拼余段。
+const canonPath = (p) => {
+  try { return realpathSync(p); } catch { /* not there yet — canon the parent */ }
+  const parent = dirname(p);
+  if (parent === p) return resolve(p);
+  return join(canonPath(parent), basename(p));
+};
 
 // —— §3.4 marker-section surgery ——————————————————————————————————————————
 
@@ -204,7 +300,7 @@ export function removeJsonEntry(doc, pointer, recordedEntry) {
 
 // —— the materializer (state.materializer seam, noopMaterializer contract) —
 
-export function createMaterializer({ ports, dataDir, log }) {
+export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
   const assetsDir = join(dataDir, 'assets');
   const logger = log ?? console;
   const manifestFileOf = (botId) => join(assetsDir, botId, 'manifest.json');
@@ -274,6 +370,146 @@ export function createMaterializer({ ports, dataDir, log }) {
     return ['claudeConfigDir', 'codexHome', 'piAgentDir'].find((k) => typeof pc[k] === 'string' && pc[k] !== '');
   };
 
+  // —— §7.1 RTK 执行器（providers 只计划 rtk-init 写；本文件独占盘面）————————
+  // 每条 rtk 计划落三态之一（§7.1 状态机，态存 manifest.tools，不进 bots.json）：
+  //   unavailable —— rtk 二进制缺失：绑定保留、零产物，notes/agents 指引安装；
+  //   armed       —— 主路径（dry-run 采集→§8.3 前缀校验→真跑→回读断言）或
+  //                  回退路径（dry-run 不可用/越界→WAO 自写 hook 条目，claude/
+  //                  codex 专属；pi 的 extensions/rtk.ts 是版本耦合面，不伪造，
+  //                  主路径不可用即 failed）；
+  //   failed      —— 真跑非零/超时：throw（per-bot 隔离→回执 failed[]），stderr
+  //                  摘要随 error，manifest lastResult 记因。
+  // dry-run 白名单 = §8.3 允许根 ∪ rtk 自有配置域（filters.toml 模板等二进制
+  // 自身域，非 bot 面）；其余任何越界路径 → 回退路径。
+  const rtkSweepBaks = (flavor, target, notes) => {
+    const spec = RTK_FLAVORS[flavor];
+    if (spec?.hookFile == null) return;
+    const bak = join(target, `${spec.hookFile}.bak`);
+    if (existsSync(bak)) {
+      try { unlinkSync(bak); } catch { /* best effort */ }
+      notes.push({ detail: `清扫 rtk 卸载残片：${bak}` });
+    }
+  };
+
+  // 卸载一条已装备的 rtk（stale 清理与 removeAssets 共用，best-effort 不抛）：
+  // rtk 自带 --uninstall 优先（实证三 flavor 均尊重重定向且幂等）；返回
+  // handled=rtk 已自清 hook 条目——false（rtk 缺失/非零/回退装备）时 entries
+  // 精确匹配删（清单已记条目全文）兜底，另扫 .bak。
+  const rtkUninstall = (bot, w, notes) => {
+    const flavor = w.flavor;
+    const spec = RTK_FLAVORS[flavor];
+    if (spec == null || typeof w.path !== 'string') return false;
+    if (w.mode === 'wao-hook') {
+      // 回退路径装备：产物只有 WAO 自写条目（entries 循环精确删），不跑 rtk。
+      rtkSweepBaks(flavor, w.path, notes);
+      return false;
+    }
+    const probe = probeBin(rtkBin);
+    if (probe.ok) {
+      const r = runRtk(rtkBin, ['init', '-g', ...rtkFlavorArgs(flavor), '--uninstall'], flavor, w.path);
+      if (r.status === 0) {
+        notes.push({ detail: `rtk 卸载成功（flavor ${flavor}，${w.path}）` });
+        rtkSweepBaks(flavor, w.path, notes);
+        return true;
+      }
+      notes.push({ detail: `rtk uninstall 非零（exit ${r.status}）：${tailOf(r.stderr || r.error)}——hook 条目按清单精确匹配删兜底` });
+    } else {
+      notes.push({ detail: `rtk 二进制缺失（${probe.error}），无法跑 rtk uninstall——hook 条目按清单精确匹配删兜底` });
+    }
+    rtkSweepBaks(flavor, w.path, notes);
+    return false;
+  };
+
+  // 执行一条 rtk-init 计划（materialize 步 3.5；returns nothing——产物经
+  // notes/receiptRows/entriesOut/toolsOut 流出）。throw = failed 态。
+  const rtkInit = (bot, w, { snap, applied, receipt, notes, entriesOut, toolsOut }) => {
+    const flavor = w.flavor;
+    const spec = RTK_FLAVORS[flavor];
+    const target = resolve(String(w.target ?? ''));
+    const assetId = typeof w.for === 'string' ? w.for : undefined;
+    const state = { assetId, kind: 'rtk', flavor, target };
+    // 态 1：unavailable —— 二进制不在，绑定保留、零产物（§7.1）。
+    const probe = probeBin(rtkBin);
+    if (!probe.ok) {
+      toolsOut.push({ ...state, state: 'unavailable' });
+      notes.push({ assetId, detail: 'rtk 未安装（unavailable）：绑定保留但未装备——安装 rtk（brew install rtk 或 GitHub releases）后 POST rematerialize-assets 装备' });
+      return;
+    }
+    state.version = probe.version;
+    // 主路径前置：dry-run 采集将写路径 → §8.3 前缀校验（∪ rtk 自有域）。
+    const dry = runRtk(rtkBin, ['init', '-g', ...rtkFlavorArgs(flavor), '--dry-run'], flavor, target);
+    let fallbackReason = null;
+    const roots = [...allowedRootsOf(bot), ...rtkOwnRoots()].map(canonPath);
+    const paths = dryRunPaths(dry.stdout);
+    if (dry.status !== 0) fallbackReason = `dry-run 非零（exit ${dry.status}）`;
+    else if (paths.length === 0) fallbackReason = 'dry-run 未解析出任何将写路径';
+    else {
+      const outside = paths.filter((p) => {
+        const rp = canonPath(p);
+        return !roots.some((root) => rp === root || rp.startsWith(root + sep));
+      });
+      if (outside.length > 0) fallbackReason = `dry-run 越界路径：${outside.join('、')}`;
+    }
+    if (fallbackReason == null) {
+      // 主路径：快照将写文件（回滚锚）→ 真跑 → 回读断言 + 清 .bak。
+      for (const p of paths) {
+        try { snap(p); } catch { /* snapshot best effort */ }
+      }
+      const run = runRtk(rtkBin, ['init', '-g', ...rtkFlavorArgs(flavor), ...spec.initArgs], flavor, target);
+      if (run.status !== 0) {
+        // 态 3：failed —— 非零/超时，throw 带 stderr 摘要（per-bot 隔离 → failed[]）。
+        throw new Error(`rtk init 失败（flavor ${flavor}，exit ${run.status}）：${tailOf(run.stderr || run.error || run.stdout)}`);
+      }
+      for (const p of paths) applied.push({ kind: 'write', target: p });
+      receipt.push({ path: target, action: 'rtk-init' });
+      toolsOut.push({ ...state, state: 'armed', mode: 'rtk-init' });
+      // 回读断言（§7.1）：claude/codex 找到 rtk 写入的 PreToolUse 条目 → 清单
+      // 记全文（rtk 缺失时的卸载兜底）；pi 断言扩展文件在位。
+      if (spec.hookFile != null) {
+        const hookFile = join(target, spec.hookFile);
+        let hookDoc = null;
+        try { hookDoc = JSON.parse(readText(hookFile) ?? 'null'); } catch { hookDoc = null; }
+        const arr = isObject(hookDoc) && Array.isArray(hookDoc?.hooks?.PreToolUse) ? hookDoc.hooks.PreToolUse : [];
+        const entry = arr.find((e) => JSON.stringify(e ?? {}).includes(spec.hookCommand)) ?? null;
+        if (entry != null) {
+          entriesOut.push({ file: hookFile, pointer: spec.hookPointer, entry, via: 'rtk' });
+          notes.push({ assetId, detail: `rtk 已装备（${probe.version}，flavor ${flavor}，主路径）：${hookFile} PreToolUse hook + RTK.md——卸载走 rtk uninstall` });
+        } else {
+          notes.push({ assetId, detail: `rtk 已装备（${probe.version}，flavor ${flavor}，主路径），但回读未找到 ${spec.hookCommand} 条目（形状漂移？）——卸载依赖 rtk uninstall` });
+        }
+        const bak = join(target, `${spec.hookFile}.bak`);
+        if (existsSync(bak)) {
+          try { unlinkSync(bak); } catch { /* best effort */ }
+        }
+      } else {
+        const ext = join(target, 'extensions', 'rtk.ts');
+        notes.push(existsSync(ext)
+          ? { assetId, detail: `rtk 已装备（${probe.version}，flavor pi，主路径）：${ext} 扩展——卸载走 rtk uninstall` }
+          : { assetId, detail: `rtk 报告成功但 ${ext} 未出现（形状漂移？）——卸载依赖 rtk uninstall` });
+      }
+      return;
+    }
+    // 回退路径（§7.1 双路径之二）：WAO 自写 hook 条目（JSON 条目型——清单记
+    // 全文、卸载精确匹配删）。仅 claude/codex 有 JSON hook 面；pi 的扩展文件
+    // 与 rtk 版本耦合，伪造比失败更糟 → failed。
+    if (spec.hookFile == null) {
+      throw new Error(`rtk 主路径不可用（${fallbackReason}）且 pi 无 JSON hook 面（extensions/rtk.ts 为版本耦合产物，不由 WAO 伪造）——修复 rtk 后 rematerialize`);
+    }
+    const hookFile = join(target, spec.hookFile);
+    snap(hookFile);
+    let doc;
+    try { doc = JSON.parse(readText(hookFile) ?? 'null'); } catch { doc = null; }
+    if (doc == null) doc = {};
+    const entry = { matcher: 'Bash', hooks: [{ type: 'command', command: spec.hookCommand }] };
+    const next = upsertJsonEntry(doc, spec.hookPointer, entry);
+    atomicWrite(hookFile, `${JSON.stringify(next, null, 2)}\n`);
+    applied.push({ kind: 'write', target: hookFile });
+    receipt.push({ path: hookFile, action: 'write' });
+    entriesOut.push({ file: hookFile, pointer: spec.hookPointer, entry });
+    toolsOut.push({ ...state, state: 'armed', mode: 'wao-hook' });
+    notes.push({ assetId, detail: `rtk 经回退路径装备（${probe.version}，flavor ${flavor}）：主路径不可用（${fallbackReason}），WAO 自写 ${hookFile} PreToolUse 条目（卸载=精确匹配删）` });
+  };
+
   return {
     assetsDir,
 
@@ -292,7 +528,10 @@ export function createMaterializer({ ports, dataDir, log }) {
       if (provider === 'dsh' && asset?.type === 'tool' && asset?.content?.kind === 'rtk') {
         errors.push('dsh 岗位不支持 rtk 工具资产（rtk 支持列表不含 dsh）');
       }
-      if (asset?.type === 'tool' && asset?.content?.kind === 'rtk' && provider !== 'dsh' && dedicatedDirOf(bot) === undefined) {
+      // §7.1 硬红线：共享用户主目录绝不动。pi 是例外形状——无 piAgentDir 时
+      // 其装备面是 WAO 命名空间的默认目录 ~/.pi/agent-wao-<botId>（per-bot，
+      // 非共享主目录，jail 已列为允许根，T2 评审 C1 同款判定）。
+      if (asset?.type === 'tool' && asset?.content?.kind === 'rtk' && provider !== 'dsh' && provider !== 'pi' && dedicatedDirOf(bot) === undefined) {
         errors.push('rtk 工具资产要求 bot 配置专属目录（claudeConfigDir/codexHome/piAgentDir 之一）——共享用户主目录绝不动用户自己的 settings/hooks');
       }
       return errors;
@@ -341,6 +580,21 @@ export function createMaterializer({ ports, dataDir, log }) {
       return '记忆落在共享 cwd，对同目录其他会话可见，建议配专属 config 目录（claudeConfigDir/codexHome/piAgentDir）';
     },
 
+    // §7.1/§7.2 工具资产常驻警示（agents 名册面）：rtk 绑定但二进制缺失
+    // （unavailable 态）、ripgrep 绑定但 rg 缺失（指引已注入但无效）。绑定
+    // 成功不受影响——这是「装备面」的注记，不是绑定面的拒绝。
+    toolWarnings(bot, plan = []) {
+      const out = [];
+      const toolEntries = (Array.isArray(plan) ? plan : []).filter((e) => e?.type === 'tool');
+      if (toolEntries.some((e) => e?.content?.kind === 'rtk') && !probeBin(rtkBin).ok) {
+        out.push('rtk 未安装：工具资产未装备（unavailable）——安装 rtk 后 POST rematerialize-assets 装备');
+      }
+      if (toolEntries.some((e) => e?.content?.kind === 'ripgrep') && !probeBin('rg').ok) {
+        out.push('rg 未安装：ripgrep 指引已注入但本机无效（brew install ripgrep）');
+      }
+      return out;
+    },
+
     // §3.7/§3.8 materialize: plan → jail → orphan-aware execute (atomic,
     // ordered, snapshot rollback) → manifest. Throws on failure (per-bot
     // isolation turns this into failed[] upstream); the manifest keeps the
@@ -350,7 +604,8 @@ export function createMaterializer({ ports, dataDir, log }) {
       const result = await planWrites(bot, plan);
       const writes = result?.writes ?? [];
       const notes = Array.isArray(result?.notes) ? result.notes : [];
-      const entries = Array.isArray(result?.entries) ? result.entries : [];
+      const entries = Array.isArray(result?.entries) ? result.entries.map((e) => structuredClone(e)) : [];
+      const tools = Array.isArray(result?.tools) ? result.tools.map((t) => structuredClone(t)) : [];
 
       const diskWrites = writes.filter((w) => w?.kind !== 'argv' && typeof w?.target === 'string');
       jailCheck(bot, diskWrites.map((w) => w.target));
@@ -372,12 +627,25 @@ export function createMaterializer({ ports, dataDir, log }) {
       // owned:false file rows are HOST files — never file-deleted; their
       // marker-section rows still get STRIPPED below (剥节保留其余内容).
       // hook-entry rows NEVER file-delete here — their host file survives and
-      // the entry leaves by precise-match delete (below, step 1b).
+      // the entry leaves by precise-match delete (below, step 1b). rtk-init
+      // rows (owned:false, the bot's whole config dir) unload through rtk
+      // uninstall (§7.1), never a file delete.
+      const activeRtkDirs = new Set(diskWrites
+        .filter((x) => x?.kind === 'rtk-init' && typeof x?.target === 'string')
+        .map((x) => resolve(x.target)));
       const stale = (oldManifest?.writes ?? []).filter((w) => w?.kind !== 'hook-entry'
         && typeof w?.path === 'string' && !newTargets.has(resolve(w.path))
-        && (w?.owned !== false || w?.kind === 'marker-section'));
+        && (w?.owned !== false || w?.kind === 'marker-section' || w?.kind === 'rtk-init'));
       const newEntryTexts = new Set(entries.map((e) => stableStringify(e?.entry)));
-      const staleEntries = (oldManifest?.entries ?? []).filter((e) => !newEntryTexts.has(stableStringify(e?.entry)));
+      // An rtk-written hook entry (via:'rtk', recorded by the install-time
+      // readback) is NOT planner-visible — while the rtk asset stays bound the
+      // step-3.5 rerun owns it (rtk init is idempotent); only an UNBOUND rtk
+      // leaves it stale (rtk uninstall / precise delete below).
+      const staleEntries = (oldManifest?.entries ?? []).filter((e) => {
+        if (newEntryTexts.has(stableStringify(e?.entry))) return false;
+        if (e?.via === 'rtk' && activeRtkDirs.has(resolve(dirname(e.file)))) return false;
+        return true;
+      });
 
       // §3.7.1/§3.7.3: full snapshot before the first mutation; reverse-restore on failure.
       const snapshots = new Map(); // target → Buffer|null (null = did not exist)
@@ -388,11 +656,20 @@ export function createMaterializer({ ports, dataDir, log }) {
       };
       const receipt = [];
       const applied = []; // {kind, target, ...} in execution order for rollback
+      const rtkHandledFiles = new Set(); // rtk uninstall 已自清的 hook 文件
       try {
         // 1. stale deletions (orphan/precise cleanup first). marker-section
         // rows are STRIPPED (§3.6 剥节保留其余内容), never file-deleted; the
         // file only goes when the stripped remainder is empty AND WAO-owned.
+        // rtk-init rows unload FIRST (rtk uninstall 先于条目精确删——成功即自清)。
         for (const w of stale) {
+          if (w.kind === 'rtk-init') {
+            if (rtkUninstall(bot, w, notes)) {
+              const hookFile = RTK_FLAVORS[w.flavor]?.hookFile;
+              if (hookFile != null) rtkHandledFiles.add(resolve(join(w.path, hookFile)));
+            }
+            continue;
+          }
           snap(w.path);
           const existing = readText(w.path);
           if (existing == null) continue;
@@ -427,8 +704,10 @@ export function createMaterializer({ ports, dataDir, log }) {
           applied.push({ kind: 'unlink', target: w.path });
         }
         // 1b. stale JSON entries: precise-match delete from their host files
-        // (§3.6: 不匹配 → warn-not-delete, never an index delete).
+        // (§3.6: 不匹配 → warn-not-delete, never an index delete). rtk-written
+        // entries whose rtk uninstall already succeeded are rtk-cleaned — skip.
         for (const e of staleEntries) {
+          if (e.via === 'rtk' && rtkHandledFiles.has(resolve(e.file))) continue;
           const text = readText(e.file);
           if (text == null) continue;
           let doc;
@@ -463,6 +742,13 @@ export function createMaterializer({ ports, dataDir, log }) {
           atomicWrite(w.target, `${JSON.stringify(next, null, 2)}\n`);
           receipt.push({ path: w.target, action: 'write' });
           applied.push({ kind: 'write', target: w.target });
+        }
+        // 3.5 rtk 装备（§7.1, W3 T3）: external-command writes — dry-run 采集
+        //     → §8.3 前缀校验 → 真跑 → 回读断言（or 回退路径/failed/unavailable）。
+        //     必须在标记节之前：rtk 向 CLAUDE.md/AGENTS.md 追加 @RTK.md 引用行，
+        //     先 rtk 后拼接节重建，产物才字节稳定（幂等锚）。
+        for (const w of diskWrites.filter((x) => x.kind === 'rtk-init')) {
+          rtkInit(bot, w, { snap, applied, receipt, notes, entriesOut: entries, toolsOut: tools });
         }
         // 4. marker sections last
         for (const w of diskWrites.filter((x) => x.kind === 'marker-section')) {
@@ -514,15 +800,21 @@ export function createMaterializer({ ports, dataDir, log }) {
           kind: w.kind,
           ...(w.for !== undefined ? { for: w.for } : {}),
           ...(w.appliesTo !== undefined ? { appliesTo: w.appliesTo } : {}),
+          // §7.1 rtk rows carry their equipment face (uninstall reads these).
+          ...(w.kind === 'rtk-init' ? { flavor: w.flavor, mode: tools.find((t) => t?.kind === 'rtk' && resolve(t?.target ?? '') === resolve(w.target))?.mode ?? 'rtk-init' } : {}),
         })),
         entries,
+        // §7.1/§7.2 工具资产装备状态（三态状态机 + ripgrep 预检结论）。
+        ...(tools.length > 0 ? { tools } : {}),
         lastMaterializedAt: Date.now(),
         lastResult: 'ok',
       });
       // dsh .wao/ root cleanup (§3.6): an emptied WAO namespace dir goes away.
       // The climb stops at any allowed root — never past the bot's own cwd.
       const stopRoots = allowedRootsOf(bot);
-      for (const w of stale) cleanupEmptyParents(w.path, stopRoots);
+      for (const w of stale) {
+        if (w.kind !== 'rtk-init') cleanupEmptyParents(w.path, stopRoots);
+      }
       return { writes: receipt, notes };
     },
 
@@ -535,8 +827,23 @@ export function createMaterializer({ ports, dataDir, log }) {
       if (manifest == null) return { removed: false, skipped: 'no-manifest' };
       let removedAny = false;
       const warnings = [];
-      // JSON 条目型 first (settings.json must survive as a file)
+      // §7.1 rtk FIRST (best-effort): rtk uninstall 自清 hook 条目 + RTK.md；
+      // 成功即 handled——下方条目循环跳过对应 via:'rtk' 条目（避免「已变化」
+      // 误警）；rtk 缺失/非零 → 条目精确匹配删兜底。
+      const rtkNotes = [];
+      const rtkHandledFiles = new Set();
+      for (const w of manifest.writes ?? []) {
+        if (w?.kind !== 'rtk-init') continue;
+        if (rtkUninstall(bot, w, rtkNotes)) {
+          const hookFile = RTK_FLAVORS[w.flavor]?.hookFile;
+          if (hookFile != null) rtkHandledFiles.add(resolve(join(w.path, hookFile)));
+          removedAny = true;
+        }
+      }
+      for (const n of rtkNotes) lg.info?.(`materializer: removeAssets rtk bot ${bot.id}: ${n.detail}`);
+      // JSON 条目型 next (settings.json must survive as a file)
       for (const e of manifest.entries ?? []) {
+        if (e.via === 'rtk' && rtkHandledFiles.has(resolve(e.file))) continue;
         const text = readText(e.file);
         if (text == null) continue;
         let doc;
@@ -550,6 +857,7 @@ export function createMaterializer({ ports, dataDir, log }) {
       for (const w of [...(manifest.writes ?? [])].reverse()) {
         if (w.kind === 'hook-entry') continue; // entries loop above owns these (precise delete, never file-delete)
         if (w.kind === 'argv') continue;
+        if (w.kind === 'rtk-init') continue; // rtk pre-pass above owns these
         // owned:false = 宿主文件（写入时已存在，owned 真值）——卸载不整删；
         // marker-section 走下方剥节路径（owned 只决定剥空后是否删文件）。
         if (w.owned === false && w.kind !== 'marker-section') {
@@ -592,7 +900,10 @@ export function createMaterializer({ ports, dataDir, log }) {
       const drift = [];
       const orphans = [];
       for (const w of result.writes ?? []) {
-        if (w?.kind === 'argv' || typeof w?.target !== 'string') continue;
+        // rtk-init: the products belong to the rtk binary (no deterministic
+        // rebuild to diff against) — verify skips it, §7.1 state rides
+        // manifest.tools instead.
+        if (w?.kind === 'argv' || w?.kind === 'rtk-init' || typeof w?.target !== 'string') continue;
         const actual = readText(w.target);
         let expected;
         if (w.kind === 'file-create') expected = String(w.content ?? '');

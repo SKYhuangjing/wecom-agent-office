@@ -7,6 +7,7 @@
 // providerConfig block), semantic validate, materializeConfig hook and the
 // code→中文 describeError copy (前身 bridge.js _friendly/_describeFailure).
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { createRunner } from './runner.js';
 import { buildBotPatch, profilePatchPath, writeBotProfile, removeProfile } from './profiles.js';
 
@@ -39,6 +40,18 @@ export const RIPGREP_GUIDANCE = [
   '代码检索一律使用 rg（ripgrep）而非 grep/find。示例：rg -t js \'pattern\'、rg -n "text" src/。',
   'rg 未安装时先执行：brew install ripgrep。',
 ].join('\n');
+
+// §7.2 ripgrep 预检（spawn 探测 3s，不失败绑定）：结论随 tools 进 manifest，
+// 缺失时 notes 指引安装（personaPrefix 指引节仍注入——装上即生效）。
+const probeRg = () => {
+  try {
+    const r = spawnSync('rg', ['--version'], { timeout: 3000, encoding: 'utf8' });
+    if (r.error != null || r.status !== 0) return { available: false, version: null };
+    return { available: true, version: (r.stdout ?? '').trim().split('\n')[0] || null };
+  } catch {
+    return { available: false, version: null };
+  }
+};
 
 // §3.3 单一组合器 (P0-4): the personaPrefix line is generated ONLY here —
 // `providerConfig.prompt`（运营者人设，永远在前）→ plan 资产节（skill 索引 /
@@ -209,7 +222,15 @@ export default {
           }),
         }];
         const notes = [];
+        const tools = [];
         for (const entry of plan ?? []) {
+          if (entry.type === 'tool' && entry.content?.kind === 'ripgrep') {
+            const rg = probeRg();
+            tools.push({ assetId: entry.assetId, kind: 'ripgrep', state: rg.available ? 'available' : 'unavailable', version: rg.version });
+            if (!rg.available) {
+              notes.push({ assetId: entry.assetId, detail: 'rg 未安装：ripgrep 指引已注入但本机无效（预检不失败）——brew install ripgrep 后生效' });
+            }
+          }
           if (entry.type !== 'skill') continue;
           const name = entry.content?.name ?? entry.name;
           writes.push({
@@ -221,7 +242,7 @@ export default {
           notes.push({ assetId: entry.assetId, detail: `技能 ${name} → .wao/skills/${name}/SKILL.md（WAO 命名空间目录）` });
         }
         log?.info?.(`provider-dsh: asset plan for ${bot.id} → ${writes.length} writes（personaPrefix 经单一组合器重建）`);
-        return { writes, notes, entries: [] };
+        return { writes, notes, entries: [], tools };
       },
 
       // materializeConfig's counterpart: DELETE /api/bots/:id takes the bot's

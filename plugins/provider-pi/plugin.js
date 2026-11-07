@@ -86,10 +86,16 @@ export function stableJson(value) {
   return JSON.stringify(value);
 }
 
-const hasBin = (name) => {
+// §7.2 ripgrep 预检（spawn 探测 3s，不失败绑定）：结论随 tools 进 manifest，
+// 缺失时 notes 指引安装（指引段本身仍注入——装上即生效）。
+const probeRg = () => {
   try {
-    return spawnSync(name, ['--version'], { timeout: 3000 }).error == null;
-  } catch { return false; }
+    const r = spawnSync('rg', ['--version'], { timeout: 3000, encoding: 'utf8' });
+    if (r.error != null || r.status !== 0) return { available: false, version: null };
+    return { available: true, version: (r.stdout ?? '').trim().split('\n')[0] || null };
+  } catch {
+    return { available: false, version: null };
+  }
 };
 
 export default {
@@ -248,6 +254,7 @@ export default {
         const customDir = typeof pc.piAgentDir === 'string' && pc.piAgentDir !== '';
         const writes = [];
         const notes = [];
+        const tools = [];
         for (const entry of plan ?? []) {
           switch (entry.type) {
             case 'skill': {
@@ -272,10 +279,18 @@ export default {
             case 'tool':
               if (entry.content?.kind === 'ripgrep') {
                 writes.push({ kind: 'argv', flags: ['--append-system-prompt', [RIPGREP_GUIDANCE, ...(entry.content.options?.extraHints ? [String(entry.content.options.extraHints)] : [])].join('\n')], for: entry.assetId });
+                const rg = probeRg();
+                tools.push({ assetId: entry.assetId, kind: 'ripgrep', state: rg.available ? 'available' : 'unavailable', version: rg.version });
+                if (!rg.available) {
+                  notes.push({ assetId: entry.assetId, detail: 'rg 未安装：ripgrep 指引已注入但本机无效（预检不失败）——brew install ripgrep 后生效' });
+                }
               } else if (entry.content?.kind === 'rtk') {
-                notes.push(hasBin('rtk')
-                  ? { assetId: entry.assetId, detail: 'rtk 已安装但 hook 形状待 T3 实证——本轮未写 hook' }
-                  : { assetId: entry.assetId, detail: 'rtk 未安装（unavailable）：brew install rtk 后经 rematerialize-assets 装备' });
+                // §7.1 (W3 T3): plan the rtk-init write — core-engine's
+                // materializer executes（V5 实证 rtk 1.1.0 `--agent pi` 尊重
+                // PI_CODING_AGENT_DIR：extensions/rtk.ts + .rtk-agents）。目标
+                // 取 agentDir（自定义或 WAO 默认目录——pi 的装备面本就是 per-bot
+                // 命名空间，非共享主目录，checkBind 同判）。
+                writes.push({ kind: 'rtk-init', target: agentDir, flavor: 'pi', for: entry.assetId, owned: false });
               }
               break;
             default:
@@ -298,7 +313,7 @@ export default {
           notes.push({ detail: `MCP → ${target} 整文件重写（x-wao-managed 注记，V9 已验证 pi 容忍且重写保留；0600）` });
         }
         log?.info?.(`provider-pi: asset plan for ${bot.id} → ${writes.length} writes`);
-        return { writes, notes, entries: [] };
+        return { writes, notes, entries: [], tools };
       },
 
       // runResult → human sentence for logs / the diagnostics page / the

@@ -6,6 +6,9 @@
 
 ### Added
 
+- rtk 计划面 + ripgrep 预检（W3 T3，§7.1/§7.2）：rtk→`{kind:'rtk-init', flavor:'claude',
+  target:$CLAUDE_CONFIG_DIR}`（V5 实证 rtk 1.1.0 尊重重定向；无 claudeConfigDir 的 bot 绑定面已拒）；
+  ripgrep→预检（rg spawn 3s 探测，结论进计划返回值 `tools`，缺失=note 指引安装，预检不失败）。
 - 资产面（W3 T2，§3.3 claude 列）：`materializeAssets` 纯计划钩子——skills→
   `$CLAUDE_CONFIG_DIR/skills`（V1 实证重定向装载）/回退 `<cwd>/.claude/skills`；memory→CLAUDE.md
   标记节；mcp→`data/assets/<botId>/claude-mcp.json` 单文件 owned 0600（`${VAR}` 引用透传，V8 实证

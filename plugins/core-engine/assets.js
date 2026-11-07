@@ -522,13 +522,15 @@ export function noopMaterializer() {
       if (provider === 'dsh' && asset?.type === 'tool' && asset?.content?.kind === 'rtk') {
         errors.push('dsh 岗位不支持 rtk 工具资产（rtk 支持列表不含 dsh）');
       }
-      if (asset?.type === 'tool' && asset?.content?.kind === 'rtk' && provider !== 'dsh' && dedicatedDirOf(bot) === undefined) {
+      // §7.1 硬红线同真物化器：pi 的装备面含 WAO 默认目录（per-bot 命名空间）。
+      if (asset?.type === 'tool' && asset?.content?.kind === 'rtk' && provider !== 'dsh' && provider !== 'pi' && dedicatedDirOf(bot) === undefined) {
         errors.push('rtk 工具资产要求 bot 配置专属目录（claudeConfigDir/codexHome/piAgentDir 之一）——共享用户主目录绝不动用户自己的 settings/hooks');
       }
       return errors;
     },
     detectForeignTargets() { return []; },
     detectFileConflicts() { return []; },
+    toolWarnings() { return []; },
     memoryWarning(bot) {
       if (bot?.provider === 'dsh') return null; // memory rides personaPrefix, not cwd files (§3.3)
       if (dedicatedDirOf(bot) !== undefined) return null;
@@ -552,10 +554,18 @@ async function rematerializeBot(state, bot) {
   const { plan } = buildPlan(state.assetsDoc.assets, bot);
   try {
     const r = await state.materializer.materialize(bot, plan, { log: state.log });
-    return { botId: bot.id, ok: true, writes: Array.isArray(r?.writes) ? r.writes : [], skipped: r?.skipped };
+    return {
+      botId: bot.id,
+      ok: true,
+      writes: Array.isArray(r?.writes) ? r.writes : [],
+      skipped: r?.skipped,
+      // §7.1/§7.2: equipment notes (rtk unavailable / rg 未装备指引) ride the
+      // receipts — bind/unbind/rematerialize all surface them.
+      notes: Array.isArray(r?.notes) ? r.notes : [],
+    };
   } catch (err) {
     state.log?.warn?.(`core-engine: asset rematerialize failed for ${bot.id}: ${err?.message ?? err}`);
-    return { botId: bot.id, ok: false, writes: [], error: err?.message ?? String(err) };
+    return { botId: bot.id, ok: false, writes: [], notes: [], error: err?.message ?? String(err) };
   }
 }
 
@@ -563,8 +573,9 @@ const receiptOf = (results) => {
   const ok = results.filter((r) => r.ok);
   const failed = results.filter((r) => !r.ok).map(({ botId, error }) => ({ botId, error }));
   const writes = ok.flatMap((r) => r.writes);
+  const notes = ok.flatMap((r) => r.notes ?? []);
   const skipped = ok.some((r) => r.skipped) && failed.length === 0 ? 'not-equipped' : undefined;
-  return { rematerialized: ok.map((r) => r.botId), failed, writes, ...(skipped ? { skipped } : {}) };
+  return { rematerialized: ok.map((r) => r.botId), failed, writes, ...(notes.length > 0 ? { notes } : {}), ...(skipped ? { skipped } : {}) };
 };
 
 // Fan-out tail shared by PATCH/DELETE asset ops (§3.2): every listed bot

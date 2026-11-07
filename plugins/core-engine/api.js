@@ -267,11 +267,18 @@ const drainBotOf = async (state, botId) => {
 const MEMORY_SHARED_CWD_WARNING = 'memory 共享 cwd：跨会话记忆可能被同目录其他会话互见';
 
 const assetWarningsOf = (state, bot) => {
-  const warn = state.materializer?.memoryWarning;
-  if (typeof warn !== 'function') return [];
   const { plan } = buildPlan(state.assetsDoc.assets, bot);
-  if (!plan.some((e) => e.type === 'memory')) return [];
-  return warn(bot) ? [MEMORY_SHARED_CWD_WARNING] : [];
+  const out = [];
+  const warn = state.materializer?.memoryWarning;
+  if (typeof warn === 'function' && plan.some((e) => e.type === 'memory') && warn(bot)) {
+    out.push(MEMORY_SHARED_CWD_WARNING);
+  }
+  // §7.1/§7.2 (W3 T3): tool-asset equipment warnings — rtk bound but the
+  // binary is missing (unavailable), ripgrep bound but rg is missing. The
+  // binding itself stands; this is the equipment-face annotation.
+  const toolWarn = state.materializer?.toolWarnings;
+  if (typeof toolWarn === 'function') out.push(...toolWarn(bot, plan));
+  return out;
 };
 
 // One roster row — shared by GET /api/agents, companyOps.agents and the
