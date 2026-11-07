@@ -107,3 +107,15 @@
 
 **交接 Do**：改 UI 先截图；升级用 kickstart；生产问题先看 /api/agents 的 reason 再查日志；多 bot 不共 cwd。
 **Don't**：不跑第二实例（端口+锁双保险会拒，但企微单连接互踢）；不用 reload 当升级；不删 consumedSeq 相关测试。
+
+---
+
+## v2 能力迭代（2026-11-07 交付）
+
+**W1 MCP 网关**（生产已上线）：`POST http://127.0.0.1:8792/mcp`（协议子集自研零依赖；initialize→Mcp-Session-Id→tools）；**19 工具**=13 公司运营（名册/入职/调岗/离职/调休/岗前测试/广播/部门启停/工单/日志/时间线/状态）+6 资产（create/update/delete/bind/unbind_asset+rematerialize，⚠️危险级）。三家 CLI 接入样例 README §3.2；ZCode 快捷 skill=`docs/skills/wao-company.md`（装 ~/.zcode/skills/）。安全分级：Agent 经 MCP 建的资产仅可私发绑定；shared 资产改动 Agent 面只读；真 CLI 验收=claude/codex 实际操作过公司（test/mcp/real-accept.sh 可重跑）。重启后 Agent 客户端自动重连（-32002→initialize）。
+
+**W2 TUI 运维仪表盘**：`node src/index.js tui`（连本机服务）。打卡钟顶栏+员工卡（实时进度/⚠资产警示/🛠装备计数）+日志尾随（l 半屏）；键位 ↑↓选择/空格=调休返岗/t=岗前测试/b=广播（三步确认）/n=简版入职/e=开浏览器/q 退出。危险操作 y 确认；终端注入已消杀（ESC/OSC 清洗）。README §3 键位表。
+
+**W3 资产系统**（docs/DESIGN-ASSETS.md 权威，双评审定稿）：五类资产（**skill/memory/mcp/prompt/tool**）+配发（shared 跟源）/私发（exclusive 快照）双模式；物化管线四家 provider（dsh=profile 组合器/claude=CLAUDE.md+skills+mcp 单文件/codex=AGENTS.md+config.toml/pi=agentDir+旗标）；**RTK 实测单轮 -18% token**（rtk 1.1.0 已装 ~/.local/bin，三 flavor）；ripgrep 指引资产。UI=Web「资产科」双视图+入职向导配装备步；doctor 含漂移检查（`!` 告警级）；修复=POST /api/bots/:id/rematerialize-assets。mcp 资产 env/headers 值永不回显（__MASKED__ 按位置，留掩码=不改）。data/ 新增：assets.json（0600）+ assets/<botId>/manifest.json。
+
+**未验证项**：codex/pi 资产面真机消费（契约套件覆盖）；TUI 真终端视觉（纯函数快照锁定）；多轮长会话累计 rtk 节省。
