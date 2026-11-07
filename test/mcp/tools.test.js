@@ -543,6 +543,34 @@ test('asset tools (W3 T1): grading enforced, danger copy in receipts, masking on
   await call('offboard', { botId: 'am1' });
 });
 
+test('agents-face asset warning rides list_employees (W3 T1 review): memory on a shared cwd', async () => {
+  // am2 has no dedicated config dir (providerConfig: cwd only)
+  await call('hire', { bot: { ...BOT_M1, id: 'am2', providerConfig: { cwd: '/tmp', mode: 'a' } } });
+  const created = await call('create_asset', { asset: { type: 'memory', name: 'agent-notes', content: { notes: ['备注一'] } } });
+  assert.equal(created.isError, undefined);
+  const asset = created.structuredContent.asset;
+
+  const bound = await call('bind_asset', { botId: 'am2', assetId: asset.id, mode: 'exclusive' });
+  assert.equal(bound.isError, undefined);
+
+  // the roster text AND structuredContent both surface the warning
+  const roster = await call('list_employees');
+  const am2 = roster.structuredContent.agents.find((a) => a.id === 'am2');
+  assert.deepEqual(am2.assetWarnings, ['memory 共享 cwd：跨会话记忆可能被同目录其他会话互见']);
+  assert.match(roster.content[0].text, /资产警示：memory 共享 cwd：跨会话记忆可能被同目录其他会话互见/);
+
+  // the REST face (/api/agents) agrees — one botRow, two faces
+  const restAgents = await (await fetch(`${base()}/api/agents`)).json();
+  assert.deepEqual(restAgents.agents.find((a) => a.id === 'am2').assetWarnings, ['memory 共享 cwd：跨会话记忆可能被同目录其他会话互见']);
+
+  // unbind clears the flag; full cleanup
+  await call('unbind_asset', { botId: 'am2', assetId: asset.id });
+  const after = await call('list_employees');
+  assert.deepEqual(after.structuredContent.agents.find((a) => a.id === 'am2').assetWarnings, []);
+  await call('delete_asset', { assetId: asset.id });
+  await call('offboard', { botId: 'am2' });
+});
+
 test('secret red line: no fake secret literal appears in ANY captured response body', async () => {
   assert.ok(capturedBodies.length >= 20, `the journey captured a meaningful sample (${capturedBodies.length} bodies)`);
   for (const secret of [SECRET_PW, SECRET_KEY, SECRET_TOKEN, SECRET_MCP_ENV]) {

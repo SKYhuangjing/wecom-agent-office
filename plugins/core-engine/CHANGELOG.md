@@ -27,6 +27,11 @@
   delete_asset/bind_asset/unbind_asset/rematerialize（危险级带后果确认文案）。
 - 轻量重 attach（plugin.js refreshRunner）：绑定/资产变化仅换 runners 表项，不 drain
   不重建 adapter，在跑 run 持旧 runner 跑完（§3.2）。
+- W3 T1 评审加固：agents 名册行回显 `assetWarnings`（memory 绑定且无专属 config 目录的
+  bot 标「共享 cwd」警示，判定源=materializer.memoryWarning，REST 与 list_employees 同步）；
+  五类 content 闭键（未知键 400「unexpected key」，mcp server 按 stdio/http 形态、
+  ripgrep options 同闭）；bind/unbind 物化失败不再 refreshRunner（与扇出统一为仅成功刷新，
+  runner 跟注册表真相）。
 - `companyOps` 服务（W1 T2）：api.js 各路由的业务核心抽为同文件 `*Op` 函数并经
   `companyOps(state)` 发布到 services 容器（含 `sanitize` 与只读 `botDetail` 聚合），供
   mcp-gateway 插件按次取用——REST 与 MCP 工具共用同一函数源，HTTP 行为零变化。

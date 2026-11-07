@@ -12,7 +12,7 @@
 // exclusive-only Agent assets — while REST stays the operator face.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -136,6 +136,8 @@ test('POST /api/assets: creates with origin:operator, server-set fields refused,
   const onDisk = loadAssets(join(dataDir, 'assets.json'));
   assert.equal(onDisk.assets.length, 1);
   assert.equal(onDisk.assets[0].name, 'wao-company');
+  // 0600 pin (§8.4): the registry lands owner-only, like bots.json
+  assert.equal(statSync(join(dataDir, 'assets.json')).mode & 0o777, 0o600);
 
   for (const field of ['id', 'origin', 'version', 'createdAt', 'updatedAt']) {
     const bad = await post('/api/assets', { ...PROMPT, [field]: 'x' });
@@ -351,4 +353,32 @@ test('dual-source: companyOps enforces the §8.1 MCP write-face grading; REST st
   const gone = await ops.deleteAsset(agentAsset.id);
   assert.equal(gone.ok, true);
   assert.equal(gone.removedBindings, 0);
+});
+
+test('agents-face asset warnings (W3 T1 review): memory on a shared cwd flags the roster row; a dedicated dir clears it', async () => {
+  const { asset } = await (await post('/api/assets', { type: 'memory', name: 'mem-warn', content: { notes: ['n'] } })).json();
+  // ab1 has no dedicated config dir → the roster row carries the short-form warning
+  assert.equal((await post('/api/bots/ab1/assets', { assetId: asset.id, mode: 'shared' })).status, 200);
+  const rows = (await (await get('/api/agents')).json()).agents;
+  assert.deepEqual(rows.find((a) => a.id === 'ab1').assetWarnings, ['memory 共享 cwd：跨会话记忆可能被同目录其他会话互见']);
+  assert.deepEqual(rows.find((a) => a.id === 'ab2').assetWarnings, [], 'unbound bot stays clean');
+  // ab2 gains a dedicated dir (§7.3) → memoryWarning decision source says safe
+  assert.equal((await patch('/api/bots/ab2', { providerConfig: { cwd: '/tmp', claudeConfigDir: '/tmp/ab2-claude' } })).status, 200);
+  assert.equal((await post('/api/bots/ab2/assets', { assetId: asset.id, mode: 'shared' })).status, 200);
+  const after = (await (await get('/api/agents')).json()).agents;
+  assert.equal(after.find((a) => a.id === 'ab1').assetWarnings.length, 1);
+  assert.deepEqual(after.find((a) => a.id === 'ab2').assetWarnings, [], 'dedicated config dir isolates memory (§7.3)');
+  // unbind clears the flag
+  assert.equal((await del(`/api/bots/ab1/assets/${asset.id}`)).status, 200);
+  assert.deepEqual((await (await get('/api/agents')).json()).agents.find((a) => a.id === 'ab1').assetWarnings, []);
+  assert.equal((await del(`/api/bots/ab2/assets/${asset.id}`)).status, 200);
+});
+
+test('closed content schema over HTTP: stray keys 400 with「unexpected key」copy (W3 T1 review)', async () => {
+  const r = await post('/api/assets', { type: 'mcp', name: 'foreign-key', content: { servers: { a: { command: 'node', oops: 1 } } } });
+  assert.equal(r.status, 400);
+  assert.ok((await r.json()).errors.some((e) => /servers\.a\.oops：unexpected key（stdio 形态仅接受 command\/args\/env）/.test(e)));
+  const content = await post('/api/assets', { type: 'prompt', name: 'stray-key', content: { text: 'x', lang: 'zh' } });
+  assert.equal(content.status, 400);
+  assert.ok((await content.json()).errors.some((e) => /content\.lang：unexpected key（prompt 仅接受 text）/.test(e)));
 });

@@ -10,7 +10,7 @@
 // and the bind/unbind validation chain with a synthetic state.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -36,6 +36,8 @@ test('loadAssets: missing / corrupt file → empty registry; valid file round-tr
   saveAssets(file, doc);
   assert.deepEqual(loadAssets(file), doc);
   assert.equal(JSON.parse(readFileSync(file, 'utf8')).assets[0].name, 'style');
+  // 0600 pin (§8.4): atomicWrite carries owner-only mode onto the registry
+  assert.equal(statSync(file).mode & 0o777, 0o600, 'assets.json persists 0600 (owner-only, same discipline as bots.json)');
 });
 
 test('newAssetId: ast- prefix, and never collides with the given existing ids', () => {
@@ -187,6 +189,35 @@ test('tool schema: kind whitelist rtk|ripgrep; rtk options empty; ripgrep extraH
   assert.ok(validateAsset({ type: 'tool', name: 'x', content: {} }).some((e) => /kind/));
   assert.ok(validateAsset({ type: 'tool', name: 'x', content: { kind: 'rtk', options: { edition: 'e' } } }).some((e) => /options/));
   assert.ok(validateAsset({ type: 'tool', name: 'x', content: { kind: 'ripgrep', options: { extraHints: 'x'.repeat(1025) } } }).some((e) => /extraHints/));
+});
+
+test('closed content schema: unknown keys rejected for all five types, mcp servers close per form (W3 T1 review)', () => {
+  // content-level closure — one stray key per type must fail, not vanish
+  const cases = [
+    { type: 'skill', name: 's', content: { name: 's', body: 'x', scripts: [] } },
+    { type: 'memory', name: 'm', content: { notes: [], pinned: true } },
+    { type: 'mcp', name: 'c', content: { servers: { a: { command: 'node' } }, 'x-wao': 1 } },
+    { type: 'prompt', name: 'p', content: { text: 'x', lang: 'zh' } },
+    { type: 'tool', name: 't', content: { kind: 'rtk', options: {}, edition: 'e' } },
+  ];
+  for (const asset of cases) {
+    const errors = validateAsset(asset);
+    assert.ok(errors.some((e) => /unexpected key/.test(e)), `${asset.type}: ${errors.join(';')}`);
+  }
+  // the closed shapes themselves stay clean
+  assert.deepEqual(validateAsset({ type: 'prompt', name: 'p', content: { text: 'x' } }), []);
+  // mcp server-level closure per form
+  const stdio = validateAsset({ type: 'mcp', name: 'c1', content: { servers: { a: { command: 'node', cwd: '/x' } } } });
+  assert.ok(stdio.some((e) => /servers\.a\.cwd：unexpected key（stdio 形态仅接受 command\/args\/env）/.test(e)), stdio.join(';'));
+  const http = validateAsset({ type: 'mcp', name: 'c2', content: { servers: { b: { type: 'http', url: 'https://x.example/', env: { A: '1' } } } } });
+  assert.ok(http.some((e) => /servers\.b\.env：unexpected key（http 形态仅接受 type\/url\/headers）/.test(e)), http.join(';'));
+  // stdio+type keeps its dedicated copy (not doubled by the generic one)
+  const stdioType = validateAsset({ type: 'mcp', name: 'c3', content: { servers: { a: { command: 'node', type: 'http' } } } });
+  assert.ok(stdioType.some((e) => /stdio 形态不接受 type 字段/.test(e)), stdioType.join(';'));
+  assert.equal(stdioType.filter((e) => /unexpected key/.test(e)).length, 0, 'type is not double-reported');
+  // ripgrep options closure (rtk is covered by the empty-options rule above)
+  const rg = validateAsset({ type: 'tool', name: 't2', content: { kind: 'ripgrep', options: { extraHints: 'x', flags: '-i' } } });
+  assert.ok(rg.some((e) => /options\.flags：unexpected key（ripgrep 仅接受 extraHints）/.test(e)), rg.join(';'));
 });
 
 // —— position masking (§8.1 P1: env/headers values masked regardless of key) —
@@ -499,4 +530,24 @@ test('unbindAsset: removes the binding, reports exclusive content loss; unknown 
   assert.equal(shared.removed, undefined);
   const r2 = await unbindAsset(state, 'b1', 'ast-s1');
   assert.equal(r2.removed.exclusiveContentLost, false);
+});
+
+test('bind/unbind: runner refresh ONLY after a successful materialize — runner follows registry truth (W3 T1 review)', async () => {
+  const state = mkState({ bots: [{ ...BOT }], assets: [SKILL_A] });
+  const refreshed = [];
+  state.refreshRunner = (bot) => { refreshed.push(bot.id); return true; };
+  // materialize throws → binding persists (registry ahead of disk), but NO refresh
+  state.materializer = { ...noopMaterializer(), materialize: async () => { throw new Error('disk full'); } };
+  const bound = await bindAsset(state, 'b1', { assetId: 'ast-s1', mode: 'shared' });
+  assert.deepEqual(bound.failed, [{ botId: 'b1', error: 'disk full' }]);
+  assert.deepEqual(refreshed, [], 'no runner refresh while disk lags the registry');
+  // same refusal on the unbind tail
+  const un = await unbindAsset(state, 'b1', 'ast-s1');
+  assert.deepEqual(un.failed, [{ botId: 'b1', error: 'disk full' }]);
+  assert.deepEqual(refreshed, [], 'cleanup failure also keeps the last-good runner');
+  // materialize succeeds → refresh happens exactly once per op
+  state.materializer = noopMaterializer();
+  await bindAsset(state, 'b1', { assetId: 'ast-s1', mode: 'shared' });
+  await unbindAsset(state, 'b1', 'ast-s1');
+  assert.deepEqual(refreshed, ['b1', 'b1'], 'successful rematerializes refresh the runner');
 });

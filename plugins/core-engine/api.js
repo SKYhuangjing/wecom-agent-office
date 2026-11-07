@@ -7,7 +7,7 @@
 // §8 — 响应永不回显 secret.
 import { saveBots, validateBot } from './bots.js';
 import {
-  bindingSummary, bindAsset, maskAsset, newAssetId, rematerializeBots,
+  bindingSummary, bindAsset, buildPlan, maskAsset, newAssetId, rematerializeBots,
   restoreMaskedContent, saveAssets, unbindAsset, validateAsset,
 } from './assets.js';
 import { DRAIN_REFUSAL_TEXT } from './engine.js';
@@ -252,6 +252,24 @@ const drainBotOf = async (state, botId) => {
 // MCP tools), zero HTTP self-calls. HTTP behavior is byte-identical: same
 // bodies, same error statuses/messages, same ordering.
 
+// Agents-face asset warnings (W3 T1 review, §7.3): a memory-bound bot without
+// a dedicated config dir keeps its notes in the shared cwd's project domain —
+// visible to every other session opened in that directory (the bind receipt
+// carries the long-form advisory; this is the roster's standing flag). The
+// DECISION rides state.materializer.memoryWarning — the same hook bindAsset
+// consults, so T2's real materializer moves both faces together. Bindings
+// count only as the EFFECTIVE plan: a shadowed shared entry or a dangling
+// binding never materializes, so it must not warn either.
+const MEMORY_SHARED_CWD_WARNING = 'memory 共享 cwd：跨会话记忆可能被同目录其他会话互见';
+
+const assetWarningsOf = (state, bot) => {
+  const warn = state.materializer?.memoryWarning;
+  if (typeof warn !== 'function') return [];
+  const { plan } = buildPlan(state.assetsDoc.assets, bot);
+  if (!plan.some((e) => e.type === 'memory')) return [];
+  return warn(bot) ? [MEMORY_SHARED_CWD_WARNING] : [];
+};
+
 // One roster row — shared by GET /api/agents, companyOps.agents and the
 // get_employee tool aggregate (single extraction point so the three cannot
 // drift).
@@ -285,6 +303,7 @@ function botRow(state, bot) {
     reason: state.offlineReason(bot.id) ?? (chanStopped ? (chan.lastError ?? 'channel stopped') : null),
     channelState: chan == null ? null : { state: chan.state ?? null, lastError: chan.lastError ?? null },
     providerMissing,
+    assetWarnings: assetWarningsOf(state, bot),
   };
 }
 

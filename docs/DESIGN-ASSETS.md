@@ -28,6 +28,8 @@
 | P1-13 | skill 物化外来守卫：目标存在无 `x-wao-asset` 注记→拒绑 400 指名路径 | §2.3 / §3.6 |
 | P1-14 | P2 包：manifest 持久化 `data/assets/<botId>/manifest.json`；agents 加 `lastMaterializedAt`/`lastResult`；UI 词表定死「配发/私发」（API 映射行）；memory 同 cwd 绑定告警；bot prompt 在前资产在后；`GET /api/assets/:id`；§7.1 注记弃 PATH-shim；sse/ws 拒绝文案「v1 仅 stdio/http」；标记 `:v1` 版本段；§12 补 eager 成立依据 | §3.8 / §8.1 / §6 / §7.1 / §7.3 / §3.3 / §3.4 / §4.2 / §12 |
 
+**rev.2 实现勘误（2026-11-07，W3 T1 评审落地）**：§8.1 绑定面按 T1 实现形状改专用端点 `POST/DELETE /api/bots/:id/assets`（bot POST/PATCH 直写 `assets` 拒绝），行序调和为「校验→绑定落库→物化（失败不回滚）→仅成功轻量重 attach」；五类 content 未知键拒绝（closed schema，mcp server 亦按形态闭键）；agents 名册面回显 `assetWarnings`（memory 共享 cwd 警示，判定源同 §7.3 memoryWarning）。
+
 ### 目标（W3）
 
 1. **五类资产**：`skill | memory | mcp | prompt | tool`，统一注册表 `data/assets.json`，统一绑定模型（bot × 资产 × 共享/独享）。
@@ -477,7 +479,7 @@ doctor 漂移比对（§8.1）、pi 外来文件判据回退（V9 不容忍时�
 |---|---|
 | `GET /api/assets` / `GET /api/assets/:id` | 清单/单查（type 徽章数据、绑定数、version；**mcp env/headers 值按位置→`__MASKED__`**，见下） |
 | `POST /api/assets` / `PATCH /api/assets/:id` / `DELETE /api/assets/:id` | CRUD；PATCH 触发 shared 重物化扇出（§3.2：per-bot 隔离，回执 `{rematerialized:[], failed:[]}`）；DELETE 回执 `{removedBindings, keptExclusive, rematerialized:[], failed:[]}` |
-| `PATCH /api/bots/:id`（assets 段） | 绑定/卸载/模式切换（走 §3.2 资产路径：校验→物化→写清单→轻量重 attach）；memory 绑定的共享 cwd `warning` 见 §7.3 |
+| `POST /api/bots/:id/assets` / `DELETE /api/bots/:id/assets/:assetId` | 绑定/解绑专用校验面（bot POST/PATCH 直写 `assets` 一律 400 拒绝——绑定变更必须走本面的 §2.3 校验链，T1 实现形状）。行序（本表调和 §3.2 首行）：校验→**绑定落库存盘**（bots.json 即绑定库，注册表先于盘面）→物化（失败入 `failed[]` 不回滚，per-bot 隔离同 §3.2 扇出）→**仅成功**轻量重 attach（runner 跟注册表真相，失败保上一好 runner，重试走 rematerialize）；memory 绑定的共享 cwd `warning` 见 §7.3（agents 名册面同步回显 `assetWarnings`） |
 | `POST /api/bots/:id/rematerialize-assets` | 单 bot 强制重物化（校验→materializeAssets→轻量重 attach）。**确定性序列化（§3.5）+孤儿清理（§3.4）使其=安全的自动修复路径**：drift 归零、幂等可重试；§3.2 扇出 `failed[]` 的 bot 用它重试；回执 `{writes, notes, lastMaterializedAt, lastResult}` |
 | `GET /api/bots` / `GET /api/agents` | 绑定摘要回显（§2.2）；agents 加物化健康标注（回验漂移/工具状态/**扇出失败**）与 **`lastMaterializedAt` / `lastResult`**（读 manifest，§3.8） |
 

@@ -145,6 +145,7 @@ const validateMcpServers = (servers, errors) => {
     }
     if (hasCommand) {
       if (type !== undefined) errors.push(`content.servers.${serverId}：stdio 形态不接受 type 字段`);
+      rejectUnknownKeys(server, `content.servers.${serverId}`, MCP_STDIO_KEYS, 'stdio 形态仅接受 command/args/env', errors);
       checkText(server.command, `content.servers.${serverId}.command`, { required: true }, errors);
       if (server.args !== undefined) {
         if (!Array.isArray(server.args)) errors.push(`content.servers.${serverId}.args must be a list`);
@@ -159,6 +160,7 @@ const validateMcpServers = (servers, errors) => {
         errors.push(`content.servers.${serverId}：url 形态必须声明 type:'http'（url 而无 type 是配置错误）`);
         continue;
       }
+      rejectUnknownKeys(server, `content.servers.${serverId}`, MCP_HTTP_KEYS, 'http 形态仅接受 type/url/headers', errors);
       let u = null;
       if (typeof server.url !== 'string') errors.push(`content.servers.${serverId}.url must be a string`);
       else {
@@ -190,6 +192,27 @@ const validateMcpServers = (servers, errors) => {
   }
 };
 
+// Closed content schemas (W3 T1 review): each type accepts exactly the keys
+// below — an unrecognized key is data every materializer would silently drop,
+// so reject it at the registry door (拒绝优于静默纠正). mcp additionally
+// closes each server object per form, and tool closes options per kind.
+const CONTENT_KEYS = {
+  skill: ['name', 'description', 'body'],
+  mcp: ['servers'],
+  memory: ['notes'],
+  prompt: ['text'],
+  tool: ['kind', 'options'],
+};
+const MCP_STDIO_KEYS = ['command', 'args', 'env', 'type']; // type listed so stdio+type keeps its dedicated copy
+const MCP_HTTP_KEYS = ['type', 'url', 'headers'];
+
+const rejectUnknownKeys = (obj, where, allowed, note, errors = []) => {
+  for (const key of Object.keys(obj)) {
+    if (!allowed.includes(key)) errors.push(`${where}.${key}：unexpected key（${note}）`);
+  }
+  return errors;
+};
+
 const validateEnv = (env, where, errors) => {
   if (!isObject(env)) {
     errors.push(`${where} must be a JSON object`);
@@ -210,6 +233,10 @@ const validateContent = (type, content, errors) => {
   checkProtoKeys(content, 'content', errors);
   const size = Buffer.byteLength(JSON.stringify(content), 'utf8');
   if (size > LIMITS.content) errors.push(`content 超过 64KB 上限（实际 ${Math.round(size / KB)}KB）`);
+  const allowedKeys = CONTENT_KEYS[type];
+  if (allowedKeys !== undefined) {
+    rejectUnknownKeys(content, 'content', allowedKeys, `${type} 仅接受 ${allowedKeys.join('/')}`, errors);
+  }
   switch (type) {
     case 'skill':
       checkSlug(content.name, 'content.name（技能名）', errors);
@@ -243,7 +270,8 @@ const validateContent = (type, content, errors) => {
       if (content.kind === 'rtk' && content.options !== undefined && Object.keys(content.options).length > 0) {
         errors.push('content.options：rtk v1 仅接受空 options 占位（edition 等后期扩展）');
       }
-      if (content.kind === 'ripgrep' && content.options?.extraHints !== undefined) {
+      if (content.kind === 'ripgrep' && isObject(content.options)) {
+        rejectUnknownKeys(content.options, 'content.options', ['extraHints'], 'ripgrep 仅接受 extraHints', errors);
         checkText(content.options.extraHints, 'content.options.extraHints', { max: LIMITS.extraHints }, errors);
       }
       break;
@@ -539,6 +567,10 @@ export async function rematerializeBots(state, bots) {
   for (const bot of bots) {
     const r = await rematerializeBot(state, bot);
     results.push(r);
+    // Runner follows REGISTRY truth — but only once the registry's plan has
+    // actually landed on disk: refresh ONLY on success (same rule as
+    // bindAsset/unbindAsset below), a failed bot keeps its last-good runner
+    // and retries through rematerialize.
     if (r.ok) state.refreshRunner?.(bot);
   }
   return receiptOf(results);
@@ -585,9 +617,14 @@ export async function bindAsset(state, botId, { assetId, mode } = {}) {
   // Commit: binding into the bot record (bots.json is the binding store, §2.2).
   bot.assets = projected;
   saveBots(state.botsFile, state.doc);
-  // §3.2 asset path: materialize → receipt (per-bot isolation) → light re-attach.
-  const receipt = receiptOf([await rematerializeBot(state, bot)]);
-  state.refreshRunner?.(bot);
+  // §3.2 asset path: materialize → receipt (per-bot isolation). The runner
+  // follows REGISTRY truth, but only once the registry's plan has actually
+  // landed on disk — refresh ONLY on success (unified with rematerializeBots);
+  // a failed materialize keeps the last-good runner and retries through the
+  // rematerialize endpoint, which refreshes on its own success.
+  const result = await rematerializeBot(state, bot);
+  if (result.ok) state.refreshRunner?.(bot);
+  const receipt = receiptOf([result]);
   const warnings = [];
   if (asset.type === 'memory') {
     const w = state.materializer.memoryWarning?.(bot);
@@ -612,8 +649,11 @@ export async function unbindAsset(state, botId, assetId) {
   const [removedBinding] = bindings.splice(index, 1);
   bot.assets = bindings;
   saveBots(state.botsFile, state.doc);
-  const receipt = receiptOf([await rematerializeBot(state, bot)]);
-  state.refreshRunner?.(bot);
+  // Same registry-truth rule as bindAsset: refresh only when the cleanup
+  // rematerialize actually succeeded.
+  const result = await rematerializeBot(state, bot);
+  if (result.ok) state.refreshRunner?.(bot);
+  const receipt = receiptOf([result]);
   const source = findAsset(state, assetId);
   return {
     ok: true,

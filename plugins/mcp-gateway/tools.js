@@ -114,7 +114,7 @@ function appendPortHints(err, ops) {
 const TOOLS = [
   {
     name: 'list_employees',
-    description: '查看在岗员工名册：全员工牌号/花名/在岗状态/离线原因/当前工作汇报进度行/今日与累计工单数/技能岗位。状态四档：working=工作中/idle=待命/offline=离线(休假)/enabled:false=休假(调休)；转述时用此词表。只读，无参数。',
+    description: '查看在岗员工名册：全员工牌号/花名/在岗状态/离线原因/当前工作汇报进度行/今日与累计工单数/技能岗位/资产警示（如有，如 memory 共享 cwd）。状态四档：working=工作中/idle=待命/offline=离线(休假)/enabled:false=休假(调休)；转述时用此词表。只读，无参数。',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     run({ services }) {
       const ops = opsNow(services);
@@ -126,6 +126,9 @@ const TOOLS = [
         lines.push(`- ${a.id}（${a.name}）｜${st}｜岗位 ${a.provider}｜今日工单 ${a.todayTurns}｜累计 ${a.turns} 轮`);
         if (a.reason) lines.push(`  ↳ 离线原因：${a.reason}`);
         if (a.progress?.line) lines.push(`  ↳ 工作汇报：${clip(a.progress.line, 60)}`);
+        if (Array.isArray(a.assetWarnings) && a.assetWarnings.length > 0) {
+          lines.push(`  ↳ 资产警示：${a.assetWarnings.join('；')}`);
+        }
       }
       return ok(lines.join('\n'), { agents: ops.sanitize(agents) });
     },
