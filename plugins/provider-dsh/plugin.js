@@ -14,9 +14,13 @@ import { buildBotPatch, profilePatchPath, writeBotProfile, removeProfile } from 
 const PORT_ID = 'dsh';
 const PERMS = ['workspace-write', 'read-only', 'danger-full-access'];
 
-// —— asset faces (DESIGN-ASSETS §3.3 dsh column, W3 T2) ———————————————————
-// dsh has no skill/MCP face (F23): every asset rides the profile's
-// system-prompt personaPrefix or the WAO-namespace .wao/skills/ tree.
+// —— asset faces (DESIGN-ASSETS §3.3 dsh column, W3 T2/T6) ————————————————
+// dsh asset surfaces: prompt-like assets (skill index / prompt / memory /
+// ripgrep guidance) ride the profile's system-prompt personaPrefix, skills
+// additionally land as files in the WAO-namespace .wao/skills/ tree, and —
+// W3 T6 — MCP servers ride `mcp-<serverId>` profile rows via
+// @deepseek-ai/dsh-mcp-client (dsh 原生 MCP 面; the pre-T6 「无 MCP 面」
+// ruling is lifted). rtk stays refused (F27).
 
 // SKILL.md (§4.1): frontmatter name/description + the x-wao-asset annotation
 // (claude F14 ignores unknown frontmatter keys; dsh only ever reads this file
@@ -88,7 +92,7 @@ export function combinePersonaPrefix(operatorPrompt, plan = []) {
         }
         break; // rtk never reaches (§2.3 bind refusal)
       default:
-        break; // mcp never reaches (dsh 无 MCP 面, §2.3)
+        break; // mcp never reaches the PREFIX — it rides mcp-<serverId> profile rows (§3.3, W3 T6)
     }
   }
   const operator = String(operatorPrompt ?? '').trim();
@@ -166,6 +170,9 @@ export default {
       // materializeConfig extension) — a providerConfig change rebuilds the
       // FULL personaPrefix (operator prompt + asset sections), so 「改模型丢
       // 资产节」cannot happen. Absent/empty plan = operator prompt alone.
+      // W3 T6: the SAME plan flows as assetsPlan so the mcp-<serverId> rows
+      // ride this rebuild too — a bot PATCH can never drop MCP rows (P0-4
+      // 同型防线: the patch is a whole-file REPLACE).
       async materializeConfig(bot, { log, assets } = {}) {
         if (typeof bot?.id !== 'string' || bot.id === '') {
           throw new Error('materializeConfig: bot.id is required');
@@ -181,6 +188,7 @@ export default {
           model: pc.model,
           permission: pc.permission,
           prompt,
+          assetsPlan: assets,
           writableDirs: pc.writableDirs,
           workspaceRoot: pc.cwd,
           dshBin: pc.dshBin || 'dsh',
@@ -191,17 +199,18 @@ export default {
         return { changed: true, profile, path: res.path };
       },
 
-      // 资产物化 (DESIGN-ASSETS §3.1/§3.3, W3 T2): PURE PLANNER — returns the
+      // 资产物化 (DESIGN-ASSETS §3.1/§3.3, W3 T2/T6): PURE PLANNER — returns the
       // write plan, core-engine's materializer owns every disk mutation (jail
       // guard, atomicity, manifest). dsh = whole-file profile rewrite (the
       // personaPrefix is a single config row, YAML 整文件重写纪律 §3.4) +
-      // .wao/skills/ SKILL.md files. plan 是只读引用：一切变形在副本上 (§3.1).
+      // .wao/skills/ SKILL.md files. mcp 资产 (W3 T6) 不另落文件——每 server 一
+      // 条 mcp-<serverId> 行随同一 patch 重建（REPLACE 语义下只有单一组合器能
+      // 保住它们）。plan 是只读引用：一切变形在副本上 (§3.1).
       async materializeAssets(bot, plan, { log } = {}) {
         const pc = bot?.providerConfig ?? {};
         if (typeof bot?.id !== 'string' || bot.id === '') throw new Error('materializeAssets: bot.id is required');
         if (typeof pc.cwd !== 'string' || pc.cwd === '') throw new Error(`materializeAssets: bot ${bot.id} has no providerConfig.cwd`);
         for (const entry of plan ?? []) {
-          if (entry?.type === 'mcp') throw new Error('dsh 岗位不支持 MCP 资产（dsh 无 MCP 面，F23）');
           if (entry?.type === 'tool' && entry?.content?.kind === 'rtk') throw new Error('dsh 岗位不支持 rtk 工具资产（rtk 支持列表不含 dsh，F27）');
         }
         const profile = pc.profile || `wecom-${bot.id}`;
@@ -209,12 +218,16 @@ export default {
           kind: 'file-create',
           target: profilePatchPath(profile),
           // the SAME combiner as materializeConfig — both paths produce the
-          // complete personaPrefix (契约用例「dsh 改模型→资产节逐字节仍在」).
+          // complete personaPrefix (契约用例「dsh 改模型→资产节逐字节仍在」)
+          // AND the mcp-<serverId> rows (assetsPlan, W3 T6 — bot PATCH 重物
+          // 化不掉 MCP 行). Env/headers values ride the 0600 patch verbatim
+          // (dsh-mcp-client 无引用语义, 明文即契约).
           content: buildBotPatch({
             profile,
             model: pc.model,
             permission: pc.permission,
             prompt: combinePersonaPrefix(pc.prompt, plan),
+            assetsPlan: plan,
             writableDirs: pc.writableDirs,
             workspaceRoot: pc.cwd,
             sourceProfile: 'headless',
@@ -231,6 +244,12 @@ export default {
               notes.push({ assetId: entry.assetId, detail: 'rg 未安装：ripgrep 指引已注入但本机无效（预检不失败）——brew install ripgrep 后生效' });
             }
           }
+          if (entry.type === 'mcp') {
+            const servers = Object.keys(entry.content?.servers ?? {}).sort();
+            if (servers.length > 0) {
+              notes.push({ assetId: entry.assetId, detail: `MCP → profile 行 mcp-{${servers.join(',')}}（@deepseek-ai/dsh-mcp-client，dsh 启动即连；env/headers 明文随 0600 patch 落盘）` });
+            }
+          }
           if (entry.type !== 'skill') continue;
           const name = entry.content?.name ?? entry.name;
           writes.push({
@@ -241,7 +260,7 @@ export default {
           });
           notes.push({ assetId: entry.assetId, detail: `技能 ${name} → .wao/skills/${name}/SKILL.md（WAO 命名空间目录）` });
         }
-        log?.info?.(`provider-dsh: asset plan for ${bot.id} → ${writes.length} writes（personaPrefix 经单一组合器重建）`);
+        log?.info?.(`provider-dsh: asset plan for ${bot.id} → ${writes.length} writes（personaPrefix 与 MCP 行经单一组合器重建）`);
         return { writes, notes, entries: [], tools };
       },
 

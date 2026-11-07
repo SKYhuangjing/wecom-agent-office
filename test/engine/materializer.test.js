@@ -314,8 +314,11 @@ test('checkBind/detect*: provider without materializeAssets refuses; foreign ski
   const bare = createMaterializer({ ports: portsOf({}), dataDir, log: { info() {}, warn() {} } });
   assert.deepEqual(bare.checkBind({ id: 'x', provider: 'stub', providerConfig: { cwd } }, SKILL_ENTRY), ['该 provider 暂不支持资产装备']);
   assert.deepEqual(mat.checkBind({ id: 'x', provider: 'stub', providerConfig: { cwd } }, SKILL_ENTRY), []);
-  // dsh-specific rows survive from the noop contract
-  assert.ok(mat.checkBind({ id: 'x', provider: 'dsh', providerConfig: { cwd } }, MCP_ENTRY).some((e) => /dsh 岗位不支持 MCP/));
+  // dsh-specific rows: mcp binding is ALLOWED now (W3 T6, profile rows via
+  // dsh-mcp-client) — only the serverName 32-char cap stays refused
+  assert.deepEqual(mat.checkBind({ id: 'x', provider: 'dsh', providerConfig: { cwd } }, MCP_ENTRY), []);
+  const longMcp = { assetId: 'ast-c9', type: 'mcp', name: 'mcp-long', mode: 'shared', content: { servers: { ['a'.repeat(33)]: { command: 'node' } } } };
+  assert.ok(mat.checkBind({ id: 'x', provider: 'dsh', providerConfig: { cwd } }, longMcp).some((e) => /上限 32 字符/));
   assert.ok(mat.checkBind({ id: 'x', provider: 'claude', providerConfig: { cwd } }, { type: 'tool', name: 't', content: { kind: 'rtk' } }).some((e) => /专属目录/));
   // foreign skill: a same-path SKILL.md without x-wao-asset
   const otherCwd = botDir('b-hooks-other');

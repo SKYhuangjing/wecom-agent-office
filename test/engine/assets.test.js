@@ -404,11 +404,13 @@ test('noopMaterializer: materialize/removeAssets answer the skipped receipt; det
   assert.deepEqual(m.detectForeignTargets({ id: 'b1' }, []), []);
 });
 
-test('noopMaterializer.checkBind: dsh×mcp, dsh×rtk, rtk without a dedicated dir are refused; memory shared-cwd warning', () => {
+test('noopMaterializer.checkBind: dsh×mcp bound but >32-char serverId refused, dsh×rtk refused, rtk without a dedicated dir refused; memory shared-cwd warning', () => {
   const m = noopMaterializer();
   const dsh = { id: 'd1', provider: 'dsh', providerConfig: { cwd: '/tmp' } };
   const mcpAsset = { type: 'mcp', name: 'c', content: { servers: { a: { command: 'x' } } } };
-  assert.ok(m.checkBind(dsh, mcpAsset).some((e) => /dsh 岗位不支持 MCP/), 'dsh has no MCP face (F23)');
+  assert.deepEqual(m.checkBind(dsh, mcpAsset), [], 'dsh mcp binding allowed (W3 T6: mcp-<serverId> profile rows)');
+  const longId = { type: 'mcp', name: 'c2', content: { servers: { ['a'.repeat(33)]: { command: 'x' } } } };
+  assert.ok(m.checkBind(dsh, longId).some((e) => /上限 32 字符/), 'dsh serverName cap (SERVER_NAME_PATTERN) refused');
   const rtkAsset = { type: 'tool', name: 'rtk', content: { kind: 'rtk' } };
   assert.ok(m.checkBind(dsh, rtkAsset).some((e) => /dsh 岗位不支持 rtk/), 'rtk does not support dsh (F27)');
   const claudeShared = { id: 'c1', provider: 'claude', providerConfig: { cwd: '/tmp' } };

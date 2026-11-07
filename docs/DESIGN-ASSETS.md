@@ -108,7 +108,7 @@
 
 | # | 事实 | 证据 |
 |---|---|---|
-| F23 | 无技能/MCP 概念（help 无相关项）；配置=profile 的 config 行表（`cordis.patch.yml`），**行 REPLACE 语义（整块替换不深合并）**；`system-prompt` 行 `personaPrefix`（块标量）=提示词注入口；`DSH_HOME` 可重定向 | `dsh --help` 实测 + plugins/provider-dsh/profiles.js 现行代码 |
+| F23 | 无技能/MCP 概念（help 无相关项；**W3 T6 勘误**：MCP 面存在于 profile 行——`@deepseek-ai/dsh-mcp-client`，见 §3.3 dsh 列，原「无 MCP 面」为保守裁定）；配置=profile 的 config 行表（`cordis.patch.yml`），**行 REPLACE 语义（整块替换不深合并）**；`system-prompt` 行 `personaPrefix`（块标量）=提示词注入口；`DSH_HOME` 可重定向 | `dsh --help` 实测 + plugins/provider-dsh/profiles.js 现行代码 + 已装 `@deepseek-ai/dsh-mcp-client` README/lib（2026-11-07） |
 | F24 | 物化纪律（现行生产代码）：整串 patch 内存构建→单次 tmp+rename 原子写；removeProfile=删整个 profile 目录 | profiles.js |
 
 ### 1.6 rtk 与 ripgrep
@@ -180,7 +180,7 @@
 | 多个 memory 资产 | 不冲突：notes 按**绑定顺序**拼接为多节（§4.3） |
 | 多个 prompt 资产 | 不冲突：文本按**绑定顺序**拼接 |
 | 两个 mcp 资产含同 `serverId` | **拒绑**（400 指名冲突 server）；物化层不再做改名合并 |
-| mcp 资产绑 dsh bot | **拒绑**（dsh 无 MCP 面，F23） |
+| mcp 资产绑 dsh bot 且某 `serverId` >32 字符 | **拒绑**（W3 T6 起 dsh 支持 MCP——物化为 profile `mcp-<serverId>` 行；但 dsh-mcp-client `SERVER_NAME_PATTERN ^[A-Za-z0-9_-]{1,32}$`（对已装包实证）拒超长名，且 failOnStartupError=false 下 MCP 工具会静默不出现——拒绝优于静默失败） |
 | tool 资产 kind 与 provider 不符（如 rtk×dsh，F27） | **拒绑** |
 | provider 端口未实现 `materializeAssets` | **拒绑**（「该 provider 暂不支持资产装备」） |
 | skill 物化目标已存在且其 frontmatter 无 `x-wao-asset` 注记（外来技能占位） | **拒绑**（400 指名路径：「目标已有非 WAO 技能：\<path\>；请改资产名或先移除该技能」——注记=外来判别印，§4.1） |
@@ -257,7 +257,7 @@ runner 引用不被夺走，旗标为旧版本），**下轮 run 起用新 runne
 | **skill** | `<cwd>/.wao/skills/<name>/SKILL.md` + personaPrefix 索引节（F23 无原生面） | ①有 claudeConfigDir→`$CLAUDE_CONFIG_DIR/skills/<name>/SKILL.md`（个人域，T2-V1 验证 F16）②否则→`<cwd>/.claude/skills/<name>/SKILL.md`（项目域，F14 文档保证） | ①有 codexHome→`$CODEX_HOME/skills/<name>/SKILL.md`（本机证据 F1，T2-V2 验证重定向）②否则→`<cwd>/.agents/skills/<name>/SKILL.md`（REPO 域，F3 文档保证） | `<piAgentDir>/skills/<name>/SKILL.md` + runner 加 `--skill <abs>`（F19 显式旗标，不依赖发现） |
 | **prompt** | personaPrefix 拼接节（F23） | runner `--append-system-prompt` 拼接（F11，无文件、每轮 ephemeral） | ①`$CODEX_HOME/AGENTS.md`（F10；重定向是否生效=V2 一并验证，rev.2 扩）②`<cwd>/AGENTS.md` 标记节（回退，文档保证的项目域面） | runner `--append-system-prompt` 拼接（F19 可重复） |
 | **memory** | personaPrefix 拼接节（标注「跨会话记忆」） | `$CLAUDE_CONFIG_DIR/CLAUDE.md` 或 `<cwd>/CLAUDE.md` 标记节（个人/项目记忆域） | 同 prompt（AGENTS.md 标记节，与 prompt 分节） | `<piAgentDir>/wao-memory.md` 文件 + runner `--append-system-prompt <file>`（F19「文本或文件内容」，T2-V3 验证文件形态） |
-| **mcp** | **不支持**（§2.3 拒绑） | 物化 `data/assets/<botId>/claude-mcp.json`（WAO data 域，**0600**）+ runner 加 `--mcp-config <path>`（F12；**单文件整体 owned**，规避 F13 未记载的多文件合并语义；不加 `--strict-mcp-config`——不遮蔽用户自有 server）；server 名物化为 `wao-<serverId>`（**三家统一前缀**，rev.2；同名让位方向不再按未实证的 scope 优先级声明——V7 实证后写进文档） | `$CODEX_HOME/config.toml` 末尾追加标记节，server 物化为 `[mcp_servers.wao-<serverId>]`（F8 形状；**统一 `wao-` 前缀**防与用户自有条目同名造成 TOML 重复表解析错误；无 codexHome 时物化到 `<cwd>/.codex/config.toml`，F9 项目级面，T2-V4 验证非 trusted 目录可用性，不可用则要求 codexHome） | `<piAgentDir>/mcp.json`（F21 实证形状同 claude，**0600**）——默认 wao 命名目录内**整文件重写**，server 名 `wao-<serverId>`（三家统一前缀）；自定义 piAgentDir 遇外来文件拒写（F22 守卫同款）——外来判据：顶层 `x-wao-managed` 注记，**pi 对未知顶层键的容忍度未验证（V9）；不容忍则注记不落文件，判据改用物化清单 manifest（§3.8）** |
+| **mcp** | 每 server 一条 profile 行 `mcp-<serverId>`（`@deepseek-ai/dsh-mcp-client`；stdio=command/args/env，http=transport `streamable-http`+url/headers；形状对已装包 README+lib 实证，W3 T6 解除 F23 保守裁定）。行由 profiles.js 纯构建 `mcpClientRows` 生成、经 `buildBotPatch(…, assetsPlan)` 随**整文件重建**写入——materializeConfig 与 materializeAssets 都传生效计划，bot PATCH 重物化不掉 MCP 行（P0-4 同型防线）；env/headers 值**明文**落 patch（dsh 无引用语义；文件恒 0600）；serverId ≤32 字符（超出=绑定面拒绑，§2.3） | 物化 `data/assets/<botId>/claude-mcp.json`（WAO data 域，**0600**）+ runner 加 `--mcp-config <path>`（F12；**单文件整体 owned**，规避 F13 未记载的多文件合并语义；不加 `--strict-mcp-config`——不遮蔽用户自有 server）；server 名物化为 `wao-<serverId>`（**三家统一前缀**，rev.2；同名让位方向不再按未实证的 scope 优先级声明——V7 实证后写进文档） | `$CODEX_HOME/config.toml` 末尾追加标记节，server 物化为 `[mcp_servers.wao-<serverId>]`（F8 形状；**统一 `wao-` 前缀**防与用户自有条目同名造成 TOML 重复表解析错误；无 codexHome 时物化到 `<cwd>/.codex/config.toml`，F9 项目级面，T2-V4 验证非 trusted 目录可用性，不可用则要求 codexHome） | `<piAgentDir>/mcp.json`（F21 实证形状同 claude，**0600**）——默认 wao 命名目录内**整文件重写**，server 名 `wao-<serverId>`（三家统一前缀）；自定义 piAgentDir 遇外来文件拒写（F22 守卫同款）——外来判据：顶层 `x-wao-managed` 注记，**pi 对未知顶层键的容忍度未验证（V9）；不容忍则注记不落文件，判据改用物化清单 manifest（§3.8）** |
 | **tool: rtk** | 不支持（F27） | 见 §7.1 | 见 §7.1 | 见 §7.1 |
 | **tool: ripgrep** | 环境预检 + personaPrefix 指引节 | 预检 + `--append-system-prompt` 指引段 | 预检 + AGENTS.md 标记节内指引段 | 预检 + `--append-system-prompt` 指引段 |
 

@@ -497,8 +497,10 @@ export function checkBindConflicts(assets, bindings) {
 
 // The injectable interface consumed by bind/unbind/patch/delete/rematerialize:
 //   checkBind(bot, asset, projectedBindings) → string[] (400 rejections:
-//     provider×type support matrix — dsh has no MCP face (F23), rtk is not
-//     dsh-supported (F27) and hard-requires a dedicated config dir (§7.1))
+//     provider×type support matrix — dsh mcp rides mcp-<serverId> profile
+//     rows (W3 T6) but serverName is capped at 32 chars by dsh-mcp-client;
+//     rtk is not dsh-supported (F27) and hard-requires a dedicated config
+//     dir (§7.1))
 //   detectForeignTargets(bot, plan) → [{path}]  (skill 外来守卫, P1-13 — T2
 //     reads the target files; noop answers none)
 //   detectFileConflicts(bot, plan, allBots) → [{botId, path}] (跨 bot 同文件
@@ -522,7 +524,15 @@ export function noopMaterializer() {
       const errors = [];
       const provider = bot?.provider;
       if (provider === 'dsh' && asset?.type === 'mcp') {
-        errors.push('dsh 岗位不支持 MCP 资产（dsh 无 MCP 面）');
+        // W3 T6: the blanket 「dsh 无 MCP 面」 refusal is lifted (mcp rides
+        // mcp-<serverId> profile rows via dsh-mcp-client) — only the
+        // serverName 32-char cap (SERVER_NAME_PATTERN, verified against the
+        // installed package) stays refused, mirroring the real materializer.
+        for (const serverId of Object.keys(asset?.content?.servers ?? {})) {
+          if (!/^[A-Za-z0-9_-]{1,32}$/.test(serverId)) {
+            errors.push(`dsh 岗位的 MCP serverId ${serverId} 超出 dsh-mcp-client serverName 上限 32 字符——请缩短后绑定（超长名会被 dsh 配置校验拒绝，MCP 工具静默不出现）`);
+          }
+        }
       }
       if (provider === 'dsh' && asset?.type === 'tool' && asset?.content?.kind === 'rtk') {
         errors.push('dsh 岗位不支持 rtk 工具资产（rtk 支持列表不含 dsh）');

@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### Changed
+
+- checkBind 解除 dsh×mcp 全量拒绑（W3 T6，provider-dsh 补 MCP 资产面）：dsh bot 现可绑
+  MCP 资产（物化为 profile `mcp-<serverId>` 行，见 provider-dsh CHANGELOG）。保留的窄拒：
+  serverId 超 32 字符（dsh-mcp-client `SERVER_NAME_PATTERN ^[A-Za-z0-9_-]{1,32}$`，对已装包
+  实证——超长行被 dsh 配置校验拒绝，failOnStartupError=false 下 MCP 工具静默不出现）；
+  真物化器（materializer.js）与 noop（assets.js）同步。
+
 ### Added
 
 - rtk 工具资产装备执行器（W3 T3，DESIGN-ASSETS §7.1）：新写计划型 `rtk-init`（providers 纯计划

@@ -8,9 +8,9 @@ DeepSeek Harness，兑现 DESIGN §5 端口契约。前身是 wecom-bridge / wec
 
 | 文件 | 职责 |
 |---|---|
-| `plugin.js` | 端口注册：manifest / configSchema / validate / materializeConfig / describeError |
+| `plugin.js` | 端口注册：manifest / configSchema / validate / materializeConfig / materializeAssets / describeError |
 | `runner.js` | 子进程驱动：spawn argv、NDJSON→统一事件、code 映射、SIGTERM→SIGKILL 升级 |
-| `profiles.js` | 每 bot dsh profile 物化（atomicWrite 原子写、抛错保留 last-good） |
+| `profiles.js` | 每 bot dsh profile 物化（atomicWrite 原子写、抛错保留 last-good；`mcpClientRows`=MCP 资产行纯构建） |
 | `history.js` | 会话历史只读：zstd 多帧解码 + 轮次解析（`{turns, truncated, warnings}`） |
 
 ## 要点
@@ -28,6 +28,13 @@ DeepSeek Harness，兑现 DESIGN §5 端口契约。前身是 wecom-bridge / wec
 - **历史路径**：先查 `<cwd>/sessions/<id>.zst`（契约套件约定），再查真实 dsh 布局
   `~/.dsh/sessions/<cwdEscape(cwd)>/session-<id>/session.v4.jsonl.zstd`
   （`DSH_HOME` / `providerConfig.dshHome` 可重定向）。
+- **MCP 资产面**（W3 T6）：绑定 MCP 资产后每 server 一条
+  `mcp-<serverId>` profile 行（`@deepseek-ai/dsh-mcp-client`；stdio=
+  command/args/env，http=`streamable-http`+url/headers）。行随 profile patch
+  **整文件重建**（`buildBotPatch` 的 `assetsPlan` 参数）——materializeConfig 与
+  materializeAssets 同过该构建器，改模型等 bot PATCH 不会掉 MCP 行。env/headers
+  值**明文**落 patch（dsh 无引用语义；文件恒 0600）。serverId ≤32 字符
+  （dsh-mcp-client `SERVER_NAME_PATTERN`，超长=绑定面 400 拒绝）。
 
 ## 验证
 

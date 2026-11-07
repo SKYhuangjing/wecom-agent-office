@@ -58,14 +58,14 @@ test('dsh combinePersonaPrefix: empty plan = operator prompt alone (pre-asset by
     ENTRY({ type: 'memory', name: 'mem', content: { notes: ['n1'] } }),
     ENTRY({ type: 'skill' }),
     ENTRY({ type: 'tool', name: 'rg', content: { kind: 'ripgrep', options: {} } }),
-    ENTRY({ type: 'mcp', content: { servers: {} } }),      // never reaches (bind refusal)
-    ENTRY({ type: 'tool', content: { kind: 'rtk' } }),      // never reaches (bind refusal)
+    ENTRY({ type: 'mcp', content: { servers: {} } }),      // rides profile mcp rows, never the prefix (W3 T6)
+    ENTRY({ type: 'tool', content: { kind: 'rtk' } }),     // never reaches (bind refusal)
   ]);
   const order = ['【WAO 提示词约束：style】', '【WAO 跨会话记忆：mem】', '【WAO 技能：wao-company】', '【WAO 工具指引：ripgrep】']
     .map((h) => combined.indexOf(h));
   assert.deepEqual(order, [...order].sort((a, b) => a - b), 'sections in binding order');
   assert.ok(order.every((i) => i >= 0));
-  assert.ok(!combined.includes('MCP'), 'mcp entries never produce a section (bind refusal upstream)');
+  assert.ok(!combined.includes('MCP'), 'mcp entries never produce a personaPrefix section — they ride mcp-<serverId> profile rows (profiles.js mcpClientRows)');
   assert.ok(!combined.includes('rtk'), 'rtk section never emitted');
   // deterministic: a rebuild of a single-asset plan equals that plan's prefix
   const solo = combinePersonaPrefix('人设', [ENTRY({ type: 'prompt', name: 'style', content: { text: '简短' } })]);

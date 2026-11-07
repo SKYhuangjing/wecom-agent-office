@@ -105,7 +105,7 @@ const deepClone = (v) => structuredClone(v);
 // dsh — personaPrefix 单一组合器 + .wao/skills tree (§3.3)
 // ————————————————————————————————————————————————————————————————————————————
 
-test('dsh: skill/prompt/memory/ripgrep ride personaPrefix + .wao skills; mcp/rtk refused; idempotent; plan untouched', async () => {
+test('dsh: skill/prompt/memory/ripgrep ride personaPrefix + .wao skills; rtk refused (>32 serverId cap in the mcp test below); idempotent; plan untouched', async () => {
   const booted = await bootProvider(join(REPO, 'plugins/provider-dsh'));
   try {
     const sc = scenario('dsh');
@@ -117,8 +117,12 @@ test('dsh: skill/prompt/memory/ripgrep ride personaPrefix + .wao skills; mcp/rtk
     const mat = matOver(booted.impl, dataDir);
     const bot = { id: 'dsh-b1', provider: 'dsh', providerConfig: { cwd, model: { provider: 'x', model: 'm1', baseURL: 'http://gw.local', api: 'anthropic-messages', contextWindow: 128000 } } };
 
-    // bind-time refusals (§2.3): dsh has no MCP face, rtk not supported
-    assert.ok(mat.checkBind(bot, { type: 'mcp', content: {} }).some((e) => /dsh 岗位不支持 MCP/));
+    // bind-time support (§2.3): mcp is SUPPORTED on dsh now (W3 T6, profile
+    // rows via dsh-mcp-client) — only the >32-char serverName cap refuses;
+    // rtk stays refused (F27)
+    assert.deepEqual(mat.checkBind(bot, MCP), [], 'dsh mcp binding allowed (W3 T6)');
+    const longId = { type: 'mcp', name: 'long', content: { servers: { ['a'.repeat(33)]: { command: 'x' } } } };
+    assert.ok(mat.checkBind(bot, longId).some((e) => /上限 32 字符/), 'serverName cap refused (SERVER_NAME_PATTERN)');
     assert.ok(mat.checkBind(bot, { type: 'tool', content: { kind: 'rtk' } }).some((e) => /dsh 岗位不支持 rtk/));
 
     const plan = mkPlan([SKILL, PROMPT, MEMORY, RIPGREP]);
@@ -170,8 +174,84 @@ test('dsh: skill/prompt/memory/ripgrep ride personaPrefix + .wao skills; mcp/rtk
 });
 
 // ————————————————————————————————————————————————————————————————————————————
-// claude — skills dirs + CLAUDE.md section + owned mcp file + argv (§3.3)
+// dsh — mcp profile rows via @deepseek-ai/dsh-mcp-client (W3 T6): stdio+http
+// shapes, plaintext env/headers, idempotence, 「改模型」keeps the rows (P0-4
+// 同型防线), unload drops them, bind-time serverName cap
 // ————————————————————————————————————————————————————————————————————————————
+
+test('dsh: mcp stdio+streamable-http rows ride the profile patch (dsh-mcp-client); idempotent; model-change keeps rows; unload drops them', async () => {
+  const booted = await bootProvider(join(REPO, 'plugins/provider-dsh'));
+  try {
+    const sc = scenario('dsh-mcp');
+    const dshHome = join(sc, 'dsh-home');
+    process.env.DSH_HOME = dshHome;
+    const cwd = join(sc, 'cwd');
+    mkdirSync(cwd, { recursive: true });
+    const mat = matOver(booted.impl, join(sc, 'data'));
+    const bot = { id: 'dsh-m1', provider: 'dsh', providerConfig: { cwd, prompt: '你是值班助手。', model: { provider: 'x', model: 'm1', baseURL: 'http://gw.local', api: 'anthropic-messages', contextWindow: 128000 } } };
+
+    const plan = mkPlan([MCP]);
+    const before = deepClone(plan);
+    const r1 = await mat.materialize(bot, plan);
+    assert.deepEqual(deepClone(plan), before, 'plan untouched');
+    assert.ok(r1.notes.some((n) => /MCP → profile 行 mcp-\{company,docs\}/), 'receipt names the profile rows');
+
+    const patch = join(dshHome, 'profiles', 'wecom-dsh-m1', 'cordis.patch.yml');
+    const text = readFileSync(patch, 'utf8');
+    // stdio row: dsh-mcp-client README shape, env values VERBATIM (no ${VAR}
+    // expansion semantics on this face — plaintext rides the 0600 patch)
+    assert.match(text, new RegExp([
+      '- id: mcp-company',
+      String.raw`  name: '@deepseek-ai/dsh-mcp-client'`,
+      '  config:',
+      '    serverName: company',
+      '    transport: stdio',
+      '    command: "node"',
+      '    args: \\["server\\.js"\\]',
+      '    env:',
+      '      REF: "\\$\\{GATEWAY_TOKEN\\}"',
+      '      TOKEN: ".*"',
+    ].join('\\n'), 'm'), 'stdio row in dsh-mcp-client shape');
+    // http row: transport flips to streamable-http + url/headers
+    assert.match(text, new RegExp([
+      '- id: mcp-docs',
+      String.raw`  name: '@deepseek-ai/dsh-mcp-client'`,
+      '  config:',
+      '    serverName: docs',
+      '    transport: streamable-http',
+      '    url: "https://docs\\.example\\.com/mcp"',
+      '    headers:',
+      '      X-K: "v"',
+    ].join('\\n'), 'm'), 'streamable-http row with url+headers');
+    // the patch stays owner-only: atomicWrite's 0600 (plaintext env contract)
+    assert.equal(statSync(patch).mode & 0o777, 0o600, 'patch 0600 — plaintext env/headers ride an owner-only file');
+
+    // idempotence (§3.5): second materialization byte-identical
+    const snap1 = snapshotDir(sc);
+    await mat.materialize(bot, plan);
+    assert.deepEqual(snapshotDir(sc), snap1, 'second materialization byte-identical');
+
+    // 「dsh 改模型」P0-4 同型: materializeConfig with the SAME plan but a
+    // changed model rebuilds the WHOLE patch — mcp rows byte-identical
+    const rowsOf = (t) => t.slice(t.indexOf('\n- id: mcp-'));
+    const botV2 = { ...bot, providerConfig: { ...bot.providerConfig, model: { provider: 'x', model: 'm2-CHANGED', baseURL: 'http://gw.local', api: 'anthropic-messages', contextWindow: 256000 } } };
+    await booted.impl.materializeConfig(botV2, { assets: plan, log: fakeLog().log });
+    const textV2 = readFileSync(patch, 'utf8');
+    assert.match(textV2, /model: m2-CHANGED/, 'model row actually changed');
+    assert.equal(rowsOf(textV2), rowsOf(text), 'mcp rows byte-identical after a model-only change (P0-4 同型防线)');
+
+    // unload: empty plan → mcp rows gone (whole-file rebuild), patch survives
+    await mat.materialize(botV2, []);
+    const textAfter = readFileSync(patch, 'utf8');
+    assert.ok(!textAfter.includes('mcp-'), 'mcp rows dropped on unload');
+    assert.match(textAfter, /model: m2-CHANGED/, 'providerConfig rows survive (materializeConfig owns them)');
+  } finally {
+    delete process.env.DSH_HOME;
+    await booted.stop();
+  }
+});
+
+
 
 test('claude: dedicated dir faces (V1), CLAUDE.md marker section, mcp 0600 + ${VAR} passthrough (V8), idempotent, foreign content survives', async () => {
   const booted = await bootProvider(join(REPO, 'plugins/provider-claude'));

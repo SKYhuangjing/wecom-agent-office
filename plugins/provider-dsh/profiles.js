@@ -2,10 +2,11 @@
 // wecom-bots/lib/profiles.js. A bot profile is built from the shipped
 // `headless` template profile, then its cordis.patch.yml is written with the
 // provider table (borrowed or custom route), agent-default-model,
-// permission-presets, compaction-basic, system-prompt personaPrefix and
-// sandbox-policy (mode / workspaceRoot / additionalWritableRoots). Config
-// rows REPLACE wholesale (never deep-merged), so every field needed is
-// restated.
+// permission-presets, compaction-basic, system-prompt personaPrefix,
+// sandbox-policy (mode / workspaceRoot / additionalWritableRoots) and — W3 T6
+// — one `mcp-<serverId>` row per bound MCP server (@deepseek-ai/dsh-mcp-
+// client, transport stdio | streamable-http). Config rows REPLACE wholesale
+// (never deep-merged), so every field needed is restated.
 //
 // Changes vs 前身 (both contractual, DESIGN §5 materializeConfig):
 //   - the patch is written through atomicWrite (src/kernel/config.js tmp+
@@ -63,6 +64,71 @@ function yamlQuote(s) {
   return '|-\n' + lines.map((l) => '      ' + l).join('\n');
 }
 
+// Plain YAML scalar key iff it starts alnum and carries only alnum/._-
+// (env keys ^[A-Z_][A-Z0-9_]*$ and normal header names land bare, README
+// style). HEADER_NAME admits indicator characters (! & * # | …) that are
+// YAML tag/anchor/alias/comment/block indicators — those keys get quoted.
+const yamlKey = (k) => /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(k) ? k : JSON.stringify(k);
+
+// —— MCP asset rows (W3 T6) ———————————————————————————————————————————————————
+// One profile row per plan server, in the @deepseek-ai/dsh-mcp-client shape
+// (README + installed lib verified 2026-11-07):
+//   - id: mcp-<serverId>
+//     name: '@deepseek-ai/dsh-mcp-client'
+//     config:
+//       serverName: <serverId>          # /^[A-Za-z0-9_-]{1,32}$/ (SERVER_NAME_PATTERN)
+//       transport: stdio | streamable-http
+//       command/args/env (stdio) | url/headers (http)
+// dsh-mcp-client has NO ${VAR} expansion of its own — env/headers values
+// pass through VERBATIM (plaintext secrets ride the 0600 patch, like every
+// other row). Empty args/env/headers sections are omitted (package defaults
+// them to []/{}); keys sorted for the §3.5 determinism anchor. Values are
+// JSON.stringify'd — a JSON string is a valid YAML double-quoted scalar, so
+// \n \t " \ stay escaped on ONE physical line (a raw newline would corrupt
+// the YAML mapping, the codex-TOML Critical-2 lesson in YAML form).
+export function mcpClientRows(assetsPlan) {
+  const out = [];
+  for (const entry of Array.isArray(assetsPlan) ? assetsPlan : []) {
+    if (entry?.type !== 'mcp') continue;
+    const servers = entry.content?.servers;
+    if (servers == null || typeof servers !== 'object' || Array.isArray(servers)) continue;
+    for (const serverId of Object.keys(servers).sort()) {
+      const s = servers[serverId] ?? {};
+      if (serverId.length > 32) {
+        throw new Error(`serverId ${serverId} 超出 dsh-mcp-client serverName 上限 32 字符（SERVER_NAME_PATTERN ^[A-Za-z0-9_-]{1,32}$）——请缩短 serverId（拒绝优于静默失败：超长 serverName 会被 dsh 配置校验拒绝，MCP 工具静默不出现）`);
+      }
+      const isHttp = s.type === 'http';
+      const lines = [
+        `- id: mcp-${serverId}`,
+        "  name: '@deepseek-ai/dsh-mcp-client'",
+        '  config:',
+        `    serverName: ${serverId}`,
+        `    transport: ${isHttp ? 'streamable-http' : 'stdio'}`,
+      ];
+      if (isHttp) {
+        lines.push(`    url: ${JSON.stringify(String(s.url ?? ''))}`);
+        const headers = Object.keys(s.headers ?? {}).sort();
+        if (headers.length > 0) {
+          lines.push('    headers:');
+          for (const h of headers) lines.push(`      ${yamlKey(h)}: ${JSON.stringify(String(s.headers[h]))}`);
+        }
+      } else {
+        lines.push(`    command: ${JSON.stringify(String(s.command ?? ''))}`);
+        if (Array.isArray(s.args) && s.args.length > 0) {
+          lines.push(`    args: [${s.args.map((a) => JSON.stringify(String(a))).join(', ')}]`);
+        }
+        const env = Object.keys(s.env ?? {}).sort();
+        if (env.length > 0) {
+          lines.push('    env:');
+          for (const k of env) lines.push(`      ${yamlKey(k)}: ${JSON.stringify(String(s.env[k]))}`);
+        }
+      }
+      out.push(lines.join('\n'));
+    }
+  }
+  return out.length === 0 ? '' : `${out.join('\n\n')}\n`;
+}
+
 export function buildBotPatch({
   profile,
   model,
@@ -72,6 +138,7 @@ export function buildBotPatch({
   workspaceRoot,
   sourceProfile = 'headless',
   compaction,
+  assetsPlan,
 }) {
   if (!model || !model.model) model = { provider: 'magpie', model: 'workbuddy/deepseek-v4.1-flash' };
   const perm = PERM.has(permission) ? permission : 'workspace-write';
@@ -179,6 +246,13 @@ export function buildBotPatch({
     additionalWritableRoots:${rootsYaml}
 `;
   }
+
+  // MCP asset rows (W3 T6) ride the SAME whole-file rebuild: patch rows
+  // REPLACE wholesale, so a providerConfig change that went through a
+  // DIFFERENT builder would silently drop them — materializeConfig passes
+  // the effective plan as assetsPlan for exactly this reason (P0-4 同型).
+  const mcpRows = mcpClientRows(assetsPlan);
+  if (mcpRows !== '') patch += `\n${mcpRows}`;
 
   // Last-good + atomicity: everything above built the string in memory; the
   // caller's only disk mutation is one tmp+rename (a throw above never touched

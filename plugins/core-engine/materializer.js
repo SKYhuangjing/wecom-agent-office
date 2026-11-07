@@ -532,7 +532,17 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
         return errors;
       }
       if (provider === 'dsh' && asset?.type === 'mcp') {
-        errors.push('dsh 岗位不支持 MCP 资产（dsh 无 MCP 面）');
+        // W3 T6 lifted the blanket 「dsh 无 MCP 面」 refusal — mcp rides
+        // mcp-<serverId> profile rows now. What stays refused is the one
+        // shape dsh cannot load: serverName is capped at 32 chars by
+        // dsh-mcp-client's SERVER_NAME_PATTERN (verified against the
+        // installed package), and an over-cap row fails dsh's config
+        // validation with failOnStartupError=false → tools silently absent.
+        for (const serverId of Object.keys(asset?.content?.servers ?? {})) {
+          if (!/^[A-Za-z0-9_-]{1,32}$/.test(serverId)) {
+            errors.push(`dsh 岗位的 MCP serverId ${serverId} 超出 dsh-mcp-client serverName 上限 32 字符——请缩短后绑定（超长名会被 dsh 配置校验拒绝，MCP 工具静默不出现）`);
+          }
+        }
       }
       if (provider === 'dsh' && asset?.type === 'tool' && asset?.content?.kind === 'rtk') {
         errors.push('dsh 岗位不支持 rtk 工具资产（rtk 支持列表不含 dsh）');
