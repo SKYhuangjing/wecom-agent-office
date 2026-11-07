@@ -28,7 +28,7 @@ JSON-RPC 2.0 over HTTP 自研协议子集（计划见 docs/superpowers/plans/202
   404 查无 / 409 离线广播等，以 `result.isError:true` + 中文原因返回（Agent 可读），不抛 JSON-RPC error。
 - **Content-Type**：POST 必须 `application/json`（带 charset 参数亦可），否则 415；不启用 CORS（同源/本地）。
 
-## 工具面（T2，13 个；公司话命名，README §4.2 词表）
+## 工具面（T2 13 个 + W3 T1 资产面 6 个；公司话命名，README §4.2 词表）
 
 | 工具 | 参数 | 说明 |
 | --- | --- | --- |
@@ -45,6 +45,12 @@ JSON-RPC 2.0 over HTTP 自研协议子集（计划见 docs/superpowers/plans/202
 | `work_log` | `botId`,`chatKey?` | 工作档案（台账轮次） |
 | `work_timeline` | `botId?`,`windowMin?` | 工作日志（时间线事件流） |
 | `company_state` | — | 公司状态摘要（运行时长/部门/员工） |
+| `create_asset` | `asset` | 登记资产（五类 skill/memory/mcp/prompt/tool；强制 origin:mcp → 仅可私发绑定；mcp env/headers 回显按位置掩码） |
+| `update_asset` | `assetId`,`patch` | 更新资产（version 自增；配发绑定扇出重物化）。分级：配发（shared 池）资产只读，指引走控制台/REST |
+| `delete_asset` | `assetId` | 删除资产（配发绑定解绑+清理；私发副本保留生效）。分级：配发资产只读 |
+| `bind_asset` | `botId`,`assetId`,`mode` | ⚠️ 绑定（配发/私发；后果：向 bot 磁盘写入文件并重建 runner，下一轮生效） |
+| `unbind_asset` | `botId`,`assetId` | ⚠️ 解绑（后果：删除盘上产物；私发副本内容随卸载丢失） |
+| `rematerialize` | `botId` | ⚠️ 强制重物化（确定性/幂等；漂移修复与扇出失败重试路径） |
 
 每工具输出双形态：`content[].text`（中文人类可读摘要）+ `structuredContent`（结构化数据）。
 secret 红线：结果永不回显 secret（写路径入参可带，结果经 masked echo + sanitize 双保险剥离）。

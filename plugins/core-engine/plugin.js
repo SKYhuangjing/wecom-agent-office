@@ -19,6 +19,7 @@ import { Timeline } from './timeline.js';
 import { createProgressor } from './progressor.js';
 import { maskOutbound } from './middleware.js';
 import { loadBots, revalidateAll, validateBot } from './bots.js';
+import { loadAssets, noopMaterializer } from './assets.js';
 import { companyOps, createApi } from './api.js';
 
 const isBotRecord = (bot) => bot != null && typeof bot === 'object' && typeof bot.id === 'string' && bot.id !== '';
@@ -45,6 +46,7 @@ export default {
       ?? process.env.WAO_HOME
       ?? join(process.cwd(), 'data');
     const botsFile = join(dataDir, 'bots.json');
+    const assetsFile = join(dataDir, 'assets.json');
 
     // Shared facilities + default port implementations (T11). The engine
     // consumes these same objects directly; the port registration publishes
@@ -61,6 +63,13 @@ export default {
     const ledgers = new Map();        // botId → { ledger, cache } (cached: seq counters must stay monotonic)
     const offlineReasons = new Map(); // botId → why the bot is offline (API shows it)
     let doc = { bots: [] };
+    let assetsDoc = { assets: [] }; // data/assets.json registry (DESIGN-ASSETS §2.1)
+
+    // 资产物化管线 (W3 T1): injectable seam — every bind/unbind/patch/delete
+    // fans materialization through here. T1 ships the noop (skipped receipts);
+    // T2 swaps in the real provider-port pipeline (materializeAssets hooks,
+    // manifests) without touching the API contracts above the seam.
+    const materializer = noopMaterializer();
 
     const ledgerFor = (botId) => {
       let pair = ledgers.get(botId);
@@ -136,6 +145,21 @@ export default {
       return runner;
     };
 
+    // 轻量重 attach (DESIGN-ASSETS §3.2): binding/asset changes replace the
+    // RUNNER table entry only — no drain, no adapter rebuild; an in-flight run
+    // keeps the old runner and finishes on it, the next run picks up the new
+    // one. Bots that are offline/disabled (no runner) re-runner at attach.
+    const refreshRunner = (bot) => {
+      if (!runners.has(bot.id)) return false;
+      try {
+        runners.set(bot.id, makeRunner(bot));
+        return true;
+      } catch (err) {
+        log.warn?.(`core-engine: runner refresh failed for ${bot.id}: ${err?.message ?? err}（旧 runner 保留，下轮仍可用）`);
+        return false;
+      }
+    };
+
     const detach = (botId, reason = 'offline') => {
       const adapter = adapters.get(botId);
       if (adapter != null && typeof adapter.stop === 'function') {
@@ -200,6 +224,7 @@ export default {
     // Boot + reload phase 4 (§1/§2.5): every other plugin's ports are live.
     ctx.afterAllActivated(() => {
       doc = loadBots(botsFile);
+      assetsDoc = loadAssets(assetsFile);
       const { bad } = revalidateAll(doc.bots, ports);
       for (const { bot, errors } of bad) {
         log.warn?.(`core-engine: bot ${JSON.stringify(bot?.id)} validation drift: ${errors.join('; ')}`);
@@ -240,10 +265,13 @@ export default {
     // whole closure is a new world and api.js must never see the old one.
     const state = {
       botsFile,
+      assetsFile,
       engine,
       timeline,
       ports,
       log,
+      materializer,
+      refreshRunner,
       ledgerFor,
       attach,
       detach,
@@ -251,6 +279,7 @@ export default {
       runnerFor: (botId) => runners.get(botId) ?? null,
       offlineReason: (botId) => offlineReasons.get(botId) ?? null,
       get doc() { return doc; },
+      get assetsDoc() { return assetsDoc; },
     };
     ctx.http.register({ prefix: '/api', handler: createApi({ getState: () => state }) });
     // Company operations for the mcp-gateway plugin (W1 T2): the same api.js

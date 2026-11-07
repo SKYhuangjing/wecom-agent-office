@@ -6,6 +6,10 @@
 // and EVERY JSON response is scrubbed by sanitize before serialization:
 // §8 — 响应永不回显 secret.
 import { saveBots, validateBot } from './bots.js';
+import {
+  bindingSummary, bindAsset, maskAsset, newAssetId, rematerializeBots,
+  restoreMaskedContent, saveAssets, unbindAsset, validateAsset,
+} from './assets.js';
 import { DRAIN_REFUSAL_TEXT } from './engine.js';
 
 const BODY_LIMIT_BYTES = 64 * 1024;
@@ -77,6 +81,10 @@ const maskedBotEcho = (state, bot) => {
   const out = structuredClone(bot);
   maskObjectSchemaFields(state.ports?.getChannel?.(bot.channel)?.accountSchema, out.account);
   maskObjectSchemaFields(state.ports?.getProvider?.(bot.provider)?.configSchema, out.providerConfig);
+  // §2.2: bindings echo as a SUMMARY (resolved name/type/mode, behind-version,
+  // deleted-source) — exclusive snapshots carry full content (possibly mcp
+  // secrets) and never leave the registry in a bot echo.
+  if (Array.isArray(out.assets)) out.assets = bindingSummary(state.assetsDoc.assets, bot);
   return out;
 };
 
@@ -115,6 +123,19 @@ const idOf = (m) => {
 };
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const findBot = (state, id) => state.doc.bots.find((b) => isObject(b) && b.id === id) ?? null;
+const findAsset = (state, id) => state.assetsDoc.assets.find((a) => isObject(a) && a.id === id) ?? null;
+
+// Bindings pointing at one asset (any bot) — the DELETE/PATCH fan-out set.
+const botsBoundTo = (state, assetId, mode) => state.doc.bots.filter((b) => isObject(b)
+  && Array.isArray(b.assets) && b.assets.some((x) => isObject(x) && x.assetId === assetId
+  && (mode === undefined || x.mode === mode)));
+
+// Public asset row: position-masked echo (mcp env/headers → __MASKED__) plus
+// the live binding count (§8.1 清单：绑定数).
+const publicAsset = (state, asset) => ({
+  ...maskAsset(asset),
+  bindings: botsBoundTo(state, asset.id).length,
+});
 
 // Write-only PATCH semantics (M3 UI red line: secrets never echo). The editor
 // loads a sanitized record, so what a PATCHed block CANNOT see must read as
@@ -287,6 +308,9 @@ async function agentsHandler({ res, state }) {
 
 async function createBotOp(state, bot) {
   if (!isObject(bot)) throw httpError(400, 'bot record must be a JSON object');
+  // Bindings have a dedicated surface with the §2.3 validation chain — a bot
+  // record carrying assets would bypass it (duplicate binds, conflict matrix).
+  if (bot.assets !== undefined) throw httpError(400, 'assets 绑定不接受直写：请用 POST /api/bots/:id/assets 绑定（专用校验面）');
   if (typeof bot.id === 'string' && state.doc.bots.some((b) => isObject(b) && b.id === bot.id)) {
     throw httpError(400, `bot id already exists: ${bot.id}`);
   }
@@ -314,6 +338,9 @@ async function patchBotOp(state, id, patchBody) {
   // createdAt is registry truth (mirrors createBotHandler's refusal): a patch
   // body carrying it is rejected, never silently merged into the 工牌.
   if (patchBody.createdAt !== undefined) throw httpError(400, 'createdAt is set by the server, not accepted');
+  // Same dedicated-surface rule as createBotOp: binding mutations must run
+  // the §2.3 chain, never a blind merge.
+  if (patchBody.assets !== undefined) throw httpError(400, 'assets 绑定不接受直写：请用 POST/DELETE /api/bots/:id/assets 绑定与解绑（专用校验面）');
   // Resolve write-only fields BEFORE the merge (the rules read the OLD
   // record's stored values); the schemas are the merged channel/provider's —
   // a patch may retarget either port id in the same request.
@@ -365,6 +392,16 @@ async function deleteBotOp(state, id) {
       await port.removeConfig(bot, { log: state.log });
     } catch (err) {
       state.log?.warn?.(`core-engine: removeConfig failed for ${bot.id}: ${err?.message ?? err}`);
+    }
+  }
+  // §3.2 bot DELETE row: the asset pipeline's cleanup hook (T2 implements the
+  // real one; the noop materializer answers skipped). Same best-effort
+  // contract as removeConfig — a cleanup failure never resurrects the bot.
+  if (state.materializer != null && typeof state.materializer.removeAssets === 'function') {
+    try {
+      await state.materializer.removeAssets(bot, { log: state.log });
+    } catch (err) {
+      state.log?.warn?.(`core-engine: removeAssets failed for ${bot.id}: ${err?.message ?? err}`);
     }
   }
   state.doc.bots.splice(state.doc.bots.indexOf(bot), 1);
@@ -602,6 +639,183 @@ async function sendHandler({ req, res, state }) {
   sendJson(res, 200, await sendOp(state, { botId, chatKey, content }));
 }
 
+// —— 资产面（W3 T1，DESIGN-ASSETS §2/§8）—————————————————————————————————
+// One registry, two write faces: REST (origin:'operator') and the MCP
+// companyOps tools (origin:'mcp', §8.1 分级 — create forced exclusive-only at
+// BIND time, update/delete refused for operator assets). Both faces call the
+// same *Op below; `origin`/`mcpFace` parameters are the only face-dependent
+// behavior. Materialization rides the injectable state.materializer (T1:
+// noop → {writes:[], skipped:'not-equipped'}; T2: the real provider pipeline).
+
+function listAssetsOp(state) {
+  return { assets: state.assetsDoc.assets.filter(isObject).map((a) => publicAsset(state, a)) };
+}
+
+function getAssetOp(state, id) {
+  const asset = findAsset(state, id);
+  if (asset == null) throw httpError(404, 'asset not found');
+  return { asset: publicAsset(state, asset) };
+}
+
+const SERVER_SET_FIELDS = ['id', 'origin', 'version', 'createdAt', 'updatedAt'];
+
+async function createAssetOp(state, body, { origin = 'operator' } = {}) {
+  if (!isObject(body)) throw httpError(400, 'asset must be a JSON object');
+  // Registry truth, not editable record data (createdAt precedent).
+  for (const k of SERVER_SET_FIELDS) {
+    if (body[k] !== undefined) throw httpError(400, `${k} is set by the server, not accepted`);
+  }
+  const now = Date.now();
+  const asset = {
+    id: newAssetId(state.assetsDoc.assets.map((a) => a?.id)),
+    type: body.type,
+    name: body.name,
+    ...(body.description !== undefined ? { description: body.description } : {}),
+    content: body.content,
+    origin,
+    version: 1,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const errors = validateAsset(asset, { others: state.assetsDoc.assets });
+  if (errors.length > 0) {
+    const err = httpError(400, errors.join('; '));
+    err.errors = errors;
+    throw err;
+  }
+  state.assetsDoc.assets.push(asset);
+  saveAssets(state.assetsFile, state.assetsDoc);
+  return { asset: publicAsset(state, asset) };
+}
+
+async function updateAssetOp(state, id, patchBody, { mcpFace = false } = {}) {
+  const asset = findAsset(state, id);
+  if (asset == null) throw httpError(404, 'asset not found');
+  if (!isObject(patchBody)) throw httpError(400, 'patch body must be a JSON object');
+  // §8.1 MCP 写面分级: the Agent face is read-only towards 配发 assets —
+  // shared-pool changes belong to the console/REST.
+  if (mcpFace && asset.origin !== 'mcp') {
+    throw httpError(403, '共享（配发）资产的改动请走控制台/REST（本写面仅允许改动 Agent 自建资产）');
+  }
+  for (const k of SERVER_SET_FIELDS) {
+    if (patchBody[k] !== undefined) throw httpError(400, `${k} is set by the server, not accepted`);
+  }
+  // Type is the binding contract (provider×type support, materialization
+  // targets) — retyping a bound asset is refused, not remapped.
+  if (patchBody.type !== undefined && patchBody.type !== asset.type) {
+    throw httpError(400, '资产类型不可变更（type immutable）');
+  }
+  if (patchBody.content !== undefined && !isObject(patchBody.content)) {
+    throw httpError(400, 'content must be a JSON object');
+  }
+  const merged = {
+    ...asset,
+    ...(patchBody.name !== undefined ? { name: patchBody.name } : {}),
+    ...(patchBody.description !== undefined ? { description: patchBody.description } : {}),
+    ...(patchBody.content !== undefined
+      ? { content: restoreMaskedContent(patchBody.content, asset.content, asset.type) }
+      : {}),
+  };
+  const errors = validateAsset(merged, { others: state.assetsDoc.assets.filter((a) => a !== asset) });
+  if (errors.length > 0) {
+    const err = httpError(400, errors.join('; '));
+    err.errors = errors;
+    throw err;
+  }
+  merged.version = asset.version + 1; // §2.1: every PATCH bumps — the exclusive snapshot anchor
+  merged.updatedAt = Date.now();
+  Object.assign(asset, merged);
+  saveAssets(state.assetsFile, state.assetsDoc);
+  // §3.2 eager fan-out: every shared-bound bot rematerializes now, per-bot
+  // isolated; exclusive snapshots deliberately do not follow (§6).
+  const receipt = await rematerializeBots(state, botsBoundTo(state, id, 'shared'));
+  return { asset: publicAsset(state, asset), ...receipt };
+}
+
+async function deleteAssetOp(state, id, { mcpFace = false } = {}) {
+  const asset = findAsset(state, id);
+  if (asset == null) throw httpError(404, 'asset not found');
+  if (mcpFace && asset.origin !== 'mcp') {
+    throw httpError(403, '共享（配发）资产的删除请走控制台/REST（本写面仅允许删除 Agent 自建资产）');
+  }
+  // §3.2 DELETE row: shared bindings go (and their bots rematerialize the
+  // cleanup); exclusive bindings KEEP their snapshots and keep working.
+  let removedBindings = 0;
+  let keptExclusive = 0;
+  const touched = [];
+  for (const bot of botsBoundTo(state, id)) {
+    const kept = [];
+    for (const b of bot.assets) {
+      if (!isObject(b) || b.assetId !== id) { kept.push(b); continue; }
+      if (b.mode === 'shared') { removedBindings++; touched.push(bot); } else { keptExclusive++; kept.push(b); }
+    }
+    bot.assets = kept;
+  }
+  saveBots(state.botsFile, state.doc);
+  state.assetsDoc.assets.splice(state.assetsDoc.assets.indexOf(asset), 1);
+  saveAssets(state.assetsFile, state.assetsDoc);
+  const receipt = await rematerializeBots(state, touched);
+  return {
+    ok: true,
+    id,
+    removedBindings,
+    keptExclusive,
+    ...receipt,
+    ...(keptExclusive > 0 ? { note: `源资产已删除，${keptExclusive} 个私发（exclusive）副本仍生效（快照保留在各自 bot 记录中）` } : {}),
+  };
+}
+
+// POST /api/bots/:id/rematerialize-assets (§8.1): deterministic re-write for
+// one bot — the safe auto-repair path for §3.2 fan-out failures and drift.
+async function rematerializeOp(state, botId) {
+  const bot = findBot(state, botId);
+  if (bot == null) throw httpError(404, 'bot not found');
+  const receipt = await rematerializeBots(state, [bot]);
+  if (receipt.failed.length > 0) {
+    throw httpError(400, `资产重物化失败（bot ${botId}）：${receipt.failed[0].error}`);
+  }
+  return { ok: true, botId, ...receipt };
+}
+
+async function listAssetsHandler({ res, state }) {
+  sendJson(res, 200, listAssetsOp(state));
+}
+
+async function getAssetHandler({ res, m, state }) {
+  sendJson(res, 200, getAssetOp(state, idOf(m)));
+}
+
+async function createAssetHandler({ req, res, state }) {
+  sendJson(res, 200, await createAssetOp(state, await readBody(req)));
+}
+
+async function patchAssetHandler({ req, res, m, state }) {
+  const id = idOf(m);
+  if (findAsset(state, id) == null) throw httpError(404, 'asset not found'); // 404 wins over body errors, as before
+  sendJson(res, 200, await updateAssetOp(state, id, await readBody(req)));
+}
+
+async function deleteAssetHandler({ res, m, state }) {
+  sendJson(res, 200, await deleteAssetOp(state, idOf(m)));
+}
+
+async function bindAssetHandler({ req, res, m, state }) {
+  const botId = idOf(m);
+  if (findBot(state, botId) == null) throw httpError(404, 'bot not found'); // 404 wins over body errors, as before
+  sendJson(res, 200, await bindAsset(state, botId, await readBody(req)));
+}
+
+async function unbindAssetHandler({ res, m, state }) {
+  const botId = idOf(m);
+  const assetId = (() => { try { return decodeURIComponent(m[2]); } catch { return m[2]; } })();
+  if (findBot(state, botId) == null) throw httpError(404, 'bot not found');
+  sendJson(res, 200, await unbindAsset(state, botId, assetId));
+}
+
+async function rematerializeHandler({ res, m, state }) {
+  sendJson(res, 200, await rematerializeOp(state, idOf(m)));
+}
+
 const ROUTES = [
   ['GET', /^\/agents$/, agentsHandler],
   ['GET', /^\/ports$/, portsHandler],
@@ -611,6 +825,14 @@ const ROUTES = [
   ['DELETE', /^\/bots\/([^/]+)$/, deleteBotHandler],
   ['POST', /^\/bots\/([^/]+)\/toggle$/, toggleBotHandler],
   ['POST', /^\/bots\/([^/]+)\/test$/, testBotHandler],
+  ['POST', /^\/bots\/([^/]+)\/assets$/, bindAssetHandler],
+  ['DELETE', /^\/bots\/([^/]+)\/assets\/([^/]+)$/, unbindAssetHandler],
+  ['POST', /^\/bots\/([^/]+)\/rematerialize-assets$/, rematerializeHandler],
+  ['GET', /^\/assets$/, listAssetsHandler],
+  ['GET', /^\/assets\/([^/]+)$/, getAssetHandler],
+  ['POST', /^\/assets$/, createAssetHandler],
+  ['PATCH', /^\/assets\/([^/]+)$/, patchAssetHandler],
+  ['DELETE', /^\/assets\/([^/]+)$/, deleteAssetHandler],
   ['GET', /^\/ledger$/, ledgerHandler],
   ['GET', /^\/session$/, sessionHandler],
   ['GET', /^\/export$/, exportHandler],
@@ -639,6 +861,16 @@ export function companyOps(state) {
     ledger: ({ bot, chat }) => ledgerOp(state, { bot, chat }),
     timeline: ({ bot, windowMs }) => timelineOp(state, { bot, windowMs }),
     send: ({ botId, chatKey, content }) => sendOp(state, { botId, chatKey, content }),
+    // 资产面 (W3 T1, §8.1): the MCP write face. createAsset is stamped
+    // origin:'mcp' (Agent-created assets are exclusive-only at bind time);
+    // updateAsset/deleteAsset carry the 配发-asset refusal for operator
+    // assets; bind/unbind/rematerialize share the REST handlers' exact ops.
+    createAsset: (asset) => createAssetOp(state, asset, { origin: 'mcp' }),
+    updateAsset: (id, patch) => updateAssetOp(state, id, patch, { mcpFace: true }),
+    deleteAsset: (id) => deleteAssetOp(state, id, { mcpFace: true }),
+    bindAsset: (botId, body) => bindAsset(state, botId, body),
+    unbindAsset: (botId, assetId) => unbindAsset(state, botId, assetId),
+    rematerialize: (botId) => rematerializeOp(state, botId),
   };
 }
 

@@ -6,6 +6,27 @@
 
 ### Added
 
+- 资产注册表与双面 API（W3 T1，DESIGN-ASSETS rev.2 §2/§4/§8）：新模块 assets.js——
+  `data/assets.json` 注册表（atomicWrite/0600 纪律同 bots.json）、五类资产内容校验
+  （slug 统一禁点、控制字符、原型污染键、体积上限、mcp 单 server 恰一形态、sse/ws
+  与 URL 内嵌凭据拒绝文案、(type,name) 唯一）、mcp env/headers 按位置全掩（`__MASKED__`
+  同位置回传保库值，strip 形键名防误删回填）、绑定模型存 bots.json（exclusive 快照
+  +snapshotVersion/snapshotType/snapshotName）、§2.3 冲突矩阵校验链与
+  bindAsset/unbindAsset 回执。物化管线经可注入 `materializer` 接口（T1 noop：
+  `{writes:[], skipped:'not-equipped'}`，绑定校验钩 checkBind/外来守卫/跨 bot 同文件
+  检测留好——T2 换真实现）。
+- /api 资产路由（HTTP+companyOps 双面同源）：GET/POST /api/assets、GET/PATCH/DELETE
+  /api/assets/:id（PATCH shared 扇出回执 {rematerialized,failed}，DELETE 回执
+  {removedBindings,keptExclusive,…}）、POST /api/bots/:id/assets、DELETE
+  /api/bots/:id/assets/:assetId、POST /api/bots/:id/rematerialize-assets；GET /api/bots
+  回显绑定摘要（name/type/mode/exclusiveBehind/sourceDeleted，不含内容）；bot
+  POST/PATCH 拒绝 assets 直写（走专用绑定面）；bot DELETE 追加 removeAssets（尽力而为）。
+- companyOps 增 6 面（MCP 写面分级 §8.1）：createAsset 强制 origin:'mcp'；updateAsset/
+  deleteAsset 对配发（非 Agent 自建）资产 403 只读指引；bindAsset/unbindAsset/
+  rematerialize 与 REST 同函数。mcp-gateway 工具面注册 create_asset/update_asset/
+  delete_asset/bind_asset/unbind_asset/rematerialize（危险级带后果确认文案）。
+- 轻量重 attach（plugin.js refreshRunner）：绑定/资产变化仅换 runners 表项，不 drain
+  不重建 adapter，在跑 run 持旧 runner 跑完（§3.2）。
 - `companyOps` 服务（W1 T2）：api.js 各路由的业务核心抽为同文件 `*Op` 函数并经
   `companyOps(state)` 发布到 services 容器（含 `sanitize` 与只读 `botDetail` 聚合），供
   mcp-gateway 插件按次取用——REST 与 MCP 工具共用同一函数源，HTTP 行为零变化。

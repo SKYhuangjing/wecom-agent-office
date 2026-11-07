@@ -1,8 +1,9 @@
-// MCP tool surface (W1 T2): the company's 13 tools exposed over /mcp —
+// MCP tool surface (W1 T2): the company's 19 tools exposed over /mcp —
 // Chinese names/copy per README §4.2 公司话词表, dual output for every tool
 // (content[].text = human-readable Chinese summary, structuredContent =
 // machine payload), and consequence copy on the dangerous ones
-// (offboard / department_toggle / broadcast) so an Agent can read the impact
+// (offboard / department_toggle / broadcast + the W3 asset trio
+// bind_asset / unbind_asset / rematerialize) so an Agent can read the impact
 // back to its user before/after acting.
 //
 // Reuse rule (plan W1 T2): tools call the companyOps service (core-engine
@@ -109,7 +110,7 @@ function appendPortHints(err, ops) {
   } catch { /* hint is best-effort */ }
 }
 
-// —— the 13 tools ———————————————————————————————————————————————————————
+// —— the 19 tools ———————————————————————————————————————————————————————
 const TOOLS = [
   {
     name: 'list_employees',
@@ -458,6 +459,158 @@ const TOOLS = [
       // line dropped (在册 ≠ 工作中+待命+休假 when anyone is offline).
       lines.push(`- 员工：在册 ${agents.length} 人（工作中 ${n('working')}／待命 ${n('idle')}／离线 ${n('offline')}／休假 ${n('offduty')}）`);
       return ok(lines.join('\n'), { uptimeSec: kops.uptimeSec(), departments: plugins, agents: ops.sanitize(agents) });
+    },
+  },
+
+  // —— 资产面（W3 T1，DESIGN-ASSETS §8.1 MCP 写面分级）———————————————————
+  // create 强制 origin:'mcp'（服务端盖章）→ 绑定时仅可 exclusive（§2.3 兜底，
+  // 在 companyOps.bindAsset 同一校验链里）；update/delete 对配发（shared 池）
+  // 资产只读——运营者资产的控制台/REST 专属；bind/unbind/rematerialize 为
+  // 危险级，描述带后果确认文案，回执附 writes 清单。
+  {
+    name: 'create_asset',
+    description: '登记公司资产（五类：skill 技能/memory 记忆/mcp/prompt 提示词/tool 工具）。经本工具创建的资产标记来源为 Agent（origin:mcp），仅可私发（exclusive）绑定；内容校验红线同 REST（名称 slug 禁点、体积上限、控制字符、MCP 仅 stdio/http 形态、URL 拒内嵌凭据）。回显不含密钥：mcp env/headers 值按位置掩码为 __MASKED__。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        asset: {
+          type: 'object',
+          description: '资产记录：{type:"skill"|"memory"|"mcp"|"prompt"|"tool", name, description?, content}。content 按 type 各异：skill={name,body}；mcp={servers:{id:{command,args?,env?}|{type:"http",url,headers?}}}；memory={notes:[]}；prompt={text}；tool={kind:"rtk"|"ripgrep"}。id/version/origin/createdAt 由服务端生成。',
+        },
+      },
+      required: ['asset'],
+      additionalProperties: false,
+    },
+    async run({ services, args }) {
+      const ops = opsNow(services);
+      const { asset } = await ops.createAsset(args.asset);
+      return ok(
+        `✅ 资产已登记：${asset.name}（${asset.type}，id ${asset.id}，来源 Agent）。\n`
+        + '- 绑定限制：Agent 自建资产仅可私发（exclusive）绑定到单个 bot\n'
+        + '- 密钥回显：mcp env/headers 值已按位置掩码（__MASKED__），库中保留原值',
+        { asset: ops.sanitize(asset) },
+      );
+    },
+  },
+  {
+    name: 'update_asset',
+    description: '更新资产内容（patch 语义：只传要改的 name/description/content；version 自增，配发（shared）绑定的 bot 自动重物化，私发（exclusive）快照不跟随）。分级：共享（配发）资产的改动请走控制台/REST——本工具仅允许修改 Agent 自建（origin:mcp）的资产。回传 __MASKED__ 值按位置保留库中原值。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assetId: { type: 'string', description: '资产 id（ast-…）' },
+        patch: { type: 'object', description: '要合并的字段块，即 PATCH /api/assets/:id 的 body' },
+      },
+      required: ['assetId', 'patch'],
+      additionalProperties: false,
+    },
+    async run({ services, args }) {
+      const ops = opsNow(services);
+      const r = await ops.updateAsset(args.assetId, args.patch);
+      const fan = r.rematerialized.length > 0
+        ? `配发绑定已重物化：${r.rematerialized.join('、')}${r.failed.length > 0 ? `；失败 ${r.failed.map((f) => `${f.botId}（${f.error}）`).join('、')}` : ''}`
+        : '无配发（shared）绑定需要重物化';
+      return ok(
+        `✅ 资产已更新：${r.asset.name} → v${r.asset.version}。\n- ${fan}`,
+        { asset: ops.sanitize(r.asset), rematerialized: r.rematerialized, failed: r.failed },
+      );
+    },
+  },
+  {
+    name: 'delete_asset',
+    description: '删除资产：配发（shared）绑定随删除解绑并重物化清理；私发（exclusive）副本保留快照继续生效。分级：共享（配发）资产的删除请走控制台/REST——本工具仅允许删除 Agent 自建（origin:mcp）的资产。执行前务必向用户复述后果并确认。',
+    inputSchema: {
+      type: 'object',
+      properties: { assetId: { type: 'string', description: '资产 id（ast-…）' } },
+      required: ['assetId'],
+      additionalProperties: false,
+    },
+    async run({ services, args, log }) {
+      const ops = opsNow(services);
+      const r = await ops.deleteAsset(args.assetId);
+      log?.info?.(`mcp: delete_asset ${args.assetId}`);
+      return ok(
+        `🗑️ 资产已删除：${args.assetId}。\n`
+        + `- 解绑配发（shared）绑定 ${r.removedBindings} 个${r.rematerialized.length > 0 ? `，已重物化清理：${r.rematerialized.join('、')}` : ''}\n`
+        + (r.keptExclusive > 0 ? `- 保留私发（exclusive）副本 ${r.keptExclusive} 个：源资产已删除，副本仍生效\n` : ''),
+        { id: r.id, removedBindings: r.removedBindings, keptExclusive: r.keptExclusive, rematerialized: r.rematerialized, failed: r.failed },
+      );
+    },
+  },
+  {
+    name: 'bind_asset',
+    description: '⚠️ 危险操作：将资产绑定到 bot（配发 shared=同源跟随更新／私发 exclusive=绑定时刻内容快照）。将向 bot 磁盘写入技能/配置文件并重建 runner，下一轮生效。Agent 自建资产（origin:mcp）仅可私发。同名资产/同 serverId MCP/跨 bot 同文件等冲突会被拒绑并指名。执行前务必向用户复述后果并确认。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        botId: { type: 'string', description: '工牌号（bot id）' },
+        assetId: { type: 'string', description: '资产 id（ast-…）' },
+        mode: { type: 'string', enum: ['shared', 'exclusive'], description: 'shared=配发（同源跟随更新）；exclusive=私发（内容快照）' },
+      },
+      required: ['botId', 'assetId', 'mode'],
+      additionalProperties: false,
+    },
+    async run({ services, args, log }) {
+      const ops = opsNow(services);
+      const r = await ops.bindAsset(args.botId, { assetId: args.assetId, mode: args.mode });
+      log?.info?.(`mcp: bind_asset ${args.assetId} -> ${args.botId} (${args.mode})`);
+      const modeZh = r.binding.mode === 'exclusive' ? '私发（exclusive）' : '配发（shared）';
+      const lines = [
+        `✅ 已绑定：${args.botId} ← ${r.binding.name}（${modeZh}）。`,
+        '⚠️ 后果说明：将向 bot 磁盘写入技能/配置文件并重建 runner，下一轮生效。',
+      ];
+      for (const w of r.warnings ?? []) lines.push(`- ⚠️ ${w}`);
+      for (const s of r.suppressed ?? []) lines.push(`- 同名单资产 ${s.assetId} 被私发副本压制（配发条目暂不生效）`);
+      if (r.failed.length > 0) lines.push(`- ⚠️ 重物化失败：${r.failed.map((f) => `${f.botId}（${f.error}）`).join('、')}，可用 rematerialize 重试`);
+      else if (r.skipped) lines.push('- 物化管线未装备（not-equipped）：绑定已生效，产物文件待物化管线（W3 T2）落地');
+      return ok(lines.join('\n'), { receipt: ops.sanitize(r) });
+    },
+  },
+  {
+    name: 'unbind_asset',
+    description: '⚠️ 危险操作：解绑 bot 的资产。将删除该 bot 盘上的资产产物；私发（exclusive）副本内容随卸载丢失。执行前务必向用户复述后果并确认。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        botId: { type: 'string', description: '工牌号（bot id）' },
+        assetId: { type: 'string', description: '资产 id（ast-…）' },
+      },
+      required: ['botId', 'assetId'],
+      additionalProperties: false,
+    },
+    async run({ services, args, log }) {
+      const ops = opsNow(services);
+      const r = await ops.unbindAsset(args.botId, args.assetId);
+      log?.info?.(`mcp: unbind_asset ${args.assetId} from ${args.botId}`);
+      const lines = [
+        `✅ 已解绑：${args.botId} ← ${r.removed.name ?? args.assetId}。`,
+        '⚠️ 后果说明：将删除该 bot 盘上的资产产物。',
+      ];
+      if (r.removed.exclusiveContentLost) lines.push('- 私发（exclusive）副本内容随卸载丢失（快照已一并移除）');
+      if (r.failed.length > 0) lines.push(`- ⚠️ 清理重物化失败：${r.failed.map((f) => `${f.botId}（${f.error}）`).join('、')}`);
+      return ok(lines.join('\n'), { receipt: ops.sanitize(r) });
+    },
+  },
+  {
+    name: 'rematerialize',
+    description: '⚠️ 危险操作：按当前绑定强制重写该 bot 的全部资产产物文件（确定性序列化，幂等可重试；漂移修复/扇出失败重试用）。将按当前绑定重写该 bot 的全部资产产物文件。执行前务必向用户确认。',
+    inputSchema: {
+      type: 'object',
+      properties: { botId: { type: 'string', description: '工牌号（bot id）' } },
+      required: ['botId'],
+      additionalProperties: false,
+    },
+    async run({ services, args, log }) {
+      const ops = opsNow(services);
+      const r = await ops.rematerialize(args.botId);
+      log?.info?.(`mcp: rematerialize ${args.botId}`);
+      const writes = r.writes.length > 0
+        ? r.writes.map((w) => `${w.action} ${w.path}`).join('；')
+        : '（物化管线未装备：writes 为空）';
+      return ok(
+        `✅ 已重物化：${args.botId}（写入清单：${writes}）。下一轮 run 生效。`,
+        { botId: args.botId, writes: r.writes, skipped: r.skipped ?? null },
+      );
     },
   },
 ];

@@ -9,7 +9,7 @@
 // consequence copy (offboard / department_toggle / broadcast).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -89,6 +89,9 @@ const writePluginDir = (dir, src) => {
 const SECRET_PW = '{{SECRET_mcptools1}}';
 const SECRET_KEY = 'sk-mcp-abc123';
 const SECRET_TOKEN = 'tok-mcp-456';
+// W3: an mcp asset env secret — the position-masking red line must keep this
+// out of every tool response too (create/update echoes are masked).
+const SECRET_MCP_ENV = '{{SECRET_mcpenv1}}';
 const BOT_M1 = {
   id: 'm1', name: '测试员工', enabled: true, channel: 'fakechan',
   account: { endpoint: 'http://mcp.local', secret: SECRET_PW },
@@ -101,6 +104,8 @@ const TOOL_NAMES = [
   'list_employees', 'get_employee', 'hire', 'update_employee', 'offboard',
   'set_duty', 'probation_test', 'broadcast', 'list_departments',
   'department_toggle', 'work_log', 'work_timeline', 'company_state',
+  'create_asset', 'update_asset', 'delete_asset', 'bind_asset',
+  'unbind_asset', 'rematerialize',
 ];
 
 let kernel = null;
@@ -165,7 +170,7 @@ const waitFor = async (predicate, label, timeoutMs = 5000) => {
   }
 };
 
-test('tools/list: the 13-tool roster with Chinese descriptions and object schemas', async () => {
+test('tools/list: the 19-tool roster with Chinese descriptions and object schemas', async () => {
   const { body } = await rpcCall({ jsonrpc: '2.0', id: 'list', method: 'tools/list' });
   const tools = body.result.tools;
   assert.deepEqual(tools.map((t) => t.name), TOOL_NAMES);
@@ -175,7 +180,7 @@ test('tools/list: the 13-tool roster with Chinese descriptions and object schema
     assert.equal(typeof t.inputSchema.properties, 'object');
   }
   // dangerous tools declare themselves in the description copy
-  for (const name of ['offboard', 'broadcast', 'department_toggle']) {
+  for (const name of ['offboard', 'broadcast', 'department_toggle', 'bind_asset', 'unbind_asset', 'rematerialize']) {
     assert.match(tools.find((t) => t.name === name).description, /危险操作/);
   }
   // the probe's success judge is the result code, not isError
@@ -474,9 +479,73 @@ test('dirty arguments: schema violations are isError results, unknown/malformed 
   assert.equal(noParams.body.error.code, -32602, 'absent params default to {} → unknown-name shape');
 });
 
+test('asset tools (W3 T1): grading enforced, danger copy in receipts, masking on the wire', async () => {
+  // a fresh employee to bind assets to
+  await call('hire', { bot: { ...BOT_M1, id: 'am1', providerConfig: { cwd: '/tmp', mode: 'a' } } });
+
+  // create via the Agent face → origin:mcp, env values masked in the echo
+  const created = await call('create_asset', {
+    asset: { type: 'mcp', name: 'agent-mcp', content: { servers: { probe: { command: 'node', env: { TOKEN: SECRET_MCP_ENV } } } } },
+  });
+  assert.equal(created.isError, undefined);
+  assert.match(created.content[0].text, /资产已登记：agent-mcp（mcp，id ast-/);
+  const asset = created.structuredContent.asset;
+  assert.equal(asset.origin, 'mcp');
+  assert.equal(asset.content.servers.probe.env.TOKEN, '__MASKED__', 'position masking on the MCP tool face');
+
+  // bind grading: Agent-made asset × shared → refused; exclusive → ok, with
+  // the consequence copy and the not-equipped materializer note
+  const sharedRefused = await call('bind_asset', { botId: 'am1', assetId: asset.id, mode: 'shared' });
+  assert.equal(sharedRefused.isError, true);
+  assert.match(sharedRefused.structuredContent.error, /Agent 创建的资产仅可私发（exclusive）绑定/);
+  const bound = await call('bind_asset', { botId: 'am1', assetId: asset.id, mode: 'exclusive' });
+  assert.equal(bound.isError, undefined);
+  assert.match(bound.content[0].text, /将向 bot 磁盘写入技能\/配置文件并重建 runner，下一轮生效/);
+  assert.match(bound.content[0].text, /物化管线未装备/);
+  assert.equal(bound.structuredContent.receipt.skipped, 'not-equipped');
+
+  // update/delete grading: operator (配发) assets are read-only here — an
+  // operator asset enters via the REST face
+  const rest = await fetch(`${base()}/api/assets`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ type: 'prompt', name: 'operator-made', content: { text: 'O' } }),
+  });
+  assert.equal(rest.status, 200);
+  const operatorAsset = (await rest.json()).asset;
+  const refused = await call('update_asset', { assetId: operatorAsset.id, patch: { content: { text: 'X' } } });
+  assert.equal(refused.isError, true);
+  assert.match(refused.structuredContent.error, /共享（配发）资产的改动请走控制台\/REST/);
+  const refusedDel = await call('delete_asset', { assetId: operatorAsset.id });
+  assert.equal(refusedDel.isError, true);
+  assert.match(refusedDel.structuredContent.error, /共享（配发）资产的删除请走控制台\/REST/);
+
+  // own asset: masked round-trip update keeps the stored secret on disk
+  const upd = await call('update_asset', {
+    assetId: asset.id,
+    patch: { content: { servers: { probe: { command: 'node', env: { TOKEN: '__MASKED__' } } } } },
+  });
+  assert.equal(upd.isError, undefined);
+  assert.equal(upd.structuredContent.asset.version, 2);
+  const registry = JSON.parse(readFileSync(join(dataDir, 'assets.json'), 'utf8'));
+  assert.equal(registry.assets.find((a) => a.id === asset.id).content.servers.probe.env.TOKEN, SECRET_MCP_ENV,
+    'sentinel round-trip over the tool face keeps the stored value');
+
+  // rematerialize + unbind + delete on the own asset
+  const remat = await call('rematerialize', { botId: 'am1' });
+  assert.equal(remat.isError, undefined);
+  assert.match(remat.content[0].text, /已重物化：am1/);
+  const un = await call('unbind_asset', { botId: 'am1', assetId: asset.id });
+  assert.equal(un.isError, undefined);
+  assert.match(un.content[0].text, /私发（exclusive）副本内容随卸载丢失/);
+  const gone = await call('delete_asset', { assetId: asset.id });
+  assert.equal(gone.isError, undefined);
+  assert.match(gone.content[0].text, /资产已删除：/);
+  await call('offboard', { botId: 'am1' });
+});
+
 test('secret red line: no fake secret literal appears in ANY captured response body', async () => {
   assert.ok(capturedBodies.length >= 20, `the journey captured a meaningful sample (${capturedBodies.length} bodies)`);
-  for (const secret of [SECRET_PW, SECRET_KEY, SECRET_TOKEN]) {
+  for (const secret of [SECRET_PW, SECRET_KEY, SECRET_TOKEN, SECRET_MCP_ENV]) {
     const hits = capturedBodies.filter((b) => b.includes(secret));
     assert.deepEqual(hits, [], `secret ${secret} must never appear in a tool response`);
   }
