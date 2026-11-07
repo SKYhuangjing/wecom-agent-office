@@ -92,12 +92,28 @@ export function createLifecycle({ events, services, log, http, portRegistry = cr
     const track = (timer) => { rec.timers.add(timer); return timer; };
     const untrack = (timer) => { rec.timers.delete(timer); };
 
+    // Late-registration guard (R2 hardening): a plugin record can be removed
+    // while its activate() is still running — the loader's timeout rollback
+    // deactivates first, the activation settles later. The context closure
+    // keeps the dead `rec` alive, so every mutating capability re-checks
+    // liveness at CALL time against the live Map. records.get(id) === rec
+    // (identity, not mere presence) also retires contexts of a PREVIOUS
+    // activation once a reload re-keys the same id. Refusal is warn + no-op:
+    // a dead plugin must neither register anything new nor throw into code
+    // nobody is watching anymore.
+    const refuseIfDead = (what) => {
+      if (records.get(id) === rec) return false;
+      childLog.warn(`lifecycle: ${id} is no longer active — ignoring late ${what} (activation settled after deactivation?)`);
+      return true;
+    };
+
     const ctx = {
       id,
       log: childLog,
       config: pluginConfig,
       events: {
         on: (topic, fn) => {
+          if (refuseIfDead('event subscription')) return () => {};
           const off = events.on(topic, fn, id); // bus attributes this subscriber to the plugin
           const wrappedOff = () => {
             off();
@@ -111,27 +127,51 @@ export function createLifecycle({ events, services, log, http, portRegistry = cr
       },
       http: {
         register: ({ prefix, handler }) => {
+          if (refuseIfDead('http route registration')) return;
           http.register({ prefix, handler, owner: id }); // duplicate prefix throws → propagates out of activate; the loader (T6) marks the error
           rec.httpPrefixes.push(prefix);
         },
       },
       services, // container pass-through: core-engine registers engine/ledger/timeline here
-      registerChannel: (portId, impl) => registerPort('channel', portId, impl, rec),
-      registerProvider: (portId, impl) => registerPort('provider', portId, impl, rec),
-      registerPage: (desc) => registerPort('page', desc?.id, desc, rec),
-      registerMiddleware: (impl) => pushPort('middleware', impl, rec),
-      registerProgressor: (impl) => pushPort('progressor', impl, rec),
-      setTimeout: (fn, ms) => track(setTimeout(guarded(fn), ms)),
-      setInterval: (fn, ms) => track(setInterval(guarded(fn), ms)),
+      registerChannel: (portId, impl) => {
+        if (refuseIfDead('channel port registration')) return;
+        registerPort('channel', portId, impl, rec);
+      },
+      registerProvider: (portId, impl) => {
+        if (refuseIfDead('provider port registration')) return;
+        registerPort('provider', portId, impl, rec);
+      },
+      registerPage: (desc) => {
+        if (refuseIfDead('page port registration')) return;
+        registerPort('page', desc?.id, desc, rec);
+      },
+      registerMiddleware: (impl) => {
+        if (refuseIfDead('middleware registration')) return;
+        pushPort('middleware', impl, rec);
+      },
+      registerProgressor: (impl) => {
+        if (refuseIfDead('progressor registration')) return;
+        pushPort('progressor', impl, rec);
+      },
+      setTimeout: (fn, ms) => {
+        if (refuseIfDead('setTimeout')) return undefined;
+        return track(setTimeout(guarded(fn), ms));
+      },
+      setInterval: (fn, ms) => {
+        if (refuseIfDead('setInterval')) return undefined;
+        return track(setInterval(guarded(fn), ms));
+      },
       clearTimeout: (timer) => { untrack(timer); clearTimeout(timer); },
       clearInterval: (timer) => { untrack(timer); clearInterval(timer); },
       ws: { WebSocket }, // kernel-provided client infra (spec §2.1) so plugins need zero npm deps
       effect: (fn) => {
         if (typeof fn !== 'function') throw new Error(`lifecycle: effect requires a function, got ${typeof fn}`);
+        if (refuseIfDead('effect registration')) return;
         rec.effects.push(fn); // stack: deactivated LIFO
       },
       afterAllActivated: (fn) => {
         if (typeof fn !== 'function') throw new Error('lifecycle: afterAllActivated requires a function');
+        if (refuseIfDead('afterAllActivated callback')) return;
         afterAllQueue.push({ fn, owner: id }); // for core-engine to rebuild bot runtimes once everyone is up
       },
     };

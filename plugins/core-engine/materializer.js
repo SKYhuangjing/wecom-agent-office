@@ -31,7 +31,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import process from 'node:process';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { atomicWrite } from '../../src/kernel/config.js';
 
 const MARKER_RE = /^(?:<!--\s*)?# wao:assets:(begin|end):v(\d+):bot=([^\s>]*?)(?:\s*-->)?$/;
@@ -103,30 +103,68 @@ const rtkOwnRoots = () => [
 
 const tailOf = (s, n = 300) => String(s ?? '').trim().slice(-n);
 
+// probeBin result cache (R2 hardening): the agents roster probes rtk/rg per
+// request and the rtk executor probes per plan row — a fresh spawnSync each
+// time froze the event loop linearly with bot count. Results are keyed by
+// bin+mtime (a replaced binary gets a fresh key) and expire after 5 minutes,
+// so an install/upgrade never waits longer than that to be seen.
+const PROBE_TTL_MS = 5 * 60_000;
+const probeCache = new Map(); // key → { at, result }
+
 // 同步探测一个 CLI（§7.2 3s 超时口径）：{ok, version, error}。
 export function probeBin(bin, timeoutMs = 3000) {
+  let key = String(bin);
+  try { key = `${bin}:${statSync(bin).mtimeMs}`; } catch { /* not stat-able (missing): keyed by name alone */ }
+  const hit = probeCache.get(key);
+  if (hit != null && Date.now() - hit.at < PROBE_TTL_MS) return hit.result;
+  let result;
   try {
     const r = spawnSync(bin, ['--version'], { timeout: timeoutMs, encoding: 'utf8' });
-    if (r.error != null) return { ok: false, version: null, error: r.error.code === 'ENOENT' ? 'not-found' : String(r.error.message ?? r.error.code) };
-    if (r.status !== 0) return { ok: false, version: null, error: `exit ${r.status}` };
-    return { ok: true, version: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim().split('\n')[0] || null, error: null };
+    if (r.error != null) result = { ok: false, version: null, error: r.error.code === 'ENOENT' ? 'not-found' : String(r.error.message ?? r.error.code) };
+    else if (r.status !== 0) result = { ok: false, version: null, error: `exit ${r.status}` };
+    else result = { ok: true, version: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim().split('\n')[0] || null, error: null };
   } catch (err) {
-    return { ok: false, version: null, error: err?.message ?? String(err) };
+    result = { ok: false, version: null, error: err?.message ?? String(err) };
   }
+  probeCache.set(key, { at: Date.now(), result });
+  return result;
 }
 
 // 跑一条 rtk 命令（stdin 关闭=免交互，30s 上限），env 注入 flavor 重定向变量。
-const runRtk = (rtkBin, args, flavor, target, timeoutMs = 30000) => {
+// ASYNC (R2 hardening): rtkInit/rtkUninstall carry a 30s ceiling — a sync spawn
+// there froze every chat and request for up to 30s. Same result shape the old
+// spawnSync call sites consumed: {status, stdout, stderr, error} (status -1 +
+// error message on spawn failure or timeout).
+const runRtk = (rtkBin, args, flavor, target, timeoutMs = 30000) => new Promise((resolve) => {
   const env = { ...process.env };
   const spec = RTK_FLAVORS[flavor];
   if (spec?.envKey) env[spec.envKey] = target;
+  let child;
   try {
-    const r = spawnSync(rtkBin, args, { env, timeout: timeoutMs, encoding: 'utf8', stdin: 'ignore' });
-    return { status: r.error != null ? -1 : r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '', error: r.error?.message ?? null };
+    child = spawn(rtkBin, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (err) {
-    return { status: -1, stdout: '', stderr: '', error: err?.message ?? String(err) };
+    resolve({ status: -1, stdout: '', stderr: '', error: err?.message ?? String(err) });
+    return;
   }
-};
+  let stdout = '';
+  let stderr = '';
+  child.stdout?.setEncoding('utf8');
+  child.stderr?.setEncoding('utf8');
+  child.stdout?.on('data', (c) => { stdout += c; });
+  child.stderr?.on('data', (c) => { stderr += c; });
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
+  child.on('error', (err) => {
+    clearTimeout(timer);
+    resolve({ status: -1, stdout, stderr, error: err?.message ?? String(err) });
+  });
+  child.on('close', (code) => {
+    clearTimeout(timer);
+    resolve(timedOut
+      ? { status: -1, stdout, stderr, error: `rtk 超时（${timeoutMs}ms）` }
+      : { status: code, stdout, stderr, error: null });
+  });
+});
 
 // 解析 `rtk init --dry-run` 输出里的将写路径（每行一个「…: /abs/path」，路径
 // 可含空格——取冒号后到行尾）。
@@ -394,8 +432,9 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
   // 卸载一条已装备的 rtk（stale 清理与 removeAssets 共用，best-effort 不抛）：
   // rtk 自带 --uninstall 优先（实证三 flavor 均尊重重定向且幂等）；返回
   // handled=rtk 已自清 hook 条目——false（rtk 缺失/非零/回退装备）时 entries
-  // 精确匹配删（清单已记条目全文）兜底，另扫 .bak。
-  const rtkUninstall = (bot, w, notes) => {
+  // 精确匹配删（清单已记条目全文）兜底，另扫 .bak。ASYNC：runRtk 不再阻塞
+  // 事件循环（R2）。
+  const rtkUninstall = async (bot, w, notes) => {
     const flavor = w.flavor;
     const spec = RTK_FLAVORS[flavor];
     if (spec == null || typeof w.path !== 'string') return false;
@@ -406,7 +445,7 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
     }
     const probe = probeBin(rtkBin);
     if (probe.ok) {
-      const r = runRtk(rtkBin, ['init', '-g', ...rtkFlavorArgs(flavor), '--uninstall'], flavor, w.path);
+      const r = await runRtk(rtkBin, ['init', '-g', ...rtkFlavorArgs(flavor), '--uninstall'], flavor, w.path);
       if (r.status === 0) {
         notes.push({ detail: `rtk 卸载成功（flavor ${flavor}，${w.path}）` });
         rtkSweepBaks(flavor, w.path, notes);
@@ -421,8 +460,9 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
   };
 
   // 执行一条 rtk-init 计划（materialize 步 3.5；returns nothing——产物经
-  // notes/receiptRows/entriesOut/toolsOut 流出）。throw = failed 态。
-  const rtkInit = (bot, w, { snap, applied, receipt, notes, entriesOut, toolsOut }) => {
+  // notes/receiptRows/entriesOut/toolsOut 流出）。throw = failed 态。ASYNC：
+  // dry-run 与真跑都走非阻塞 spawn（R2）。
+  const rtkInit = async (bot, w, { snap, applied, receipt, notes, entriesOut, toolsOut }) => {
     const flavor = w.flavor;
     const spec = RTK_FLAVORS[flavor];
     const target = resolve(String(w.target ?? ''));
@@ -437,7 +477,7 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
     }
     state.version = probe.version;
     // 主路径前置：dry-run 采集将写路径 → §8.3 前缀校验（∪ rtk 自有域）。
-    const dry = runRtk(rtkBin, ['init', '-g', ...rtkFlavorArgs(flavor), '--dry-run'], flavor, target);
+    const dry = await runRtk(rtkBin, ['init', '-g', ...rtkFlavorArgs(flavor), '--dry-run'], flavor, target);
     let fallbackReason = null;
     const roots = [...allowedRootsOf(bot), ...rtkOwnRoots()].map(canonPath);
     const paths = dryRunPaths(dry.stdout);
@@ -455,7 +495,7 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
       for (const p of paths) {
         try { snap(p); } catch { /* snapshot best effort */ }
       }
-      const run = runRtk(rtkBin, ['init', '-g', ...rtkFlavorArgs(flavor), ...spec.initArgs], flavor, target);
+      const run = await runRtk(rtkBin, ['init', '-g', ...rtkFlavorArgs(flavor), ...spec.initArgs], flavor, target);
       if (run.status !== 0) {
         // 态 3：failed —— 非零/超时，throw 带 stderr 摘要（per-bot 隔离 → failed[]）。
         throw new Error(`rtk init 失败（flavor ${flavor}，exit ${run.status}）：${tailOf(run.stderr || run.error || run.stdout)}`);
@@ -712,7 +752,7 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
         // rtk-init rows unload FIRST (rtk uninstall 先于条目精确删——成功即自清)。
         for (const w of stale) {
           if (w.kind === 'rtk-init') {
-            if (rtkUninstall(bot, w, notes)) {
+            if (await rtkUninstall(bot, w, notes)) {
               const hookFile = RTK_FLAVORS[w.flavor]?.hookFile;
               if (hookFile != null) rtkHandledFiles.add(resolve(join(w.path, hookFile)));
             }
@@ -796,7 +836,7 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
         //     必须在标记节之前：rtk 向 CLAUDE.md/AGENTS.md 追加 @RTK.md 引用行，
         //     先 rtk 后拼接节重建，产物才字节稳定（幂等锚）。
         for (const w of diskWrites.filter((x) => x.kind === 'rtk-init')) {
-          rtkInit(bot, w, { snap, applied, receipt, notes, entriesOut: entries, toolsOut: tools });
+          await rtkInit(bot, w, { snap, applied, receipt, notes, entriesOut: entries, toolsOut: tools });
         }
         // 4. marker sections last
         for (const w of diskWrites.filter((x) => x.kind === 'marker-section')) {
@@ -882,7 +922,7 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
       const rtkHandledFiles = new Set();
       for (const w of manifest.writes ?? []) {
         if (w?.kind !== 'rtk-init') continue;
-        if (rtkUninstall(bot, w, rtkNotes)) {
+        if (await rtkUninstall(bot, w, rtkNotes)) {
           const hookFile = RTK_FLAVORS[w.flavor]?.hookFile;
           if (hookFile != null) rtkHandledFiles.add(resolve(join(w.path, hookFile)));
           removedAny = true;

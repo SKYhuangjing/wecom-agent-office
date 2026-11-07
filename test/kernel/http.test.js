@@ -8,6 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { connect as netConnect } from 'node:net';
 import { EventEmitter } from 'node:events';
 import { createServices } from '../../src/kernel/services.js';
 import { createHttpShell } from '../../src/kernel/http.js';
@@ -295,6 +296,33 @@ test('SSE: heartbeat writes ": ka" comment every 15s', (t) => {
   t.mock.timers.tick(15_000);
   assert.deepEqual(res.written, [': ka\n\n', ': ka\n\n']);
   res.emit('close'); // clears the interval
+});
+
+test('malformed request-target (raw socket `GET http:// HTTP/1.1`) → 400 JSON, process/server stay alive', async () => {
+  const t = await boot();
+  try {
+    t.shell.register({ prefix: '/api/alive', owner: 'p1', handler: jsonHandler({ ok: 1 }) });
+    // fetch() cannot produce a malformed request-target; only a raw socket can.
+    const raw = await new Promise((resolve, reject) => {
+      const sock = netConnect(Number(new URL(t.base).port), '127.0.0.1');
+      let buf = '';
+      sock.on('connect', () => sock.write('GET http:// HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'));
+      sock.on('data', (d) => { buf += d; });
+      sock.on('error', reject);
+      sock.on('close', () => resolve(buf));
+      setTimeout(() => reject(new Error(`no response to malformed target, got: ${JSON.stringify(buf)}`)), 2000);
+    });
+    const [head, ...rest] = raw.split('\r\n\r\n');
+    assert.match(head, /^HTTP\/1\.1 400 /, `expected 400, got: ${head.split('\r\n')[0]}`);
+    // No Content-Length on the 400 → Node frames the body chunked; strip the framing.
+    const body = rest.join('\r\n\r\n').replace(/^[0-9a-f]+\r\n/i, '').replace(/\r\n0\r\n\r\n$/, '');
+    assert.deepEqual(JSON.parse(body), { error: 'malformed request target' });
+    // The kernel survived: normal traffic on the SAME server still answers.
+    const ok = await getJson(t.base, '/api/alive');
+    assert.equal(ok.status, 200);
+    assert.deepEqual(ok.body, { ok: 1 });
+    assert.equal(t.errors.length, 0, 'a malformed client request is not a server error');
+  } finally { await t.close(); }
 });
 
 test('listen(0) binds an ephemeral port; close() ends SSE and shuts down', async () => {

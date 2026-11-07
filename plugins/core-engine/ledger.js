@@ -32,6 +32,13 @@ export class Ledger {
     this.file = file;
     this.log = log;
     this._seq = 0; // highest seq ever handed out; nextSeq() pre-increments
+    // chatKey → highest seq recorded (R2 hardening): the engine asks
+    // maxSeq({chatKey}) on EVERY turn (the consumedSeq floor, §7 rule 1) —
+    // serving it from an index maintained here and in recordTurn keeps that
+    // read O(1) instead of a full-file parse that degraded linearly with
+    // history. The file stays the authority: turns() reads it on demand, and
+    // this index is rebuilt from it at construction.
+    this._chatMax = new Map();
     mkdirSync(dirname(file), { recursive: true }); // first boot: data/ledger/ may not exist
     if (!existsSync(file)) writeFileSync(file, '', { mode: 0o600 }); // born owner-only (DESIGN §3); appends keep the mode
     if (existsSync(file)) {
@@ -45,9 +52,17 @@ export class Ledger {
         this.log?.debug?.('ledger: sealed torn tail line');
       }
       for (const row of parseLines(text, log)) {
-        if (Number.isInteger(row.seq) && row.seq > this._seq) this._seq = row.seq;
+        if (!Number.isInteger(row.seq)) continue;
+        if (row.seq > this._seq) this._seq = row.seq;
+        this._noteChatMax(row.chatKey, row.seq);
       }
     }
+  }
+
+  // Index maintenance: keep the per-chatKey floor monotonically growing.
+  _noteChatMax(chatKey, seq) {
+    if (typeof chatKey !== 'string') return;
+    if (seq > (this._chatMax.get(chatKey) ?? 0)) this._chatMax.set(chatKey, seq);
   }
 
   nextSeq() { return ++this._seq; }
@@ -70,6 +85,7 @@ export class Ledger {
     // so a later nextSeq() can never collide with an appended row.
     if (row.seq > this._seq) this._seq = row.seq;
     appendFileSync(this.file, `${JSON.stringify(row)}\n`);
+    this._noteChatMax(row.chatKey, row.seq);
     return row.seq;
   }
 
@@ -88,6 +104,13 @@ export class Ledger {
   // 0 when nothing matches. Counts EVERY row regardless of reason: rule 2 —
   // interrupted/timeout/error turns are real history the prefix may contain.
   maxSeq({ chatKey, provider } = {}) {
+    // Hot path (R2): the unfiltered per-chatKey floor — the engine's every-turn
+    // consumedSeq query — answers from the in-memory index. Provider-filtered
+    // queries (session-cache recompute, rare) and global scans keep reading
+    // the file: the index is per-chatKey only.
+    if (provider === undefined && typeof chatKey === 'string') {
+      return this._chatMax.get(chatKey) ?? 0;
+    }
     let max = 0;
     for (const r of this.turns({ chatKey, provider })) if (r.seq > max) max = r.seq;
     return max;

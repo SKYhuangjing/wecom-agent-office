@@ -311,6 +311,48 @@ test('activateAll: rejection landing after the loader timeout is watched and att
   // that assertion (Node ≥15 default crashes the process on one).
 });
 
+test('activateAll: activation settling AFTER the timeout cannot leak registrations (its context is dead)', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'wao-loader-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  // Local setup variant keeping the http shell reachable (route-leak pin).
+  const { warns, log } = fakeLog();
+  const http = createHttpShell({ log });
+  const lifecycle = createLifecycle({ events: createEventBus({ log }), services: createServices(), log, http });
+  globalThis.__waoLateLeak = null;
+  const slow = join(root, 'slowreg');
+  writePlugin(slow, pluginJs(
+    "{ id: 'slowreg', type: 'core', version: '1.0.0' }",
+    [
+      'await new Promise((r) => setTimeout(r, 150));', // settles well after our 40ms timeout + rollback
+      "ctx.registerChannel('late-chan', { tag: 'leak' });",
+      "ctx.registerProvider('late-prov', { tag: 'leak' });",
+      "ctx.registerPage({ id: 'late-page' });",
+      "ctx.registerMiddleware({ maskOutbound: (x) => x });",
+      "ctx.registerProgressor({ compose: () => null });",
+      "ctx.http.register({ prefix: '/api/late-leak', handler: (rq, rs) => rs.end('leak') });",
+      "ctx.afterAllActivated(() => { globalThis.__waoLateLeak = 'afterAll'; });",
+      "ctx.effect(() => { globalThis.__waoLateLeak = 'effect'; });",
+      "ctx.setTimeout(() => { globalThis.__waoLateLeak = 'timer'; }, 5);",
+    ].join('\n'),
+  ));
+  const res = await activateAll({ dirs: [slow], lifecycle, log, activateTimeoutMs: 40 });
+  assert.deepEqual(res.failed, [{ id: 'slowreg', error: 'slowreg: activate timeout' }]);
+  await new Promise((r) => setTimeout(r, 300)); // late settle at t≈150ms + its registration attempts
+  const reg = lifecycle.portRegistry;
+  assert.equal(reg.getChannel('late-chan'), undefined, 'no late channel port');
+  assert.equal(reg.getProvider('late-prov'), undefined, 'no late provider port');
+  assert.equal(reg.page.has('late-page'), false, 'no late page port');
+  assert.equal(reg.middleware.length, 0, 'no late middleware');
+  assert.equal(reg.progressor.length, 0, 'no late progressor');
+  assert.doesNotThrow(() => http.register({ prefix: '/api/late-leak', owner: 'post-mortem', handler: (rq, rs) => rs.end('mine') }),
+    'the late route never registered (the prefix is still free)');
+  await lifecycle.runAfterAllActivated();
+  await lifecycle.deactivateAll();
+  assert.equal(globalThis.__waoLateLeak, null, 'late afterAllActivated/effect/timer never ran');
+  assert.ok(warns.some((w) => String(w).includes('settled after timeout')), 'late settle attributed in log');
+  delete globalThis.__waoLateLeak;
+});
+
 test('activateAll: valid manifest but no callable activate → loud failure, not silent inertness', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'wao-loader-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));

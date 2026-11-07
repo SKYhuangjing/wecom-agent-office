@@ -39,6 +39,7 @@ export const ENGINE_LIMITS = Object.freeze({
   hardTimeoutMs: 1800000,
   warnLeadMs: 90000,
   outboundBudgetPerMin: 28,
+  outboundTimeoutMs: 10000,
 });
 
 // Lifecycle Phase-0 drain cap: a drain must never be able to wait forever —
@@ -60,6 +61,21 @@ const noopLog = Object.freeze({
 // constructor default for runTurnImpl and stays replaceable wholesale.
 
 const OUTBOUND_WINDOW_MS = 60_000; // §6.4: the outbound budget is per minute
+
+// Bounded outbound (R2 hardening): an adapter promise that never settles (hung
+// SDK call, dead socket without an error) would otherwise await forever inside
+// the turn body — and with it permanently wedge that chatKey's serial chain.
+// Every adapter call is raced against this deadline; losing the race is a
+// warn and the turn moves on. The losing promise stays observed (Promise.race
+// attaches handlers to it), so a much-later rejection cannot become an
+// unhandledRejection.
+const sendWithTimeout = (p, ms) => {
+  let timer = null;
+  const bail = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`outbound timeout after ${ms}ms`)), ms);
+  });
+  return Promise.race([Promise.resolve(p), bail]).finally(() => clearTimeout(timer));
+};
 
 // Outbound copy — single source; tests pin several of these verbatim.
 const ACK_TEXT = '✅ 收到，马上处理…';
@@ -235,11 +251,14 @@ export async function defaultRunTurn(bot, msg, ac) {
     return outWindow.length;
   };
   const stamp = () => { lastFrameAt = Date.now(); outWindow.push(lastFrameAt); };
-  // Adapter calls must never take the turn down — not on rejection, and not on
-  // a (buggy) synchronous throw either, or the bookkeeping below is skipped.
+  // Adapter calls must never take the turn down — not on rejection, not on a
+  // (buggy) synchronous throw, and not on a never-settling promise (the
+  // sendWithTimeout race bounds every call; a timeout logs and the turn
+  // proceeds, or the chain for this chatKey would stay wedged forever).
+  const outboundTimeoutMs = caps.outboundTimeoutMs ?? L.outboundTimeoutMs;
   const sendVia = (what, call) => {
     try {
-      return Promise.resolve(call()).catch((e) => {
+      return sendWithTimeout(call(), outboundTimeoutMs).catch((e) => {
         engine.log.warn?.(`engine: ${what} send failed: ${e?.message ?? e}`);
       });
     } catch (e) {
@@ -934,7 +953,7 @@ export class Engine {
     for (const { bot, msg } of refusals) {
       try {
         const adapter = this.getAdapter?.(bot);
-        if (adapter?.reply) await adapter.reply(msg.reqId, DRAIN_REFUSAL_TEXT);
+        if (adapter?.reply) await sendWithTimeout(adapter.reply(msg.reqId, DRAIN_REFUSAL_TEXT), this.limits.outboundTimeoutMs);
         else this.log.warn?.(`engine: no adapter to answer the drain refusal for ${msg.chatKey}`);
       } catch (e) {
         this.log.error?.(`engine: drain refusal reply failed: ${e?.message ?? e}`);

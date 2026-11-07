@@ -15,13 +15,17 @@
 // Behavior modes via $FAKE_RTK_MODE: ok (default) | dryfail (dry-run exit 1)
 // | outside (dry-run lists a path OUTSIDE the bot dirs → fallback path)
 // | initfail (real init exit 1 + stderr). Every invocation appends to
-// $FAKE_RTK_LOG for call-order assertions.
+// $FAKE_RTK_LOG for call-order assertions. $FAKE_RTK_SLEEP_MS delays every
+// invocation (the R2 async-spawn test: a slow rtk must not block the loop).
 import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const mode = process.env.FAKE_RTK_MODE || 'ok';
 const log = process.env.FAKE_RTK_LOG;
 const note = (line) => { if (log) appendFileSync(log, `${line}\n`); };
+
+const sleepMs = Number(process.env.FAKE_RTK_SLEEP_MS || 0);
+if (sleepMs > 0) await new Promise((r) => setTimeout(r, sleepMs));
 
 const args = process.argv.slice(2);
 if (args[0] === '--version') {

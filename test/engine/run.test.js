@@ -905,3 +905,43 @@ test('lastRunOf: null before any run, durationMs + usage after', async () => {
   last.durationMs = -1;
   assert.notEqual(h.engine.lastRunOf('bot1').durationMs, -1);
 });
+
+// --- 13: bounded outbound (R2 hardening) ————————————————————————————————————
+
+// Channel adapter double whose every method parks forever: the worst shape a
+// buggy adapter can produce (a promise that neither resolves nor rejects).
+const hungAdapter = (capabilities = { stream: true, push: true }) => {
+  const calls = [];
+  const never = (method) => (...args) => {
+    calls.push(method);
+    return new Promise(() => {});
+  };
+  return { frames: [], calls, capabilities, ack: never('ack'), progress: never('progress'), reply: never('reply'), push: never('push') };
+};
+
+test('outbound timeout: never-settling adapter ack/final cannot wedge the chatKey chain; the turn still books', async () => {
+  const adap = hungAdapter();
+  const h = makeHarness({ steps: [COMPLETE()], adapter: adap, limits: { outboundTimeoutMs: 60 } });
+  await Promise.race([
+    h.send('慢消息'),
+    sleep(1500).then(() => { throw new Error('chain never settled: an unbounded adapter await wedged the chatKey'); }),
+  ]);
+  assert.ok(adap.calls.includes('ack') && adap.calls.includes('progress'), 'the hung calls were actually made');
+  assert.equal(h.ledger.turns({ chatKey: K }).length, 1, 'bookkeep ran for the completed run despite hung outbound');
+  const warns = h.log.lines.warn.join('\n');
+  assert.match(warns, /ack send failed: outbound timeout/);
+  assert.match(warns, /progress send failed: outbound timeout/);
+});
+
+test('sendDrainRefusals: a hung adapter reply is bounded by the same outbound deadline', async () => {
+  const adap = hungAdapter({ stream: false });
+  const h = makeHarness({ adapter: adap, limits: { outboundTimeoutMs: 60 } });
+  const drained = h.engine.drain(0); // latches `draining` synchronously
+  h.engine.onMessage(h.bot, mkMsg('维护期消息')); // refused → parked in drainRefusals
+  await drained;
+  await Promise.race([
+    h.engine.sendDrainRefusals(),
+    sleep(1500).then(() => { throw new Error('sendDrainRefusals wedged on a hung adapter reply'); }),
+  ]);
+  assert.match(h.log.lines.error.join('\n'), /drain refusal reply failed: outbound timeout/);
+});

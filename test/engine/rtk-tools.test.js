@@ -13,11 +13,11 @@
 // The REAL-rtk init/uninstall round lives in test/contract/rtk-round.test.js.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createMaterializer } from '../../plugins/core-engine/materializer.js';
+import { createMaterializer, probeBin } from '../../plugins/core-engine/materializer.js';
 import { noopMaterializer } from '../../plugins/core-engine/assets.js';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -280,6 +280,56 @@ test('ripgrep precheck rows ride the manifest tools (provider-recorded); rtk sta
   const mat = matOver(impl, join(sc, 'data'), FAKE_RTK);
   await mat.materialize(bot, [{ assetId: 'ast-rg1', type: 'tool', name: 'rg', mode: 'shared', content: { kind: 'ripgrep' } }]);
   assert.deepEqual(manifestOf(mat, bot).tools, [{ assetId: 'ast-rg1', kind: 'ripgrep', state: 'available', version: 'ripgrep 15.2.0' }], '§7.2 precheck recorded');
+});
+
+test('probeBin cache (R2): same bin+mtime → one spawn total; a binary swap (mtime bump) re-probes', () => {
+  const sc = scenario('probe-cache');
+  const bin = join(sc, 'counter-bin');
+  const counterFile = join(sc, 'count.log');
+  writeFileSync(bin, [
+    '#!/usr/bin/env node',
+    `import { appendFileSync } from 'node:fs';`,
+    `appendFileSync(${JSON.stringify(counterFile)}, 'x\\n');`,
+    `console.log('counter 1.0.0');`,
+    '',
+  ].join('\n'));
+  chmodSync(bin, 0o755);
+  const spawnCount = () => readFileSync(counterFile, 'utf8').split('\n').filter(Boolean).length;
+  const a = probeBin(bin);
+  assert.equal(a.ok, true);
+  assert.match(a.version, /^counter 1\.0\.0/);
+  const b = probeBin(bin);
+  assert.deepEqual(b, a, 'cache hit returns the recorded result');
+  assert.equal(spawnCount(), 1, 'the second probe did NOT spawn (cache hit)');
+  // mtime is part of the key: a swapped binary (same path) must re-probe.
+  utimesSync(bin, new Date(), new Date(Date.now() + 5000));
+  const c = probeBin(bin);
+  assert.deepEqual(c, a, 'same binary content → same probe result');
+  assert.equal(spawnCount(), 2, 'the mtime bump forced a fresh probe');
+});
+
+test('rtk execution is ASYNC (R2): a slow rtk never blocks the event loop during materialize', async () => {
+  const sc = scenario('async-rtk');
+  const cfgDir = join(sc, 'claude-cfg');
+  const bot = claudeBotOver(sc, cfgDir);
+  setFakeMode(sc, 'ok');
+  process.env.FAKE_RTK_SLEEP_MS = '300';
+  try {
+    const mat = matOver(stubProvider(rtkWrite(cfgDir)), join(sc, 'data'), FAKE_RTK);
+    probeBin(FAKE_RTK); // warm the probe cache (the probe itself stays sync+cached)
+    const startedAt = Date.now();
+    let loopAliveAt = 0;
+    const timerFired = new Promise((r) => setTimeout(() => { loopAliveAt = Date.now(); r(); }, 30));
+    const matP = mat.materialize(bot, [RTK_ENTRY]);
+    await timerFired;
+    assert.ok(loopAliveAt - startedAt < 250,
+      `event loop stayed responsive while rtk ran (timer fired at +${loopAliveAt - startedAt}ms — spawnSync would block ~300ms)`);
+    await matP;
+    assert.ok(existsSync(join(cfgDir, 'settings.json')), 'rtk products landed after the async run');
+  } finally {
+    delete process.env.FAKE_RTK_SLEEP_MS;
+    clearFakeMode();
+  }
 });
 
 test('checkBind: claude shared-dir rtk refused; pi default-dir rtk allowed (per-bot WAO namespace, not shared home)', () => {

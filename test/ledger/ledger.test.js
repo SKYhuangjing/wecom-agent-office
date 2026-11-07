@@ -106,6 +106,34 @@ test('maxSeq counts interrupted/timeout/error rows (rule 2)', () => {
   assert.equal(L.maxSeq({ chatKey: K, provider: 'claude' }), 0); // none recorded
 });
 
+// --- seq index (R2 hardening): maxSeq({chatKey}) is O(1), no file re-read ———
+
+test('maxSeq({chatKey}) serves the in-memory index: appends update it without re-reading the file', () => {
+  const { ledger: L } = fresh();
+  for (let i = 0; i < 3; i++) L.recordTurn(turn({ seq: L.nextSeq() }));
+  L.recordTurn(turn({ seq: L.nextSeq(), chatKey: K2 }));
+  assert.equal(L.maxSeq({ chatKey: K }), 3, 'per-chatKey floor after appends');
+  assert.equal(L.maxSeq({ chatKey: K2 }), 4, 'second chatKey tracked independently');
+  // The proof it did NOT re-read the file: wipe the journal on disk — the
+  // index answers from memory. (turns() stays disk-read by design.)
+  writeFileSync(L.file, '');
+  assert.equal(L.maxSeq({ chatKey: K }), 3, 'no file re-read on the hot path');
+});
+
+test('seq index rebuilds from the journal at construction (restart sees every chatKey floor)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wao-ledger-idx-'));
+  const file = join(dir, 'ledger.jsonl');
+  const A = new Ledger({ file, log: mkLog() });
+  for (let i = 0; i < 5; i++) A.recordTurn(turn({ seq: A.nextSeq(), chatKey: i % 2 ? K2 : K }));
+  const B = new Ledger({ file, log: mkLog() }); // "restart" on the same journal
+  assert.equal(B.maxSeq({ chatKey: K }), 5, 'rebuild picks the highest seq per chatKey');
+  assert.equal(B.maxSeq({ chatKey: K2 }), 4, 'per-key isolation on rebuild');
+  assert.equal(B.maxSeq({ chatKey: 'wecom:group:never' }), 0, 'unknown key → 0');
+  // and the rebuilt instance keeps maintaining it under further appends
+  B.recordTurn(turn({ seq: B.nextSeq() }));
+  assert.equal(B.maxSeq({ chatKey: K }), 6);
+});
+
 // --- buildHandoffPrefix -------------------------------------------------------
 
 test('buildHandoffPrefix drops oldest blocks over the char budget and notes the omission', () => {

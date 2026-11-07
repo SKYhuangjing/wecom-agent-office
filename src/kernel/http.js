@@ -134,7 +134,16 @@ export function createHttpShell({ log, webDir = null, auth = null, healthExtra =
   };
 
   const handle = (req, res) => {
-    const url = new URL(req.url, 'http://localhost'); // base makes relative req.url well-formed
+    // Malformed request-target guard: llhttp forwards absolute-form targets a
+    // client can mangle (e.g. `GET http:// HTTP/1.1`), and the URL constructor
+    // throws on them — an uncaught throw off handle is an uncaughtException
+    // that takes the whole kernel down. Answer 400 and keep serving.
+    let url;
+    try {
+      url = new URL(req.url, 'http://localhost'); // base makes relative req.url well-formed
+    } catch {
+      return json(res, 400, { error: 'malformed request target' });
+    }
     const pathname = url.pathname;
     // Auth gate first: one check ahead of every branch (health, SSE, static,
     // routes) so no dispatch path can dodge it. Public paths pass untouched.

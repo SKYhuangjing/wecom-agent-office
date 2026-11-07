@@ -306,7 +306,14 @@ export async function activateAll({
         // late outcome must not be swallowed silently — attach watchers now
         // so whichever way it settles is attributed in the log.
         activation.then(
-          () => log.warn(`loader: ${manifest.id} activate settled after timeout`),
+          async () => {
+            log.warn(`loader: ${manifest.id} activate settled after timeout`);
+            // A late SUCCESS can still have side effects from the window
+            // around the rollback above (a registration racing records.delete)
+            // — deactivate is idempotent, so run it once more: nothing the
+            // late activation did may outlive the failed batch.
+            try { await lifecycle.deactivate(plugin); } catch { /* unreachable by contract */ }
+          },
           (late) => log.warn(`loader: ${manifest.id} activate failed after timeout`, late),
         );
       }

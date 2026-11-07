@@ -222,6 +222,40 @@ test('port registration: visible with owner; re-register overwrites + warns; dea
   await assert.rejects(() => s.lifecycle.activate(plugin('bad2', (c) => c.registerPage({ title: 'no id' }))), /requires a string id/);
 });
 
+test('late registrations through a DEACTIVATED plugin context are refused (warn + no-op, nothing revivable)', async () => {
+  const s = setup();
+  const p1 = plugin('p1', async () => {});
+  const ctx = s.lifecycle.makeContext(p1);
+  await s.lifecycle.deactivate(p1); // the timeout-rollback shape: records no longer hold p1
+  ctx.registerChannel('late-ch', { tag: 1 });
+  ctx.registerProvider('late-prov', { tag: 1 });
+  ctx.registerPage({ id: 'late-page' });
+  ctx.registerMiddleware({ tag: 1 });
+  ctx.registerProgressor({ tag: 1 });
+  assert.equal(s.portRegistry.getChannel('late-ch'), undefined, 'no late channel port');
+  assert.equal(s.portRegistry.getProvider('late-prov'), undefined, 'no late provider port');
+  assert.equal(s.portRegistry.page.size, 0, 'no late page port');
+  assert.equal(s.portRegistry.middleware.length, 0, 'no late middleware');
+  assert.equal(s.portRegistry.progressor.length, 0, 'no late progressor');
+  ctx.http.register({ prefix: '/api/late', handler: () => {} });
+  assert.doesNotThrow(() => s.http.register({ prefix: '/api/late', owner: 'other', handler: () => {} }),
+    'the late route never landed, so the prefix is free again');
+  let ran = false;
+  const off = ctx.events.on('t/x', () => { ran = true; });
+  ctx.effect(() => { ran = true; });
+  ctx.afterAllActivated(() => { ran = true; });
+  ctx.setTimeout(() => { ran = true; }, 1);
+  ctx.setInterval(() => { ran = true; }, 1);
+  assert.equal(ctx.setTimeout(() => { ran = true; }, 1), undefined, 'no timer handle for a dead context');
+  off(); // must be a callable no-op, not a crash
+  await s.lifecycle.runAfterAllActivated();
+  await s.lifecycle.deactivateAll();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(ran, false, 'no late subscription/effect/afterAll/timer ever runs');
+  assert.ok(s.warns.some((w) => String(w).includes('p1') && /no longer active/.test(String(w))),
+    `refusals are attributed warns, got: ${s.warns.map(String)}`);
+});
+
 test('activate skips records without manifest.id or mod.activate; deactivate of unknown plugin is a no-op', async () => {
   const s = setup();
   await s.lifecycle.activate({ dir: '/x', manifest: {}, mod: { activate() {} }, status: 'enabled' }); // no id
