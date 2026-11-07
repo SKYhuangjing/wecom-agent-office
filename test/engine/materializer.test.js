@@ -183,6 +183,23 @@ test('materialize: writes files, 0600 for mode-bearing files, manifest carries a
   assert.equal(statSync(join(dataDir, 'assets', 'b1', 'manifest.json')).mode & 0o777, 0o600);
 });
 
+test('getManifest: §3.8 read access for the roster — null when absent, deep clone of the stored doc', async () => {
+  const dataDir = botDir('d-getm');
+  const mat = mkMat(stubPort('p1'), dataDir);
+  const cwd = botDir('b-getm-cwd');
+  const bot = { id: 'bg1', provider: 'stub', providerConfig: { cwd } };
+  assert.equal(mat.getManifest('bg1'), null, 'never materialized → null (§8.1 null echo)');
+  assert.equal(mat.getManifest('nobody'), null);
+  await mat.materialize(bot, [MEM_ENTRY]);
+  const m = mat.getManifest('bg1');
+  assert.equal(m.botId, 'bg1');
+  assert.equal(m.lastResult, 'ok');
+  assert.ok(Number.isFinite(m.lastMaterializedAt));
+  m.lastResult = 'mutated'; // callers get a CLONE — the disk doc is the truth
+  assert.equal(mat.getManifest('bg1').lastResult, 'ok');
+  assert.equal(JSON.parse(readFileSync(join(dataDir, 'assets', 'bg1', 'manifest.json'), 'utf8')).lastResult, 'ok');
+});
+
 test('materialize: jail guard — target outside every allowed root throws and writes nothing', async () => {
   const dataDir = botDir('d-jail');
   const evilPort = {

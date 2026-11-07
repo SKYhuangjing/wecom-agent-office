@@ -513,6 +513,15 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
   return {
     assetsDir,
 
+    // §3.8 manifest read access for the agents roster (§8.1 P1-14): the
+    // last-good materialization record {lastMaterializedAt, lastResult, ...}
+    // or null when the bot never materialized. Deep clone — callers must
+    // never see the live object (可变引用纪律).
+    getManifest(botId) {
+      const m = readManifest(botId);
+      return m == null ? null : structuredClone(m);
+    },
+
     // §2.3 bind-time support matrix (noop's answers + the T2 hard refusal:
     // a provider port without materializeAssets cannot carry assets at all).
     checkBind(bot, asset) {

@@ -305,6 +305,26 @@ function botRow(state, bot) {
   // beyond the gray 已停用 state (the plugin was likely disabled).
   const providerMissing = state.ports?.getProvider?.(bot.provider) == null
     || state.ports?.getChannel?.(bot.channel) == null;
+  // §8.1 P1-14: materialization health echo — the last-good manifest's
+  // lastMaterializedAt/lastResult (§3.8 is the design's own data source),
+  // null when the bot never materialized. Same seam as the other asset
+  // faces (state.materializer), so the noop answers null and the roster
+  // shape never drifts between the two.
+  const manifest = typeof state.materializer?.getManifest === 'function'
+    ? state.materializer.getManifest(bot.id)
+    : null;
+  // §7.1/§7.2 manifest.tools — the per-tool equipment states (armed/
+  // available / unavailable), summarized for the 装备台 badge. Only the
+  // display-relevant fields cross the wire (no disk targets); a bot without
+  // tool bindings (or a never-materialized one) echoes [].
+  const assetTools = (Array.isArray(manifest?.tools) ? manifest.tools : [])
+    .filter((t) => isObject(t))
+    .map((t) => ({
+      assetId: t.assetId ?? null,
+      kind: t.kind ?? null,
+      state: t.state ?? null,
+      ...(t.version != null ? { version: t.version } : {}),
+    }));
   return {
     id: bot.id, name: bot.name, enabled: bot.enabled !== false,
     provider: bot.provider, channel: bot.channel,
@@ -315,6 +335,9 @@ function botRow(state, bot) {
     channelState: chan == null ? null : { state: chan.state ?? null, lastError: chan.lastError ?? null },
     providerMissing,
     assetWarnings: assetWarningsOf(state, bot),
+    lastMaterializedAt: manifest?.lastMaterializedAt ?? null,
+    lastResult: manifest?.lastResult ?? null,
+    assetTools,
   };
 }
 
@@ -488,6 +511,11 @@ function portsOp(state) {
     id,
     owner: owner ?? null,
     configSchema: Array.isArray(impl?.configSchema) ? impl.configSchema : [],
+    // W3: does this provider speak the asset pipeline (materializeAssets)?
+    // Same decision source as the materializer's bind-time support check —
+    // the wizard's 配发装备 step disables checkboxes for providers without
+    // it (「该岗位暂不支持装备」).
+    assets: typeof impl?.materializeAssets === 'function',
   }));
   return { channels, providers };
 }

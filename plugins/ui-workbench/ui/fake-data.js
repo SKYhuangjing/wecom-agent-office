@@ -76,7 +76,9 @@ export const FAKE_TIMELINE = [
 // 资产科 (W3 T4)：/api/assets 清单行（mcp env/headers 是位置掩码 __MASKED__ 的
 // 剥敏回显——红线：假数据也不放明文机密）+ bots 的 assets 绑定摘要（§2.2 形状：
 // 无 content；exclusive 带 snapshotVersion/exclusiveBehind/sourceDeleted）+
-// agents 的 assetWarnings。ast-rtk09 刻意不在清单里——它是已下架资产的私发快照
+// agents 的 assetWarnings/assetTools（后者=manifest.tools 装备态回显 §7.1/§7.2：
+// bot-2 的 rg 已装备、rtk 二进制缺失 unavailable——装备台两种徽章都有基线）。
+// ast-rtk09 刻意不在清单里——它是已下架资产的私发快照
 // （源删除后快照独立生效，§3.2 DELETE row）。
 export const FAKE_ASSETS = [
   {
@@ -99,6 +101,11 @@ export const FAKE_ASSETS = [
     content: { notes: ['周报模板：本周完成 / 下周计划 / 风险', '发版窗口：周四 14:00', '值班表在 ops/oncall.md，改动先打招呼'] },
     origin: 'operator', version: 2, createdAt: now - 30 * 24 * 3600_000, updatedAt: minAgo(2880), bindings: 1,
   },
+  {
+    id: 'ast-rg004', type: 'tool', name: 'rg-guide', description: 'ripgrep 代码检索指引（预检 rg 在位）',
+    content: { kind: 'ripgrep' },
+    origin: 'operator', version: 1, createdAt: minAgo(5000), updatedAt: minAgo(4800), bindings: 1,
+  },
 ];
 
 export const FAKE = {
@@ -119,6 +126,14 @@ export const FAKE = {
         'memory 共享 cwd：跨会话记忆可能被同目录其他会话互见',
         'rtk 已绑定但二进制不可用（rtk 未安装或不在 PATH）——装备暂未生效，绑定保留',
       ],
+      // manifest.tools 装备态回显：rg 预检在位（available）、rtk 二进制缺失
+      // （unavailable）——装备台「装备态」列两种徽章的基线。
+      assetTools: [
+        { assetId: 'ast-rg004', kind: 'ripgrep', state: 'available', version: 'ripgrep 14.1.1' },
+        { assetId: 'ast-rtk09', kind: 'rtk', state: 'unavailable' },
+      ],
+      lastMaterializedAt: minAgo(95),
+      lastResult: 'ok',
     },
     {
       // 盲评 P2-4 基线：已停用 + provider 插件（codex，见 FAKE_PLUGINS）已停用的
@@ -146,6 +161,7 @@ export const FAKE = {
       assets: [
         { assetId: 'ast-mcp002', name: 'gateway', type: 'mcp', mode: 'exclusive', origin: 'mcp', exclusiveBehind: 1, snapshotVersion: 1, snapshotAt: minAgo(7200) },
         { assetId: 'ast-mem003', name: 'team-notes', type: 'memory', mode: 'shared', origin: 'operator' },
+        { assetId: 'ast-rg004', name: 'rg-guide', type: 'tool', mode: 'shared', origin: 'operator' },
         { assetId: 'ast-rtk09', name: 'rtk-slim', type: 'tool', mode: 'exclusive', origin: 'operator', exclusiveBehind: null, snapshotVersion: 1, snapshotAt: now - 3 * 24 * 3600_000, sourceDeleted: true },
       ],
     },
@@ -172,6 +188,7 @@ export const FAKE = {
       {
         id: 'dsh',
         owner: 'provider-dsh',
+        assets: true, // provider 有 materializeAssets（向导 3.5 步可勾装备；盲评 P2-4）
         configSchema: [
           { key: 'cwd', label: '工作目录（agent 作业目录，也是沙箱 workspaceRoot）', type: 'string', required: true },
           { key: 'profile', label: 'dsh profile 名（默认 wecom-<botId>）', type: 'string' },
@@ -190,6 +207,7 @@ export const FAKE = {
       {
         id: 'claude',
         owner: 'provider-claude',
+        assets: true,
         configSchema: [
           { key: 'cwd', label: '工作目录（claude 按其 realpath 定位会话历史）', type: 'string', required: true },
           { key: 'model', label: '模型 {model, baseURL?, apiKey?, apiKeyEnv?}（baseURL→ANTHROPIC_BASE_URL，apiKey→ANTHROPIC_AUTH_TOKEN 或 apiKeyEnv）', type: 'object' },
@@ -207,6 +225,7 @@ export const FAKE = {
       {
         id: 'codex',
         owner: 'provider-codex',
+        assets: true,
         configSchema: [
           { key: 'cwd', label: '工作目录（codex 作业目录，也是会话 rollout 的归属）', type: 'string', required: true },
           { key: 'model', label: '模型 {model}（→ -m；网关 baseURL 走 configOverrides 的 openai_base_url=…）', type: 'object' },

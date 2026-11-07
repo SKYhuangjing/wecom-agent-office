@@ -507,6 +507,8 @@ export function checkBindConflicts(assets, bindings) {
 //   materialize(bot, plan) → {writes, notes?} | {writes: [], skipped} — a
 //     throw becomes the per-bot failed[] entry (§3.2 isolation)
 //   removeAssets(bot) → {removed} | skipped shape (bot DELETE best-effort)
+//   getManifest(botId) → manifest|null (§3.8 read access for the agents
+//     roster's lastMaterializedAt/lastResult echo, §8.1 P1-14)
 export function noopMaterializer() {
   const dedicatedDirOf = (bot) => {
     const pc = isObject(bot?.providerConfig) ? bot.providerConfig : {};
@@ -531,6 +533,7 @@ export function noopMaterializer() {
     detectForeignTargets() { return []; },
     detectFileConflicts() { return []; },
     toolWarnings() { return []; },
+    getManifest() { return null; },
     memoryWarning(bot) {
       if (bot?.provider === 'dsh') return null; // memory rides personaPrefix, not cwd files (§3.3)
       if (dedicatedDirOf(bot) !== undefined) return null;

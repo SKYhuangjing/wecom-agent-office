@@ -129,6 +129,11 @@ const TOOLS = [
         if (Array.isArray(a.assetWarnings) && a.assetWarnings.length > 0) {
           lines.push(`  ↳ 资产警示：${a.assetWarnings.join('；')}`);
         }
+        // §8.1 P1-14: materialization health — the last-good manifest stamp
+        // (§3.8); failed:<reason> surfaces verbatim (clip long stderr tails).
+        if (a.lastMaterializedAt != null) {
+          lines.push(`  ↳ 最近物化：${fmt(a.lastMaterializedAt)}（${a.lastResult === 'ok' ? '正常' : clip(a.lastResult, 80)}）`);
+        }
       }
       return ok(lines.join('\n'), { agents: ops.sanitize(agents) });
     },

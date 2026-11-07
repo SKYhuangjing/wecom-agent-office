@@ -1,7 +1,7 @@
 // MCP gateway tool-surface tests (W1 T2): a REAL kernel boot (createKernel,
 // port 0, tmp dataDir) with the repo plugins (core-engine + mcp-gateway) plus
 // the two fake port plugins from test/engine/plugin.test.js (channel-fake /
-// provider-fake). Every case drives the 13 company tools through real
+// provider-fake). Every case drives the 19 company+asset tools through real
 // HTTP/JSON-RPC — the contract under test is the tool behavior: dual output
 // (text + structuredContent), API-semantics error mapping (400/404/409 →
 // isError results, unknown tool → -32602), secret red line (fake secrets
@@ -583,6 +583,34 @@ test('agents-face asset warning rides list_employees (W3 T1 review): memory on a
   assert.deepEqual(after.structuredContent.agents.find((a) => a.id === 'am2').assetWarnings, []);
   await call('delete_asset', { assetId: asset.id });
   await call('offboard', { botId: 'am2' });
+});
+
+test('list_employees summary surfaces materialization health (§8.1 P1-14): 最近物化 line from the §3.8 manifest', async () => {
+  await call('hire', { bot: { ...BOT_M1, id: 'am3' } });
+  const created = await call('create_asset', { asset: { type: 'prompt', name: 'stamp-p', content: { text: 'S' } } });
+  assert.equal(created.isError, undefined);
+  const asset = created.structuredContent.asset;
+
+  const bound = await call('bind_asset', { botId: 'am3', assetId: asset.id, mode: 'exclusive' });
+  assert.equal(bound.isError, undefined);
+
+  // structuredContent carries the stamp; the human summary carries the line
+  const roster = await call('list_employees');
+  const am3 = roster.structuredContent.agents.find((a) => a.id === 'am3');
+  assert.equal(am3.lastResult, 'ok');
+  assert.ok(Number.isFinite(am3.lastMaterializedAt));
+  assert.match(roster.content[0].text, /- am3（[^）]*）[^\n]*\n  ↳ 最近物化：\d{4}-\d{2}-\d{2} [^\n]*（正常）/);
+
+  // the REST face (/api/agents) agrees — one botRow, two faces
+  const restAgents = await (await fetch(`${base()}/api/agents`)).json();
+  const restRow = restAgents.agents.find((a) => a.id === 'am3');
+  assert.equal(restRow.lastResult, 'ok');
+  assert.equal(restRow.lastMaterializedAt, am3.lastMaterializedAt);
+
+  // cleanup
+  await call('unbind_asset', { botId: 'am3', assetId: asset.id });
+  await call('delete_asset', { assetId: asset.id });
+  await call('offboard', { botId: 'am3' });
 });
 
 test('secret red line: no fake secret literal appears in ANY captured response body', async () => {

@@ -277,6 +277,12 @@ test('GET /api/ports lists channels/providers with their schemas; GET /api/bots 
   assert.equal(ports.channels.find((c) => c.id === 'fakechan').owner, 'channel-fake');
   assert.equal(ports.providers.find((p) => p.id === 'fakeprov').owner, 'provider-fake');
   assert.equal(ports.providers.find((p) => p.id === 'dsh').owner, 'provider-dsh');
+  // W3 盲评 P2-4: the wizard's 配发装备 step disables checkboxes through the
+  // assets flag — same decision source as the materializer's bind-time check
+  // (materializeAssets on the provider port). fakeprov here has none → false;
+  // the repo's real providers (dsh) → true.
+  assert.equal(ports.providers.find((p) => p.id === 'fakeprov').assets, false);
+  assert.equal(ports.providers.find((p) => p.id === 'dsh').assets, true);
 
   const list = await (await get('/api/bots')).json();
   const b1 = list.bots.find((b) => b.id === 'b1');

@@ -176,7 +176,7 @@ launchctl print gui/$(id -u)/com.wecom-agent-office | head -30   # launchd 视�
 
 `mcp-gateway` 插件（默认装载，可在 `data/plugins.json` 停用）把公司操作面以 MCP 最小子集暴露在
 `POST http://127.0.0.1:8792/mcp`，claude / codex / ZCode 等 Agent CLI 可直连做巡检、入职、
-调休、广播、部门启停（公司话词表见 §4.2；Agent 侧快捷 skill 见 `docs/skills/wao-company.md`）。
+调休、广播、部门启停、资产配发（公司话词表见 §4.2；Agent 侧快捷 skill 见 `docs/skills/wao-company.md`）。
 协议是 streamable HTTP 传输的无 SSE 半边：JSON-RPC 2.0 单请求，方法仅
 `initialize` / `tools/list` / `tools/call` / `notifications/*`（含 `notifications/initialized`，
 一律 HTTP 202 空体）；GET `/mcp` 答 405（SSE 推送二期）；`DELETE /mcp` 显式终结会话（幂等 202）。
@@ -229,7 +229,7 @@ curl -si -X POST localhost:8792/mcp -H 'content-type: application/json' \
 # → 200，响应头含 Mcp-Session-Id；随后带该头 POST tools/list、tools/call
 ```
 
-13 个工具一览（细节与参数见 `plugins/mcp-gateway/README.md`；危险＝执行前须向用户复述后果确认）：
+19 个工具一览（细节与参数见 `plugins/mcp-gateway/README.md`；危险＝执行前须向用户复述后果确认）：
 
 | 工具 | 一句话 | 危险 |
 |---|---|---|
@@ -246,6 +246,12 @@ curl -si -X POST localhost:8792/mcp -H 'content-type: application/json' \
 | `work_log` | 工作档案（台账轮次） | |
 | `work_timeline` | 工作日志（时间线事件流） | |
 | `company_state` | 公司状态摘要 | |
+| `create_asset` | 登记资产（五类 skill/memory/mcp/prompt/tool；Agent 自建仅可私发 exclusive 绑定） | |
+| `update_asset` | 更新资产（version 自增；配发绑定扇出重物化；仅 Agent 自建资产可改，配发池走控制台/REST） | |
+| `delete_asset` | 删除资产（配发绑定解绑＋清理；私发副本保留生效；仅 Agent 自建资产可删） | ⚠️ |
+| `bind_asset` | 绑定资产到 bot（配发 shared 跟源／私发 exclusive 快照） | ⚠️ |
+| `unbind_asset` | 解绑（删除盘上产物；私发副本内容随卸载丢失） | ⚠️ |
+| `rematerialize` | 强制重物化（确定性/幂等；漂移修复与失败重试） | ⚠️ |
 
 ## 4. 开发（写插件）
 

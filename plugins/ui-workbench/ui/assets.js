@@ -2,7 +2,8 @@
 // GET/POST/PATCH/DELETE /api/assets（mcp 位置掩码 __MASKED__ 的「留掩码=不改」
 // 回写语义）；装备台 = per-bot 绑定面（GET /api/bots 的 assets 摘要 +
 // POST/DELETE /api/bots/:id/assets + POST /api/bots/:id/rematerialize-assets，
-// 警示条来自 /api/agents assetWarnings）。公司话词表（§8.1 P2 裁定 rev.2）：
+// 警示条与工具装备态徽章来自 /api/agents assetWarnings/assetTools——后者经
+// manifest.tools 回显，§7.1/§7.2）。公司话词表（§8.1 P2 裁定 rev.2）：
 // 徽章与文案只用「配发」(mode:'shared') /「私发」(mode:'exclusive')；卸下装备
 // =unbind，重新物化=rematerialize，下架=DELETE 资产；技术词（type/mode 原值、
 // 落盘路径）收进 tooltip/副标题——双层语言，运维不歧义。
@@ -100,6 +101,30 @@ const TypeBadge = ({ h, type }) => h('span', {
 const ModeBadge = ({ h, mode }) => h('span', {
   className: `badge wb-bmode-${mode}`, title: `mode: ${mode} —— ${MODE_HINT[mode] ?? ''}`,
 }, MODE_LABEL[mode] ?? mode);
+
+// 工具装备态徽章（§7.1/§7.2 manifest.tools 经 /api/agents assetTools 回显）：
+// armed/available → 🛠 已装备 <kind> <version>；unavailable → ⚠ 未安装（绑定
+// 在册、盘面未装备——装好二进制后「重新物化」即可）；无清单条目 → 未物化。
+// 复用既有徽章配色（wb-atype-tool 绿 / wb-srcdel 警示），不新造样式。
+const TOOL_OK_STATES = new Set(['armed', 'available']);
+const ToolBadge = ({ h, entry }) => {
+  if (entry == null) {
+    return h('span', {
+      className: 'wb-hint',
+      title: '物化清单（manifest.tools）暂无此工具的记录——绑定在册但尚未物化，点「重新物化」补跑',
+    }, '未物化');
+  }
+  if (TOOL_OK_STATES.has(entry.state)) {
+    return h('span', {
+      className: 'badge wb-atype-tool',
+      title: `manifest.tools state: ${entry.state}——工具已落到工位生效`,
+    }, `🛠 已装备 ${entry.version ?? entry.kind}`);
+  }
+  return h('span', {
+    className: 'badge wb-srcdel',
+    title: `manifest.tools state: ${entry.state ?? 'unavailable'}（unavailable）——${entry.kind} 二进制不在本机，绑定保留但盘面未装备；安装 ${entry.kind} 后点「重新物化」即可装备`,
+  }, '⚠ 未安装');
+};
 
 // 操作回执（bind/unbind/rematerialize 共用形状 §3.2）：rematerialized/failed/
 // writes + notes/skipped；bind 另带 warnings/suppressed。落盘路径逐条照实展示
@@ -569,6 +594,9 @@ export default {
       const boundIds = new Set(bindings.map((x) => x?.assetId));
       const available = (assets ?? []).filter((a) => !boundIds.has(a.id));
       const warnings = Array.isArray(agent?.assetWarnings) ? agent.assetWarnings : [];
+      // manifest.tools 装备态（/api/agents assetTools）：按 assetId 对到绑定行。
+      const toolStateOf = (assetId) => (Array.isArray(agent?.assetTools)
+        ? agent.assetTools.find((t) => t?.assetId === assetId) : undefined);
       equipBody = h('div', null,
         h('div', { className: 'wb-toolbar' },
           h('select', {
@@ -589,7 +617,7 @@ export default {
           : h('table', { className: 'wb-table' },
               h('thead', null, h('tr', null,
                 h('th', null, '资产'), h('th', null, '类型'), h('th', null, '模式'),
-                h('th', null, '版本/快照'), h('th', null, '操作'))),
+                h('th', null, '版本/快照'), h('th', null, '装备态'), h('th', null, '操作'))),
               h('tbody', null, bindings.map((x) => h('tr', { key: x.assetId },
                 h('td', null,
                   h('div', { className: 'wb-mono' }, x.name ?? x.assetId),
@@ -605,6 +633,9 @@ export default {
                           className: (x.exclusiveBehind ?? 0) > 0 ? 'wb-field-error' : 'wb-sub',
                           title: `快照 v${x.snapshotVersion ?? '?'}，源资产当前 v+${x.exclusiveBehind ?? 0}`,
                         }, (x.exclusiveBehind ?? 0) > 0 ? `落后源 ${x.exclusiveBehind} 版` : `快照 v${x.snapshotVersion ?? '?'}`)),
+                h('td', null, x.type === 'tool'
+                  ? h(ToolBadge, { h, entry: toolStateOf(x.assetId) })
+                  : h('span', { className: 'wb-hint', title: '装备态只对工具类资产有意义（技能/记忆/MCP/提示词随物化直接落盘）' }, '—')),
                 h('td', null, h('button', {
                   className: 'wb-btn wb-btn-danger', disabled: busy, onClick: () => setUnbindFor(x),
                 }, '卸下装备')))))),

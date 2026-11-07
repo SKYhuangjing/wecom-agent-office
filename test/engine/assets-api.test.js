@@ -393,6 +393,36 @@ test('agents-face asset warnings (W3 T1 review): memory on a shared cwd flags th
   assert.equal((await del(`/api/bots/ab2/assets/${asset.id}`)).status, 200);
 });
 
+test('agents roster echoes materialization health (§8.1 P1-14): lastMaterializedAt/lastResult read from the §3.8 manifest', async () => {
+  // a never-materialized bot echoes nulls (the roster shape is stable)
+  assert.equal((await post('/api/bots', mkBot('ab3'))).status, 200);
+  const freshRow = (await (await get('/api/agents')).json()).agents.find((a) => a.id === 'ab3');
+  assert.equal(freshRow.lastMaterializedAt, null);
+  assert.equal(freshRow.lastResult, null);
+
+  // bind → the real materializer runs (fakeprov has materializeAssets) →
+  // the roster row carries the manifest stamp verbatim, not a parallel clock
+  const { asset } = await (await post('/api/assets', { type: 'prompt', name: 'roster-stamp', content: { text: 'R' } })).json();
+  assert.equal((await post('/api/bots/ab1/assets', { assetId: asset.id, mode: 'shared' })).status, 200);
+  const row = (await (await get('/api/agents')).json()).agents.find((a) => a.id === 'ab1');
+  assert.equal(row.lastResult, 'ok');
+  assert.ok(Number.isFinite(row.lastMaterializedAt));
+  assert.deepEqual(row.assetTools, [], 'no tool bindings → empty equipment states (fakeprov plans no tools rows)');
+  const manifest = JSON.parse(readFileSync(join(dataDir, 'assets', 'ab1', 'manifest.json'), 'utf8'));
+  assert.equal(row.lastMaterializedAt, manifest.lastMaterializedAt, 'the roster reads the §3.8 manifest');
+
+  // the third face agrees: botDetail (the get_employee aggregate) is the
+  // same botRow — one extraction point, three faces
+  const detail = kernel.services.get('companyOps').botDetail('ab1');
+  assert.equal(detail.lastResult, 'ok');
+  assert.equal(detail.lastMaterializedAt, manifest.lastMaterializedAt);
+
+  // cleanup: unbind (materializes the empty plan — stamp stays, result ok)
+  assert.equal((await del(`/api/bots/ab1/assets/${asset.id}`)).status, 200);
+  await req(`/api/assets/${asset.id}`, 'DELETE');
+  await req('/api/bots/ab3', 'DELETE');
+});
+
 test('closed content schema over HTTP: stray keys 400 with「unexpected key」copy (W3 T1 review)', async () => {
   const r = await post('/api/assets', { type: 'mcp', name: 'foreign-key', content: { servers: { a: { command: 'node', oops: 1 } } } });
   assert.equal(r.status, 400);

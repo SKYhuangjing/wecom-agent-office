@@ -200,6 +200,12 @@ test('API unavailable flow: rtk bind succeeds with rtk missing — receipt notes
     const agents = await (await req('/api/agents')).json();
     const row = agents.agents.find((a) => a.id === 'rtk-api-b1');
     assert.ok(row.assetWarnings.some((w) => /rtk 未安装/.test(w)), `agents face standing warning: ${JSON.stringify(row.assetWarnings)}`);
+    // 盲评 P2-2/P2-3: the roster also echoes the manifest stamp and the
+    // per-tool equipment states (manifest.tools → assetTools) — the 装备台
+    // badge's data source. unavailable carries no version.
+    assert.equal(row.lastResult, 'ok');
+    assert.ok(Number.isFinite(row.lastMaterializedAt));
+    assert.deepEqual(row.assetTools, [{ assetId: asset.asset.id, kind: 'rtk', state: 'unavailable' }]);
 
     const unbind = await req(`/api/bots/rtk-api-b1/assets/${asset.asset.id}`, 'DELETE');
     assert.equal(unbind.status, 200);

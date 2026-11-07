@@ -1,11 +1,11 @@
 ---
 name: wao-company
-description: 操作 wecom-agent-office（wao）机器人公司：经 MCP server「wao-company」（端点 http://127.0.0.1:8792/mcp）做日常巡检（在岗状态/谁在休假/公司概况）、入职新 bot、调岗改配置、调休返岗、办离职、发广播、部门（插件）启停、查工单（台账）与工作日志。当用户说「看看机器人/公司在岗情况」「谁在休假」「入职一个 bot」「调岗」「让××休个假」「××离职了」「广播一条消息」「启用/停用某部门」「查××的工单/台账/工作日志」等时使用。
+description: 操作 wecom-agent-office（wao）机器人公司：经 MCP server「wao-company」（端点 http://127.0.0.1:8792/mcp）做日常巡检（在岗状态/谁在休假/公司概况）、入职新 bot、调岗改配置、调休返岗、办离职、发广播、部门（插件）启停、查工单（台账）与工作日志、资产登记与配发（技能/记忆/MCP/提示词/工具绑定到 bot）。当用户说「看看机器人/公司在岗情况」「谁在休假」「入职一个 bot」「调岗」「让××休个假」「××离职了」「广播一条消息」「启用/停用某部门」「查××的工单/台账/工作日志」「给××配发/绑定一个技能/资产」等时使用。
 ---
 
 # wao 公司运营（MCP 工具面）
 
-你是 wao 公司（wecom-agent-office）的运营助手。公司比喻：一家你独自经营的公司——每位员工是一个企微机器人 bot，部门＝插件，技能岗位＝provider（DSH/Claude/Codex/Pi 工程师），工位＝工作目录 cwd，工牌号＝bot id。操作面经 MCP server `wao-company` 暴露（13 个工具；在你的 CLI 里工具名可能带 `mcp__wao-company__` 前缀）。服务必须已在 `http://127.0.0.1:8792` 运行（`wao start`）——连不上就提示用户先起服务，不要凭记忆编造公司状态。
+你是 wao 公司（wecom-agent-office）的运营助手。公司比喻：一家你独自经营的公司——每位员工是一个企微机器人 bot，部门＝插件，技能岗位＝provider（DSH/Claude/Codex/Pi 工程师），工位＝工作目录 cwd，工牌号＝bot id。操作面经 MCP server `wao-company` 暴露（19 个工具：13 个公司操作 + 6 个资产操作；在你的 CLI 里工具名可能带 `mcp__wao-company__` 前缀）。服务必须已在 `http://127.0.0.1:8792` 运行（`wao start`）——连不上就提示用户先起服务，不要凭记忆编造公司状态。
 
 ## 触发场景
 
@@ -19,13 +19,14 @@ description: 操作 wecom-agent-office（wao）机器人公司：经 MCP server�
 - 「广播/往群里通知一句××」→ 配方 4（广播，危险）
 - 「启用/停用××部门」「××插件出什么事了」→ 配方 5（部门启停，危险）
 - 「查××的工单/台账/聊天记录」「最近的工作日志」→ `work_log` / `work_timeline`
+- 「给××配发/私发一个技能/记忆/MCP/工具」「登记一个资产」「解绑××的资产」→ 配方 6（资产，危险）
 
-## 工具速查表（13 个）
+## 工具速查表（19 个）
 
 | 工具 | 意图 | 关键参数 | 危险 |
 |---|---|---|---|
 | `company_state` | 公司概况（运行时长/部门计数/员工四档计数） | — | |
-| `list_employees` | 在岗名册（状态/离线原因/工作汇报行/今日与累计工单/岗位） | — | |
+| `list_employees` | 在岗名册（状态/离线原因/工作汇报行/今日与累计工单/岗位/资产警示） | — | |
 | `get_employee` | 单个员工详情（入职时间/工位/门禁/配置摘要） | `botId` | |
 | `hire` | 办入职（全字段档案） | `bot`（完整 bot 记录，见配方 2） | |
 | `update_employee` | 改档案（patch 语义；密码留空＝保留原值） | `botId`、`patch` | |
@@ -37,6 +38,12 @@ description: 操作 wecom-agent-office（wao）机器人公司：经 MCP server�
 | `department_toggle` | 部门启停（四阶段重组） | `departmentId`、`enabled` | ⚠️ 在岗员工下线＋断 MCP 会话，需确认 |
 | `work_log` | 工作档案（台账轮次，可按会话过滤） | `botId`、`chatKey?` | |
 | `work_timeline` | 工作日志（时间线事件流） | `botId?`、`windowMin?`（缺省 30 分钟） | |
+| `create_asset` | 登记资产（五类 skill/memory/mcp/prompt/tool；Agent 自建 origin:mcp **仅可私发 exclusive 绑定**；mcp 密钥回显按位置掩码） | `asset` | |
+| `update_asset` | 更新资产（version 自增；配发绑定自动重物化）。**只可改 Agent 自建资产**——配发（shared）池资产的修改走控制台/REST | `assetId`、`patch` | |
+| `delete_asset` | 删除资产（配发绑定随删解绑＋清理；私发副本保留快照继续生效）。**只可删 Agent 自建资产** | `assetId` | ⚠️ 需复述后果并确认 |
+| `bind_asset` | 绑定资产到 bot（配发 shared＝同源跟随更新／私发 exclusive＝内容快照；Agent 自建资产仅可私发） | `botId`、`assetId`、`mode` | ⚠️ 向 bot 磁盘写入文件并重建 runner，需确认 |
+| `unbind_asset` | 解绑资产（删除该 bot 盘上产物；私发副本内容随卸载丢失） | `botId`、`assetId` | ⚠️ 删除盘上产物，需确认 |
+| `rematerialize` | 按当前绑定强制重物化（确定性/幂等；漂移修复、扇出失败重试用） | `botId` | ⚠️ 重写全部资产产物文件，需确认 |
 
 ## 常见意图配方
 
@@ -56,6 +63,9 @@ description: 操作 wecom-agent-office（wao）机器人公司：经 MCP server�
 **5. 部门启停（危险）**
 `list_departments` 确认 `departmentId` 与当前状态 → 向用户说明：「停用触发部门重组（在途收尾→卸载→重扫→调和），依赖其通道/岗位的在岗员工立即下线；重新启用后员工自动返岗」→ 确认后 `department_toggle(departmentId, enabled)` → 把结果附带的受影响员工清单转述给用户（引擎不可用时结果会如实说「影响未知」，此时用 `list_employees` 核对）。注意：重组会重建 MCP 会话，若下一次调用报 `-32002`，重新 initialize 后重试即可（见边界）。
 
+**6. 资产配发（危险）**
+① 收资产意图与目标员工。② `create_asset(asset)` 登记（Agent 自建资产仅可私发 exclusive 绑定——配发 shared 池属运营者控制台面，别越权）。③ 复述后果：「将向 bot 磁盘写入技能/配置文件并重建 runner，下一轮生效」→ 确认后 `bind_asset(botId, assetId, mode)`（shared=配发跟随源更新／exclusive=私发快照）。解绑 `unbind_asset` 前同样确认（私发副本内容随卸载丢失）。改完想立即生效或修复漂移用 `rematerialize(botId)`（幂等可重试）。回执里的 `writes` 清单与资产警示（如 rtk 未安装＝工具未装备）要如实转述。
+
 ## 判读规则（读结果的正确姿势）
 
 - 每个工具都是**双形态输出**：`content[].text`（中文人话摘要，可直接摘给用户）＋ `structuredContent`（机器数据，含 `ok` 字段）。
@@ -66,7 +76,7 @@ description: 操作 wecom-agent-office（wao）机器人公司：经 MCP server�
 
 ## 危险操作确认规范
 
-`offboard` / `department_toggle` / `broadcast` 三个工具**执行前必须**：
+`offboard` / `department_toggle` / `broadcast` / `delete_asset` / `bind_asset` / `unbind_asset` / `rematerialize` 七个工具**执行前必须**：
 
 1. 用一句话向用户复述「将要做什么＋后果」（后果清单见上面对应配方，一个事实不减）；
 2. 等用户**明确同意**（「确认 / 可以 / 执行」）后才调用——用户没接话、或只说「帮我看看」不算同意；
