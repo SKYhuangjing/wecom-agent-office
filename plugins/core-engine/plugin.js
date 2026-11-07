@@ -153,6 +153,22 @@ export default {
         await engine.sendDrainRefusals();
       },
       status: (botId) => engine.status(botId),
+      // /healthz bots 汇总 (P2 observability): roster truth over engine
+      // runtime state — total counts every REGISTERED bot record; the engine
+      // itself only knows attached bots, so unattached (disabled/failed-attach
+      // /channel-dead) bots close the gap as offline. online=在岗待命(idle),
+      // working=干活中, three disjoint buckets summing to total.
+      summary: () => {
+        const rows = doc.bots.filter(isBotRecord);
+        let online = 0;
+        let working = 0;
+        for (const bot of rows) {
+          const st = engine.status(bot.id).status;
+          if (st === 'working') working++;
+          else if (st === 'idle') online++;
+        }
+        return { total: rows.length, online, working, offline: rows.length - online - working };
+      },
       // A4 seam: an engine-side channel-event handler returning true means
       // "the engine handled it" — the channel then skips its default behavior
       // (e.g. the default enter_chat welcome).

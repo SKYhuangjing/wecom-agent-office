@@ -65,9 +65,10 @@ node src/index.js version   # → 0.1.0   (拼错命令会被拒绝, 不会猜)
 | `WAO_HOME` | 数据目录（bots.json/ledger/sessions/logs） | `./data` |
 | `WAO_PLUGINS_PATH` | 额外插件目录（冒号分隔，追加在仓库 plugins/ 之后） | 无 |
 | `WAO_LOG_LEVEL` | 日志级别 | `info` |
+| `WAO_TOKEN` | 访问鉴权令牌：设置后所有 `/api/*`、`/mcp` 请求须带 `Authorization: Bearer <t>` 或 `X-WAO-Token: <t>` 头 | 未设置=回环无鉴权 |
 
 端口默认 **8792**；端口被占或 data 目录被锁 = 第二实例，拒绝启动（不共享数据目录）。
-`WAO_TOKEN` 鉴权 P2 预留——当前回环无鉴权，本机任意进程可控制（诚实边界，见 DESIGN §13）。
+`WAO_TOKEN` 设置即启用鉴权（P1 已落地）：`/healthz`（与 `/readyz`）免鉴权供 launchd/doctor 探活；Web 控制台静态资源（`/`、`/assets/*`、`/vendor/*`、`/api/ui/*`）免鉴权——页面先加载，SDK 发现 401 会弹输入框收令牌（存 localStorage，SSE 事件流因 EventSource 不能带头、单独接受 `?wao_token=` 查询参数）；其余 `/api/*` 与 `/mcp` 一律要求令牌，缺失/不符答 401。`wao tui` 与 `wao doctor` 自动带本进程环境里的 `WAO_TOKEN`。
 
 ## 3. 自检与运维
 
@@ -165,8 +166,8 @@ launchctl print gui/$(id -u)/com.wecom-agent-office | head -30   # launchd 视�
 
 | 命令 | 看什么 | 异常处置 |
 |---|---|---|
-| `curl -s localhost:8792/healthz` | `ok:true` + uptimeSec | 不通 → `kickstart -k`；反复挂 → launchd.err.log |
-| `curl -s localhost:8792/api/agents` | 每 bot `idle/working` + `channelState.state=online` | `offline` 带 reason → 查 wao.log 对应 bot 段 |
+| `curl -s localhost:8792/healthz` | `ok:true` + uptimeSec + version + bots 汇总（免鉴权） | 不通 → `kickstart -k`；反复挂 → launchd.err.log |
+| `curl -s localhost:8792/api/agents` | 每 bot `idle/working` + `channelState.state=online`（设 WAO_TOKEN 时加 `-H "X-WAO-Token: $WAO_TOKEN"`） | `offline` 带 reason → 查 wao.log 对应 bot 段 |
 | `curl -s localhost:8792/api/state` | 插件 active/failed/disabled | 出现 `failed` → 修后 `POST /api/service/reload` |
 | `tail -50 <DATA_DIR>/logs/wao.log` | `wao: stopping` / `orphan sweep` / drain 超时 | 有 sweep 行=曾有 CLI 活过停机，确认无残留 |
 | `node src/index.js doctor` | 全量自检（含 launchd 三态：✓运行/!未装/✗装了没跑） | 任何 ✗ 行=需要动手 |
@@ -192,11 +193,19 @@ launchctl print gui/$(id -u)/com.wecom-agent-office | head -30   # launchd 视�
 - **输出双形态**：每工具 `content[].text`（中文摘要）+ `structuredContent`（结构化数据）；
   secret 永不回显（`__MASKED__` 语义同 §3）。当前回环无鉴权（§2 边界同样适用）。
 
-三家 CLI 配置样例（服务须先 `node src/index.js start`）：
+三家 CLI 配置样例（服务须先 `node src/index.js start`；**设置 `WAO_TOKEN` 后三家都要在配置里带头**，令牌换成实际值）：
 
 ```jsonc
 // claude：存成 wao.mcp.json，工具名形如 mcp__wao-company__list_employees
-{ "mcpServers": { "wao-company": { "type": "http", "url": "http://127.0.0.1:8792/mcp" } } }
+{
+  "mcpServers": {
+    "wao-company": {
+      "type": "http",
+      "url": "http://127.0.0.1:8792/mcp",
+      "headers": { "X-WAO-Token": "<你的 WAO_TOKEN>" }
+    }
+  }
+}
 ```
 
 ```sh
@@ -204,24 +213,35 @@ claude --mcp-config wao.mcp.json "列出在岗员工并告诉我谁在休假"
 ```
 
 ```sh
-# codex：一条命令写入 ~/.codex/config.toml
-codex mcp add wao-company --url http://127.0.0.1:8792/mcp
+# codex：一条命令写入 ~/.codex/config.toml（WAO_TOKEN 未设置时省略 --header）
+codex mcp add wao-company --url http://127.0.0.1:8792/mcp --header 'X-WAO-Token: <你的 WAO_TOKEN>'
 ```
 
 ```toml
 # ~/.codex/config.toml（与上行等价的手写形态）
 [mcp_servers.wao-company]
 url = "http://127.0.0.1:8792/mcp"
+http_headers = { "X-WAO-Token" = "<你的 WAO_TOKEN>" }
 ```
 
 ```jsonc
 // ZCode：工作区级 <repo>/.zcode/config.json（用户级 ~/.zcode/cli/config.json 同形）；
 // 会话启动自动连接，状态在「设置 → MCP」查看。schema 严格：多余键会被静默丢弃，
 // 模板变量 ${...} 不展开——写具体地址
-{ "mcp": { "servers": { "wao-company": { "type": "http", "url": "http://127.0.0.1:8792/mcp" } } } }
+{
+  "mcp": {
+    "servers": {
+      "wao-company": {
+        "type": "http",
+        "url": "http://127.0.0.1:8792/mcp",
+        "headers": { "X-WAO-Token": "<你的 WAO_TOKEN>" }
+      }
+    }
+  }
+}
 ```
 
-裸 curl 冒烟（先握手拿会话头，再列工具/调用）：
+裸 curl 冒烟（先握手拿会话头，再列工具/调用；设了 WAO_TOKEN 时加 `-H "X-WAO-Token: $WAO_TOKEN"`）：
 
 ```sh
 curl -si -X POST localhost:8792/mcp -H 'content-type: application/json' \

@@ -115,7 +115,7 @@ function scriptedRunner(steps) {
 
 const COMPLETE = (o = {}) => ({ code: 'completed', finalText: '答案内容', returnsSessionId: 's1', ...o });
 
-function makeHarness({ steps, capabilities, limits, bot, middleware = { maskOutbound }, adapter } = {}) {
+function makeHarness({ steps, capabilities, limits, bot, middleware = { maskOutbound }, adapter, emit } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'wao-run-'));
   const log = fakeLog();
   const ledger = new Ledger({ file: join(dir, 'ledger.jsonl'), log });
@@ -131,7 +131,8 @@ function makeHarness({ steps, capabilities, limits, bot, middleware = { maskOutb
   const engine = new Engine({
     log, getRunner: () => runner, getAdapter: () => adap,
     ledgerFactory: () => ({ ledger, cache }),
-    timeline, progressor, middleware, limits: { ...MS_LIMITS, ...limits },
+    timeline, progressor, middleware, emit,
+    limits: { ...MS_LIMITS, ...limits },
   });
   engine.attachBot(b, { adapter: adap, runner });
   const send = async (text, bb = b, chatKey = K) => {
@@ -781,4 +782,126 @@ test('progressStyle explicit: "polite" → broadcast; "cot" → legacy 💭/🔧
   const cotTexts = cot.adapter.frames.filter((f) => f.method === 'progress' && !f.finish).map((f) => f.text);
   assert.ok(cotTexts.some((t) => t.includes('💭')), 'cot keeps the thinking line');
   assert.ok(cotTexts.some((t) => t.includes('🔧')), 'cot keeps the tool line');
+});
+
+// --- P2 observability: run start/done log lines, usage timeline row, SSE payload ---
+
+test('run start/done log lines: greppable one-liners with session, outcome and tokens', async () => {
+  const h = makeHarness({
+    steps: [{
+      emit: [
+        { type: 'text', text: '正文', usage: { inputTokens: 10, outputTokens: 5 } },
+      ],
+      code: 'completed', finalText: '答', returnsSessionId: 's1',
+    }],
+  });
+  await h.send('新问题');
+  assert.ok(
+    h.log.lines.info.some((l) => /^run start wecom:group:g1 bot=bot1 session=\(new\)$/.test(l)),
+    `run start line exact (fresh session): ${JSON.stringify(h.log.lines.info)}`,
+  );
+  assert.ok(
+    h.log.lines.info.some((l) => /^run done wecom:group:g1 bot=bot1 ok=true reason=completed tokens=15 dur=\d+ms$/.test(l)),
+    `run done line exact (tokens 10+5, ms duration): ${JSON.stringify(h.log.lines.info)}`,
+  );
+  // error outcome keeps the same shape with ok=false and the mapped reason
+  const bad = makeHarness({ steps: [{ code: 'error', finalText: '', detail: 'x' }] });
+  await bad.send('会失败的问题');
+  assert.ok(
+    bad.log.lines.info.some((l) => /^run done wecom:group:g1 bot=bot1 ok=false reason=error tokens=0 dur=\d+ms$/.test(l)),
+    `run done for error outcome: ${JSON.stringify(bad.log.lines.info)}`,
+  );
+  // resumed session logs the session id, not (new)
+  const resumed = makeHarness({ steps: [COMPLETE()] });
+  seedRow(resumed.ledger);
+  resumed.cache.upsert(K, 'codex', { sessionId: 's-old', bornCwd: CWD }, 1);
+  resumed.cache.setCurrent(K, 'codex');
+  await resumed.send('续问');
+  assert.ok(
+    resumed.log.lines.info.some((l) => l === 'run start wecom:group:g1 bot=bot1 session=s-old'),
+    `native resume names the session: ${JSON.stringify(resumed.log.lines.info)}`,
+  );
+});
+
+test('run start/done pairing: a skipped turn logs neither; a mid-run abort logs both', async () => {
+  // (a) abort lands synchronously, before the chain ever runs the impl: the
+  // turn is skipped wholesale (no runner, no bookkeep) — no lines at all.
+  const skipped = makeHarness({ steps: [{ hangMs: 50, hangCode: 'aborted' }] });
+  skipped.engine.onMessage(skipped.bot, mkMsg('被替换'));
+  skipped.engine.inFlight.get(K).abort(); // abort-before-run path
+  await skipped.engine.chains.get(K);
+  await tick();
+  assert.ok(!skipped.log.lines.info.some((l) => l.startsWith('run start') || l.startsWith('run done')),
+    `a replaced-before-start turn claims no lines: ${JSON.stringify(skipped.log.lines.info)}`);
+  // (b) abort lands AFTER the runner spawned: start was claimed, and the
+  // interrupted outcome still books its done line (bookkeep runs every path).
+  const h = makeHarness({ steps: [{ hangMs: 200, hangCode: 'aborted' }] });
+  h.engine.onMessage(h.bot, mkMsg('被打断'));
+  await tick(); // chain started: runner spawned and hanging
+  h.engine.inFlight.get(K).abort();
+  await h.engine.chains.get(K);
+  await tick();
+  assert.ok(
+    h.log.lines.info.some((l) => l === 'run start wecom:group:g1 bot=bot1 session=(new)'),
+    `mid-run turn claimed its start: ${JSON.stringify(h.log.lines.info)}`,
+  );
+  assert.ok(
+    h.log.lines.info.some((l) => /^run done wecom:group:g1 bot=bot1 ok=false reason=interrupted tokens=0 dur=\d+ms$/.test(l)),
+    `the interrupted turn still books a done line: ${JSON.stringify(h.log.lines.info)}`,
+  );
+});
+
+test('usage timeline row: one 📊 summary per run end, beside the turn row', async () => {
+  const h = makeHarness({
+    steps: [{
+      emit: [{ type: 'text', text: 'x', usage: { inputTokens: 7, outputTokens: 3 } }],
+      code: 'completed', finalText: '答', returnsSessionId: 's1',
+    }],
+  });
+  await h.send('问题');
+  const rows = h.timeline.get();
+  const usageRows = rows.filter((r) => r.kind === 'usage');
+  assert.equal(usageRows.length, 1, 'exactly one usage row');
+  assert.equal(usageRows[0].botId, 'bot1');
+  assert.equal(usageRows[0].chatKey, K);
+  assert.equal(usageRows[0].text, '📊 输入 7 · 输出 3');
+  // the closing turn row (bookkeep's), not the in-run text-event row that
+  // also maps to kind 'turn' (EV_TO_KIND) — usage lands right after it.
+  const turnIdx = rows.map((r) => r.kind).lastIndexOf('turn');
+  const usageIdx = rows.findIndex((r) => r.kind === 'usage');
+  assert.ok(turnIdx >= 0 && usageIdx === turnIdx + 1, 'usage lands right after the closing turn row');
+});
+
+test('run/start & run/end SSE frames carry usage + durationMs', async () => {
+  const events = [];
+  const h = makeHarness({
+    emit: (topic, payload) => events.push({ topic, payload }),
+    steps: [{
+      emit: [{ type: 'text', text: 'x', usage: { inputTokens: 4, outputTokens: 2 } }],
+      code: 'completed', finalText: '答', returnsSessionId: 's1',
+    }],
+  });
+  await h.send('问题');
+  const start = events.find((e) => e.topic === 'run/start');
+  const end = events.find((e) => e.topic === 'run/end');
+  assert.ok(start, 'run/start emitted');
+  assert.deepEqual(start.payload, { botId: 'bot1', chatKey: K, usage: null, durationMs: 0 });
+  assert.ok(end, 'run/end emitted');
+  assert.equal(end.payload.botId, 'bot1');
+  assert.equal(end.payload.chatKey, K);
+  assert.equal(end.payload.durationMs, h.engine.lastRunOf('bot1').durationMs);
+  assert.deepEqual(end.payload.usage, { inputTokens: 4, outputTokens: 2, cacheReadTokens: 0, totalTokens: 6 });
+});
+
+test('lastRunOf: null before any run, durationMs + usage after', async () => {
+  const h = makeHarness({ steps: [COMPLETE()] });
+  assert.equal(h.engine.lastRunOf('bot1'), null, 'never ran → null (roster answers lastDurationMs=null)');
+  await h.send('问题');
+  const last = h.engine.lastRunOf('bot1');
+  assert.equal(typeof last.durationMs, 'number');
+  assert.equal(typeof last.at, 'number');
+  assert.equal(last.usage.totalTokens, 0, 'fake runner reports no usage → honest 0');
+  // The returned record is a copy: mutating it must not corrupt engine state.
+  last.durationMs = -1;
+  assert.notEqual(h.engine.lastRunOf('bot1').durationMs, -1);
 });

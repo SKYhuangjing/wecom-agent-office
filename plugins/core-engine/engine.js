@@ -80,7 +80,9 @@ const HANDOFF_HEADER = '以下是本对话此前的记录（供上下文参考�
 
 // Unified events (§5) → timeline kinds (§3). session/error/final get no
 // timeline row here: the closing 'turn' row already carries the outcome.
-const EV_TO_KIND = { step: 'step', tool: 'tool', thinking: 'thinking', text: 'turn' };
+// usage: providers may report token usage as its own event kind; it lands in
+// the local ring beside the per-run 'usage' summary row bookkeep appends.
+const EV_TO_KIND = { step: 'step', tool: 'tool', thinking: 'thinking', text: 'turn', usage: 'usage' };
 
 // —— per-run token usage accumulator (cost-tracker & co) ————————————————————
 // Providers report usage in four dialects on their events:
@@ -425,6 +427,12 @@ export async function defaultRunTurn(bot, msg, ac) {
   // Bookkeeping (§6.6): runs for EVERY outcome — row, cache, timeline — so
   // the consumedSeq protocol survives aborted/timed-out/failed turns.
   const bookkeep = (result) => {
+    // Observability first (P2): stamp the run's usage/duration onto the live
+    // run record BEFORE anything that could throw below, so the run/end SSE
+    // frame and the /api/agents lastRun fields survive even a ledger failure.
+    const usage = usageAcc.summary();
+    const durationMs = Date.now() - startedAt;
+    engine._noteRunMetrics(chatKey, bot.id, { usage, durationMs });
     // A null result means "aborted before the runner started" — same ledger
     // shape as a preempted run. hardTimedOut reclassifies a hard-timer abort
     // (the runner itself can only see 'aborted') to a timeout.
@@ -477,6 +485,15 @@ export async function defaultRunTurn(bot, msg, ac) {
       botId: bot.id, chatKey, kind: 'turn',
       text: `${msg.text} → ${(result?.finalText || '').slice(0, 60)}`,
     });
+    // Observability (P2): one usage summary row per run end — the token cost
+    // of this turn in the local ring, beside the ledger's durable tokens field.
+    engine.timeline?.push({
+      botId: bot.id, chatKey, kind: 'usage',
+      text: `📊 输入 ${usage.inputTokens} · 输出 ${usage.outputTokens}`,
+    });
+    // run done log line (P2): the one line an operator greps wao.log for —
+    // outcome, reason, burned tokens and wall time on a single greppable row.
+    engine.log.info?.(`run done ${chatKey} bot=${bot.id} ok=${reason === 'completed'} reason=${reason} tokens=${usage.totalTokens} dur=${durationMs}ms`);
     engine.progressor?.reset();
     engine.setProgress(bot.id, null, 'run');
   };
@@ -510,6 +527,10 @@ export async function defaultRunTurn(bot, msg, ac) {
   }
 
   // —— 4/5. run + code branches (§6.4/§6.5) ————————————————————————————
+  // run start log line (P2): pairs with bookkeep's 'run done' — session=(new)
+  // marks a fresh session, session=<id> a native resume. Logged here, at the
+  // spawn point, so an aborted-before-runner turn never claims a start.
+  engine.log.info?.(`run start ${chatKey} bot=${bot.id} session=${sessionId || '(new)'}`);
   const runArgs = () => ({ prompt, sessionId, signal: ac.signal, timeoutMs: hardTimeoutMs, onEvent });
   const synthError = (e) => ({
     ok: false, code: 'error', finalText: '', aborted: false,
@@ -641,9 +662,10 @@ export class Engine {
     this.chains = new Map();    // chatKey → tail promise (settles when the chain goes idle)
     this.pending = new Map();   // chatKey → { bot, msg } merged-but-not-started (latest-wins)
     this.inFlight = new Map();  // chatKey → AbortController (pinned surface, Task 13 reads it)
-    this._runs = new Map();     // chatKey → { ac, botId } — retired in lockstep with inFlight
+    this._runs = new Map();     // chatKey → { ac, botId, usage?, durationMs? } — retired in lockstep with inFlight
     this._bots = new Map();     // botId → { bot, adapter, runner }; absent = offline
     this._progress = new Map(); // botId → { line, source, startedAt, updatedAt }
+    this._lastRun = new Map();  // botId → { at, durationMs, usage } — last settled run (P2 roster fields)
     this._running = 0;          // turns occupying a gate slot right now
     this._waiters = [];         // FIFO of slot resolve callbacks (fairness across bots)
     this.draining = false;
@@ -991,10 +1013,10 @@ export class Engine {
     // idle→working transition (this bot's first live run): one status frame.
     if (!wasWorking) {
       this.emit?.('agent/status', { botId, ...this._statusOf(botId) });
-      // UI bridge (§8 SSE run/*): same transition, run-scoped frame. The
-      // timeline row marks the boundary in the local ring (kind run_start,
-      // DESIGN §3 closed kind set) so the timeline page shows run brackets.
-      this.emit?.('run/start', { botId, chatKey: key });
+      // UI bridge (§8 SSE run/*): same transition, run-scoped frame. usage is
+      // honestly null at start (nothing measured yet) so consumers can key on
+      // its presence; run/end carries the settled values.
+      this.emit?.('run/start', { botId, chatKey: key, usage: null, durationMs: 0 });
       this.timeline?.push({ botId, chatKey: key, kind: 'run_start', text: '' });
     }
   }
@@ -1011,11 +1033,35 @@ export class Engine {
       this._progress.delete(run.botId); // bot's last live turn ended: no stale progress line
       // working→idle transition (the bot's last live turn settled).
       this.emit?.('agent/status', { botId: run.botId, ...this._statusOf(run.botId) });
-      // UI bridge (§8 SSE run/*): run-scoped counterpart of run/start; the
-      // timeline row closes the bracket in the local ring.
-      this.emit?.('run/end', { botId: run.botId, chatKey: key });
+      // UI bridge (§8 SSE run/*): run-scoped counterpart of run/start; usage/
+      // durationMs are what defaultRunTurn stamped via _noteRunMetrics (null
+      // when the impl never reported — custom impls keep the old shape).
+      this.emit?.('run/end', {
+        botId: run.botId, chatKey: key,
+        usage: run.usage ?? null, durationMs: run.durationMs ?? null,
+      });
       this.timeline?.push({ botId: run.botId, chatKey: key, kind: 'run_end', text: '' });
     }
+  }
+
+  // Run metrics (P2 observability): defaultRunTurn stamps the settled run's
+  // usage/duration here — onto the LIVE run record (feeds the run/end SSE
+  // frame) and the per-bot last-run map (feeds /api/agents lastDurationMs).
+  // bookkeep calls this FIRST, before anything that might throw.
+  _noteRunMetrics(key, botId, { usage, durationMs }) {
+    const rec = this._runs.get(key);
+    if (rec != null) {
+      rec.usage = usage;
+      rec.durationMs = durationMs;
+    }
+    this._lastRun.set(botId, { at: Date.now(), durationMs, usage });
+  }
+
+  // Last settled run of a bot (P2): { at, durationMs, usage } copy or null
+  // when it never ran (roster answers lastDurationMs=null then).
+  lastRunOf(botId) {
+    const r = this._lastRun.get(botId);
+    return r == null ? null : { ...r, usage: { ...r.usage } };
   }
 
   // —— internal: global concurrency gate ————————————————————————————————

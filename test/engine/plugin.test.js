@@ -197,6 +197,15 @@ test('POST /api/bots validates, materializes, persists, attaches; no secret ever
   assert.equal(agents[0].enabled, true);
   assert.equal(agents[0].provider, 'fakeprov');
   assert.equal(agents[0].channel, 'fakechan');
+  // P2 观测字段 before any run: honest nulls / zero (no ledger rows yet)
+  assert.equal(agents[0].lastRunAt, null);
+  assert.equal(agents[0].lastDurationMs, null);
+  assert.equal(agents[0].totalTokens, 0);
+  // /healthz (P2): version + the engine service's bots summary
+  const hz = await (await get('/healthz')).json();
+  assert.equal(hz.ok, true);
+  assert.match(hz.version ?? '', /^\d+\.\d+\.\d+$/, 'healthz carries the package version');
+  assert.deepEqual(hz.bots, { total: 1, online: 1, working: 0, offline: 0 });
   assert.ok((globalThis.__waoFakeChanStarted ?? 0) >= 1, 'adapter started on attach');
 
   // unknown subpaths 404 INSIDE /api; kernel-native /api/* still reach the kernel
@@ -651,6 +660,20 @@ test('end-to-end message through the engine service feeds ledger/export/timeline
   assert.equal(agents[0].users, 1);
   assert.equal(agents[0].chats, 1);
 
+  // P2 观测字段: lastRunAt mirrors the ledger's last row; lastDurationMs is
+  // engine memory of THIS settled run; totalTokens sums the durable rows.
+  const row = (await (await get('/api/ledger?bot=b1')).json())[0];
+  assert.equal(agents[0].lastRunAt, row.at, 'lastRunAt = ledger last row at');
+  assert.equal(typeof agents[0].lastDurationMs, 'number', 'lastDurationMs known after a run');
+  assert.ok(agents[0].lastDurationMs >= 0);
+  assert.equal(agents[0].totalTokens, row.tokens ?? 0, 'totalTokens sums ledger rows (fake runner → 0)');
+  // run start/done log lines made it to the captured kernel log (child
+  // loggers prefix with the plugin id, so match unanchored)
+  assert.ok(logLines.some((l) => /(^|\] )run start fake:single:u1 bot=b1 session=/.test(l)),
+    `run start line: ${JSON.stringify(logLines.filter((l) => l.includes('run start')))}`);
+  assert.ok(logLines.some((l) => /(^|\] )run done fake:single:u1 bot=b1 ok=true reason=completed tokens=\d+ dur=\d+ms$/.test(l)),
+    `run done line: ${JSON.stringify(logLines.filter((l) => l.includes('run done')))}`);
+
   const sess = await (await get('/api/session?bot=b1&session=session-fake-b1')).json();
   assert.deepEqual(sess, { turns: [], truncated: false, warnings: [] });
 
@@ -661,6 +684,8 @@ test('end-to-end message through the engine service feeds ledger/export/timeline
 
   const tl = await (await get('/api/timeline?bot=b1')).json();
   assert.ok(Array.isArray(tl) && tl.length >= 1, 'timeline rows from the turn');
+  assert.ok(tl.some((r) => r.kind === 'usage' && r.text === '📊 输入 0 · 输出 0'),
+    `one usage summary row per run end: ${JSON.stringify(tl.filter((r) => r.kind === 'usage'))}`);
 
   // server-side push: chatRef = the raw chatKey; the CHANNEL parses its own
   // addressing (T17), the API never hardcodes it

@@ -14,10 +14,39 @@ export function initSdk(react) {
   R = { useState: react.useState, useEffect: react.useEffect, useCallback: react.useCallback };
 }
 
+// —— WAO_TOKEN 鉴权（P1，kernel/http.js 的同一接口）—————————————————————
+// The server gates /api/* behind WAO_TOKEN when the operator set it. api()
+// attaches the stored token to every call; on 401 it prompts ONCE (native
+// input box) and retries — a concurrent-calls burst shares the refresh: a
+// second call that sees a token it did not send retries silently instead of
+// stacking a second prompt. Non-browser hosts (harness/tests) have no prompt
+// and simply surface the 401 error.
+const TOKEN_KEY = 'wao-token';
+const storedToken = () => {
+  try { return localStorage.getItem(TOKEN_KEY) ?? ''; } catch { return ''; } // no localStorage: no token
+};
+const storeToken = (t) => {
+  try { localStorage.setItem(TOKEN_KEY, t); } catch { /* best effort by design */ }
+};
+const tokenHeaders = (t) => (t ? { 'x-wao-token': t } : {});
+
+// The one input box: ask the operator for the token, store it on success.
+// Returns the fresh token or '' (cancelled / no prompt available).
+const promptForToken = () => {
+  const ask = globalThis.prompt;
+  if (typeof ask !== 'function') return '';
+  const v = ask('该服务已启用访问鉴权（WAO_TOKEN）。请输入访问令牌：');
+  if (typeof v === 'string' && v !== '') {
+    storeToken(v);
+    return v;
+  }
+  return '';
+};
+
 // api(): JSON fetch with the kernel's error convention — !ok bodies carry
 // {error}, and that message (not a bare status code) is what callers see.
 export async function api(path, body, { method } = {}) {
-  const init = body !== undefined || method !== undefined
+  const base = body !== undefined || method !== undefined
     ? {
       method: method ?? (body !== undefined ? 'POST' : 'GET'),
       ...(body !== undefined
@@ -25,11 +54,28 @@ export async function api(path, body, { method } = {}) {
         : {}),
     }
     : undefined;
-  let res;
-  try {
-    res = await fetch(path, init);
-  } catch (err) {
-    throw new Error(`网络请求失败：${err?.message ?? err}`);
+  const send = (t) => fetch(path, base == null && !t ? undefined : {
+    ...(base ?? {}),
+    headers: { ...(base?.headers ?? {}), ...tokenHeaders(t) },
+  });
+  const doFetch = async (t) => {
+    try {
+      return await send(t);
+    } catch (err) {
+      throw new Error(`网络请求失败：${err?.message ?? err}`);
+    }
+  };
+  let sentWith = storedToken();
+  let res = await doFetch(sentWith);
+  if (res.status === 401) {
+    // A concurrent call may have refreshed the token already (its prompt won
+    // the race); only a still-stale token prompts again.
+    let t = storedToken();
+    if (t === sentWith) t = promptForToken();
+    if (t !== '') {
+      sentWith = t;
+      res = await doFetch(t);
+    }
   }
   let data = null;
   try { data = await res.json(); } catch { /* non-JSON body (proxy error page) */ }
@@ -76,7 +122,10 @@ export function useDisconnect(cb) {
 const ensureSSE = () => {
   connectRef++;
   if (source != null) return;
-  source = new EventSource('/api/events');
+  // EventSource cannot set request headers, so the token rides the query
+  // string — the server accepts ?wao_token= on /api/events only (http.js).
+  const t = storedToken();
+  source = new EventSource(t ? `/api/events?wao_token=${encodeURIComponent(t)}` : '/api/events');
   source.onerror = sseDown;
   const dispatch = (ev) => {
     let data = ev.data;

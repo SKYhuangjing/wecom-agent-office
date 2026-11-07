@@ -67,10 +67,42 @@ const json404 = (res) => {
   res.end(JSON.stringify({ error: 'not found' }));
 };
 
-export function createHttpShell({ log, webDir = null }) {
+// —— WAO_TOKEN gate (DESIGN §13 预留接口, P1) ————————————————————————————————
+// With a token configured (env WAO_TOKEN), every non-public path demands
+// `Authorization: Bearer <t>` or `X-WAO-Token: <t>`. Public paths: the health
+// probes (/healthz, /readyz — launchd/doctor must probe without credentials),
+// the console's own static bundle (/, /index.html, /assets/*, /vendor/*) and
+// page-plugin hosting (/api/ui/*) — the page must load before the SDK can
+// collect a token. SSE /api/events IS gated; the browser EventSource API
+// cannot set request headers, so on that one path the token may also arrive
+// as ?wao_token= (loopback single-user: acceptable surface, and the only way
+// the console's event pipe survives the gate).
+const AUTH_UNAUTHORIZED = 'unauthorized: provide WAO_TOKEN via Authorization Bearer or X-WAO-Token header';
+
+const isPublicPath = (pathname) => pathname === '/healthz' || pathname === '/readyz'
+  || pathname === '/' || pathname === '/index.html'
+  || pathname.startsWith('/assets/') || pathname.startsWith('/vendor/')
+  || pathname.startsWith('/api/ui/');
+
+// The presented token of a request, or '' when none: Bearer scheme (any case)
+// wins, then X-WAO-Token, then the /api/events query fallback.
+const tokenOf = (req, url) => {
+  const auth = req.headers.authorization;
+  if (typeof auth === 'string') {
+    const m = /^Bearer\s+(.+)$/i.exec(auth.trim());
+    if (m != null) return m[1].trim();
+  }
+  const x = req.headers['x-wao-token'];
+  if (typeof x === 'string' && x !== '') return x.trim();
+  if (url.pathname === '/api/events') return url.searchParams.get('wao_token') ?? '';
+  return '';
+};
+
+export function createHttpShell({ log, webDir = null, auth = null, healthExtra = null } = {}) {
   const routes = new Map(); // prefix -> { handler, owner }
   const sse = new Set(); // live client records { res, close }; Set delete is idempotent
   const startedAt = Date.now(); // /healthz uptime base
+  const authToken = typeof auth?.token === 'string' && auth.token !== '' ? auth.token : null;
   let server = null;
 
   const json = (res, code, obj, extra = {}) => {
@@ -94,9 +126,24 @@ export function createHttpShell({ log, webDir = null }) {
   };
 
   const handle = (req, res) => {
-    const pathname = new URL(req.url, 'http://localhost').pathname; // base makes relative req.url well-formed
+    const url = new URL(req.url, 'http://localhost'); // base makes relative req.url well-formed
+    const pathname = url.pathname;
+    // Auth gate first: one check ahead of every branch (health, SSE, static,
+    // routes) so no dispatch path can dodge it. Public paths pass untouched.
+    if (authToken != null && !isPublicPath(pathname) && tokenOf(req, url) !== authToken) {
+      return json(res, 401, { error: AUTH_UNAUTHORIZED });
+    }
     if (pathname === '/healthz') {
-      if (req.method === 'GET') return json(res, 200, { ok: true, pid: process.pid, uptimeSec: Math.round((Date.now() - startedAt) / 1000) });
+      if (req.method === 'GET') {
+        // Enrichment (P2): version + engine bots summary when the caller wired
+        // a healthExtra provider; a throwing provider degrades to the plain
+        // body — healthz must never fail over an optional extra.
+        let extra = {};
+        if (typeof healthExtra === 'function') {
+          try { extra = healthExtra() ?? {}; } catch { extra = {}; }
+        }
+        return json(res, 200, { ok: true, pid: process.pid, uptimeSec: Math.round((Date.now() - startedAt) / 1000), ...extra });
+      }
     }
     if (pathname === '/api/events') {
       if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' }, { Allow: 'GET' });

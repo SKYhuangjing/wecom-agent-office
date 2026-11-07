@@ -81,6 +81,13 @@ export const openInBrowser = (url) => {
   return { ok: true, degraded: true };
 };
 
+// WAO_TOKEN 鉴权（P1）：$WAO_TOKEN 设置时服务端要求每个请求带头。TUI 与服务
+// 同机同环境——直接读本进程环境，无第二处配置面。未设置时空表，行为不变。
+const waoTokenHeaders = () => {
+  const t = process.env.WAO_TOKEN;
+  return t ? { 'x-wao-token': t } : {};
+};
+
 export function attachTUI({
   stream = process.stdout,
   input = process.stdin,
@@ -119,7 +126,7 @@ export function attachTUI({
 
   const pollAgents = async () => {
     try {
-      const res = await fetchFn(`${base}/api/agents`, { signal: AbortSignal.timeout(1500) });
+      const res = await fetchFn(`${base}/api/agents`, { headers: waoTokenHeaders(), signal: AbortSignal.timeout(1500) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = await res.json();
       if (!Array.isArray(body?.agents)) throw new Error('bad /api/agents shape');
@@ -134,7 +141,11 @@ export function attachTUI({
   // Client timeouts outrank the server's (test probe alone may take ~60s).
   const runApi = async (ef) => {
     const jsonFetch = async (url, init = {}, timeoutMs = 10_000) => {
-      const res = await fetchFn(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+      const res = await fetchFn(url, {
+        ...init,
+        headers: { ...(init.headers ?? {}), ...waoTokenHeaders() },
+        signal: AbortSignal.timeout(timeoutMs),
+      });
       let body = null;
       try { body = await res.json(); } catch { body = null; }
       if (!res.ok) return { ok: false, error: body?.error ?? `HTTP ${res.status}`, status: res.status };
@@ -242,7 +253,7 @@ export async function runTUI({
 } = {}) {
   const base = `http://${host}:${port}`;
   try {
-    const res = await fetch(`${base}/api/state`, { signal: AbortSignal.timeout(2500) });
+    const res = await fetch(`${base}/api/state`, { headers: waoTokenHeaders(), signal: AbortSignal.timeout(2500) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   } catch {
     console.error(`wao: tui 连不上 ${base} —— 公司服务好像没在跑`);

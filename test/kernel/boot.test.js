@@ -71,7 +71,12 @@ test('boot: healthz 200, /api/state ok:true with empty plugin list', async () =>
   assert.ok(Number.isInteger(k.http.port) && k.http.port > 0, 'port 0 binds an ephemeral port');
   const hz = await fetch(url('/healthz'));
   assert.equal(hz.status, 200);
-  assert.equal((await hz.json()).ok, true);
+  const hzBody = await hz.json();
+  assert.equal(hzBody.ok, true);
+  // P2 enrichment: package version always; bots omitted without an engine
+  // service (healthz never depends on a plugin being live).
+  assert.equal(hzBody.version, JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version);
+  assert.equal(hzBody.bots, undefined);
   const body = await (await fetch(url('/api/state'))).json();
   assert.equal(body.ok, true);
   assert.deepEqual(body.plugins, []);

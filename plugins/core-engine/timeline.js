@@ -13,8 +13,10 @@
 
 // The closed event-kind set from the unified event mapping (DESIGN §5.1).
 // Unknown kinds are a provider-mapping bug; rejecting beats storing junk
-// the UI would render as an unknown row forever.
-const KINDS = new Set(['run_start', 'step', 'tool', 'thinking', 'turn', 'run_end']);
+// the UI would render as an unknown row forever. 'usage' (P2 observability):
+// the per-run token summary bookkeep appends at run end (and any provider
+// usage event, via EV_TO_KIND).
+const KINDS = new Set(['run_start', 'step', 'tool', 'thinking', 'turn', 'usage', 'run_end']);
 
 export class Timeline {
   constructor({ windowMs = 30 * 60_000, cap = 2000 } = {}) {

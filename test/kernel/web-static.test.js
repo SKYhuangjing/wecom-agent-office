@@ -254,13 +254,19 @@ test('full chain: one run pushes run/start → ledger/turn → run/end SSE frame
       const nl = conn.buf.indexOf('\n', at);
       return JSON.parse(conn.buf.slice(at + 'data: '.length, nl));
     };
-    assert.deepEqual(frame('run/start', iStart), { botId: 'b1', chatKey: 'chat-1' });
+    // P2 observability: run frames carry usage + durationMs (start honestly
+    // null/0 — nothing measured yet; end carries the settled values).
+    assert.deepEqual(frame('run/start', iStart), { botId: 'b1', chatKey: 'chat-1', usage: null, durationMs: 0 });
     const turnPayload = frame('ledger/turn', iTurn);
     assert.equal(turnPayload.botId, 'b1');
     assert.equal(turnPayload.chatKey, 'chat-1');
     assert.equal(turnPayload.reason, 'completed');
     assert.equal(typeof turnPayload.seq, 'number');
-    assert.deepEqual(frame('run/end', iEnd), { botId: 'b1', chatKey: 'chat-1' });
+    const endPayload = frame('run/end', iEnd);
+    assert.equal(endPayload.botId, 'b1');
+    assert.equal(endPayload.chatKey, 'chat-1');
+    assert.equal(typeof endPayload.durationMs, 'number');
+    assert.deepEqual(endPayload.usage, { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, totalTokens: 0 });
     // The same transitions bracket the run in the timeline ring.
     const tl = await (await fetch(`http://127.0.0.1:${k.http.port}/api/timeline?bot=b1`)).json();
     const kinds = tl.map((r) => r.kind);

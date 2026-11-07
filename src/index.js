@@ -96,7 +96,10 @@ export const sweepOrphanChildren = async ({ pid = process.pid, log, execFileFn =
 // Library entry: wires every kernel module and returns the kernel object.
 // stop() is the whole teardown story — library callers own it explicitly;
 // only the CLI additionally maps SIGINT/SIGTERM onto it.
-export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, pluginsDirs, log } = {}) {
+// `token` (P1 auth, DESIGN §13 预留接口): defaults to $WAO_TOKEN; a non-empty
+// value gates every non-public HTTP path behind Bearer/X-WAO-Token (see
+// kernel/http.js). Empty/unset = loopback no-auth, unchanged.
+export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, pluginsDirs, log, token } = {}) {
   const dir = dataDir ?? defaultDataDir();
   // data/ is owner-only (DESIGN §3/§13): bots.json/ledger/sessions carry
   // secrets and conversation content. Create the dir 0700, and tighten an
@@ -119,7 +122,26 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
   // fresh clone with no build step. A missing dir just means GET / 404s —
   // boot never depends on the console being present.
   const webDir = join(repoRoot, 'web', 'dist');
-  const http = createHttpShell({ log: logger, webDir });
+  // P1 auth (see createKernel doc): $WAO_TOKEN by default. Set-but-empty is
+  // called out loudly — the operator asked for a gate and got none.
+  const authToken = token ?? process.env.WAO_TOKEN ?? '';
+  if (token == null && process.env.WAO_TOKEN === '') {
+    logger.warn('wao: WAO_TOKEN is set but empty — auth stays disabled');
+  }
+  const http = createHttpShell({
+    log: logger, webDir,
+    auth: authToken !== '' ? { token: authToken } : null,
+    // P2 /healthz enrichment: version always; bots summary when an 'engine'
+    // service (core-engine) is live — read per probe so reloads stay current.
+    healthExtra: () => {
+      const out = { version: pkgVersion() };
+      const engineSvc = services.get('engine');
+      if (engineSvc != null && typeof engineSvc.summary === 'function') {
+        out.bots = engineSvc.summary();
+      }
+      return out;
+    },
+  });
   // SSE bridge (DESIGN §8 /api/events): the bus topics the UI may see are
   // forwarded verbatim to every live SSE client. The whitelist IS the list —
   // the bus has no wildcards, so a plugin cannot smuggle a new topic onto the
@@ -562,6 +584,38 @@ const cmdDoctor = async (flags) => {
   const port = portOf(flags, 8792);
   const free = await checkPortFree(host, port);
   mark(free ? '✓' : '✗', 'port', free ? `${port} free on ${host}` : `port ${port} already in use`);
+
+  // WAO_TOKEN 生效性实测 (P1): with a token configured, prove the gate on the
+  // LIVE service — one probe without the header (must 401) and one with it
+  // (must 200). Without a live service the check is informational: auth is a
+  // runtime property of `wao start`, not of this doctor process.
+  if (process.env.WAO_TOKEN !== undefined) {
+    if (process.env.WAO_TOKEN === '') {
+      mark('!', 'auth', 'WAO_TOKEN 设置为空——鉴权未启用（需非空值才生效）');
+    } else {
+      const base = `http://${host}:${port}`;
+      const probe = async (headers) => {
+        try {
+          return await fetch(`${base}/api/state`, { headers, signal: AbortSignal.timeout(2000) });
+        } catch { return null; }
+      };
+      const bare = await probe({});
+      if (bare == null) {
+        mark('!', 'auth', `WAO_TOKEN 已设置，但 ${base} 无服务应答——鉴权生效性未验证（服务启动后复跑 doctor）`);
+      } else {
+        const withToken = await probe({ 'x-wao-token': process.env.WAO_TOKEN });
+        if (bare.status === 401 && withToken?.status === 200) {
+          mark('✓', 'auth', 'WAO_TOKEN 鉴权生效（无 token → 401 / 带 token → 200）');
+        } else if (bare.status === 200) {
+          mark('✗', 'auth', `服务未启用鉴权（无 token 仍 200）——在跑的实例未带 WAO_TOKEN 启动，重启时注入`);
+        } else if (withToken?.status === 401) {
+          mark('✗', 'auth', '带 token 仍 401——本进程环境的 WAO_TOKEN 与在跑服务不一致');
+        } else {
+          mark('✗', 'auth', `鉴权探测异常（无 token=${bare.status} / 带 token=${withToken?.status ?? '无应答'}）`);
+        }
+      }
+    }
+  }
 
   // Agent CLI presence is INFORMATIONAL (`!`, never ✗): a missing CLI only
   // fails that provider's runs at runtime — the /api/bots/:id/test endpoint

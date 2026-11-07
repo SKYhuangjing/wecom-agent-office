@@ -292,6 +292,13 @@ function botRow(state, bot) {
   const todayTurns = rows.filter((r) => (r.at ?? 0) >= midnight.getTime()).length;
   const users = new Set(rows.map((r) => r.userid).filter(Boolean)).size;
   const chats = new Set(rows.map((r) => r.chatKey).filter(Boolean)).size;
+  // P2 观测字段: lastRunAt/totalTokens read the ledger (durable truth — the
+  // last row's at and the sum of every row's tokens); lastDurationMs is
+  // ENGINE MEMORY (the settled run's wall time, no ledger schema change) and
+  // is honestly null before the bot's first run in this process.
+  const lastRow = rows.length > 0 ? rows[rows.length - 1] : null;
+  const totalTokens = rows.reduce((n, r) => n + (Number.isFinite(r.tokens) ? r.tokens : 0), 0);
+  const lastRun = state.engine?.lastRunOf?.(bot.id) ?? null;
   // 连接态 (§8): a terminal 'stopped' adapter (subscribe 鉴权失败, kicked)
   // means the bot cannot receive — report offline with the adapter's
   // lastError as the reason (DESIGN §4 凭证错误快速失败: bot 标 error).
@@ -331,6 +338,9 @@ function botRow(state, bot) {
     status: st.status === 'offline' || chanStopped ? 'offline' : st.status,
     running: st.running, progress: st.progress,
     todayTurns, users, chats, turns: rows.length,
+    lastRunAt: lastRow?.at ?? null,
+    lastDurationMs: lastRun?.durationMs ?? null,
+    totalTokens,
     reason: state.offlineReason(bot.id) ?? (chanStopped ? (chan.lastError ?? 'channel stopped') : null),
     channelState: chan == null ? null : { state: chan.state ?? null, lastError: chan.lastError ?? null },
     providerMissing,

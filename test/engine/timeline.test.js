@@ -131,3 +131,13 @@ test('get() validates its filters — bad windowMs/botId are rejected, not silen
   assert.throws(() => tl.get({ botId: 42 }), /botId/);
   assert.throws(() => tl.get({ botId: '' }), /botId/);
 });
+
+test("'usage' kind: accepted in the closed set and round-trips like any row (P2)", () => {
+  const tl = new Timeline({ windowMs: 30 * MIN });
+  tl.push(row({ botId: 'a', kind: 'run_start', at: at(2000) }));
+  tl.push(row({ botId: 'a', kind: 'usage', text: '📊 输入 7 · 输出 3', at: at(1000) }));
+  tl.push(row({ botId: 'a', kind: 'run_end', at: at(500) }));
+  const rows = tl.get();
+  assert.deepEqual(rows.map((r) => r.kind), ['run_start', 'usage', 'run_end']);
+  assert.equal(rows[1].text, '📊 输入 7 · 输出 3');
+});
