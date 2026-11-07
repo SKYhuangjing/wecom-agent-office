@@ -11,7 +11,7 @@ import net from 'node:net';
 import { execFile } from 'node:child_process';
 import { accessSync, chmodSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createLogger } from './kernel/log.js';
 import { lockDataDir, readJson, writeJson } from './kernel/config.js';
 import { createEventBus } from './kernel/events.js';
@@ -608,6 +608,64 @@ const cmdDoctor = async (flags) => {
       else mark('✗', 'launchd', `installed at ${plistPath} but not loaded (launchctl load ${plistPath})`);
     }
   }
+  // Asset drift check (DESIGN-ASSETS §8.1 P1-8, W3 T5): read-only dryRun
+  // verify per bound bot — the provider planners rebuild every product in
+  // memory and the core-engine materializer diffs against disk (§3.5), plus
+  // the orphan scan (§3.4) and manifest diff (§3.8). Never writes; the repair
+  // path is POST /api/bots/:id/rematerialize-assets. Provider plugins are
+  // activated in a bare lifecycle (their activation is port registration
+  // only — core-engine/bots never attach), and the planner modules come from
+  // the same repo-bundled plugin dirs the kernel loads at boot, dynamically
+  // imported here so doctor never maintains a second copy of the pipeline.
+  try {
+    const botsDoc = readJson(join(dataDir, 'bots.json'));
+    const assetsDoc = readJson(join(dataDir, 'assets.json'));
+    const bound = (Array.isArray(botsDoc?.bots) ? botsDoc.bots : [])
+      .filter((b) => b != null && typeof b === 'object' && Array.isArray(b.assets) && b.assets.length > 0);
+    if (bound.length > 0) {
+      const silent = { debug() {}, info() {}, warn() {}, error() {}, child() { return this; } };
+      const lc = createLifecycle({ events: createEventBus({ log: silent }), services: createServices(), log: silent, http: createHttpShell({ log: silent }) });
+      for (const root of defaultPluginsDirs()) {
+        let entries = [];
+        try { entries = readdirSync(root, { withFileTypes: true }); } catch { continue; }
+        for (const ent of entries) {
+          if (!ent.isDirectory() || ent.name.startsWith('.') || ent.name.startsWith('_')) continue;
+          const dir = join(root, ent.name);
+          let rec;
+          try { rec = await loader.importPlugin(dir); } catch { continue; }
+          if (rec.manifest?.type !== 'provider' || loader.validateManifest(rec.manifest).length > 0) continue;
+          try { await lc.activate({ dir, manifest: rec.manifest, mod: rec.mod.default, status: 'enabled', config: {} }); } catch { /* unverifiable provider — the per-bot line says so */ }
+        }
+      }
+      const { createMaterializer } = await import(pathToFileURL(join(repoRoot, 'plugins', 'core-engine', 'materializer.js')).href);
+      const { buildPlan } = await import(pathToFileURL(join(repoRoot, 'plugins', 'core-engine', 'assets.js')).href);
+      const materializer = createMaterializer({ ports: lc.portRegistry, dataDir, log: silent });
+      const registry = Array.isArray(assetsDoc?.assets) ? assetsDoc.assets : [];
+      for (const bot of bound) {
+        const plan = buildPlan(registry, bot).plan;
+        if (plan.length === 0) continue; // dangling bindings only — nothing on disk to verify
+        const v = await materializer.verify(bot, plan);
+        if (v.error != null) {
+          mark('!', `assets ${bot.id}`, `回验不可用（${v.error}）`);
+          continue;
+        }
+        const rows = [...(v.drift ?? []), ...(v.orphans ?? [])];
+        if (rows.length === 0) {
+          mark('✓', `assets ${bot.id}`, `无漂移（${plan.length} 项装备与盘面一致）`);
+          continue;
+        }
+        for (const r of rows) {
+          const why = r.detail != null ? r.detail : `盘面与期望不符（expected ${String(r.expected ?? '').slice(0, 80)} / actual ${String(r.actual ?? '<缺失>').slice(0, 80)}）`;
+          mark('!', `assets ${bot.id}`, `漂移：${r.path} — ${why}`);
+        }
+        mark('!', `assets ${bot.id}`, `修复：POST /api/bots/${bot.id}/rematerialize-assets（确定性重物化，幂等可重试）`);
+      }
+      try { await lc.deactivateAll(); } catch { /* read-only pass — nothing to unwind */ }
+    }
+  } catch (err) {
+    mark('!', 'assets', `漂移检查不可用（${err?.message ?? err}）`);
+  }
+
   return bad === 0 ? 0 : 1;
 };
 

@@ -546,7 +546,16 @@ async function testBotOp(state, id, reqBody) {
     }
     prompt = reqBody.prompt;
   }
-  const runner = port.createRunner({ bot, providerConfig: bot.providerConfig, log: state.log });
+  // §3.1 asset faces (W3 T5): the probe must interrogate the bot AS EQUIPPED
+  // — the same enrichment the engine's runner gets (bare plan + manifest file
+  // targets), so 岗前测试 exercises prompt (--append-system-prompt) and mcp
+  // (--mcp-config) assets too, not just the file faces (skills/hooks) that
+  // ride the config dir. Degrades to the bare plan under the noop materializer.
+  const barePlan = buildPlan(state.assetsDoc.assets, bot).plan;
+  const assets = barePlan.length > 0 && typeof state.materializer?.targetsFor === 'function'
+    ? state.materializer.targetsFor(bot, barePlan)
+    : barePlan;
+  const runner = port.createRunner({ bot, providerConfig: bot.providerConfig, assets, log: state.log });
   let events = 0;
   const result = await runner.run({
     prompt,
