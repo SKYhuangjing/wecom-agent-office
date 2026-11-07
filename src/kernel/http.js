@@ -7,7 +7,7 @@
 // /assets/* and /vendor/* — small committed files, so readFileSync whole-file
 // delivery with no-cache beats a streaming layer nobody asked for.
 import { readFileSync } from 'node:fs';
-import { extname, resolve } from 'node:path';
+import { extname, resolve, sep } from 'node:path';
 import { createServer } from 'node:http';
 
 const HEARTBEAT_MS = 15_000;
@@ -33,6 +33,14 @@ const MIME = {
   '.ico': 'image/x-icon',
 };
 
+// Containment check with the PLATFORM separator (P1 跨平台): on Windows
+// resolve() yields backslash-joined paths, so a hardcoded '/' prefix never
+// matched and every console/ui static route 404ed (Web 控制台全灭). sepChar
+// is injectable so the Windows shapes are pinnable on POSIX test machines.
+export function isUnderRoot(rootAbs, abs, sepChar = sep) {
+  return abs === rootAbs || abs.startsWith(rootAbs + sepChar);
+}
+
 // Resolve a URL path fragment UNDER root, or null when it escapes/decodes
 // badly. This is the traversal guard every static route goes through: the
 // decoded path is normalized and the RESULT is checked against the root —
@@ -45,7 +53,7 @@ export function fileUnder(root, relUrl) {
   if (decoded.includes('\0')) return null;
   const rootAbs = resolve(root);
   const abs = resolve(rootAbs, decoded);
-  if (abs !== rootAbs && !abs.startsWith(rootAbs + '/')) return null;
+  if (!isUnderRoot(rootAbs, abs)) return null;
   return abs;
 }
 

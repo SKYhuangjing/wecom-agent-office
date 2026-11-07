@@ -25,14 +25,26 @@ export function createLogger({ file = null, level = 'info', maxBytes = 10 * 1024
     mkdirSync(dirname(file), { recursive: true });
     try { fd = openSync(file, 'a', 0o600); } catch (err) { degrade(err); }
   }
+  let rotateFails = 0; // consecutive rotate passes with ≥1 failed rename
+  let rotateDisabled = false; // 3 strikes → stop trying (Windows: file held)
   const rotate = () => {
-    if (fd == null) return;
+    if (fd == null || rotateDisabled) return;
     try { closeSync(fd); } catch {}
+    let failed = false;
     for (let i = keep - 1; i >= 1; i--) {
       const from = `${file}.${i}`, to = `${file}.${i + 1}`;
-      if (existsSync(from)) try { renameSync(from, to); } catch {}
+      if (existsSync(from)) try { renameSync(from, to); } catch { failed = true; }
     }
-    if (existsSync(file)) try { renameSync(file, `${file}.1`); } catch {}
+    if (existsSync(file)) { try { renameSync(file, `${file}.1`); } catch { failed = true; } }
+    rotateFails = failed ? rotateFails + 1 : 0;
+    if (rotateFails >= 3 && !rotateDisabled) {
+      rotateDisabled = true;
+      // Windows 空转修复 (P2): renames keep failing (log held by editor/AV)
+      // while the file side still works — stop the futile close/reopen churn
+      // per write and say so ONCE on stderr (same visibility class as the
+      // degrade warn); logging keeps appending to the un-rotated file.
+      process.stderr.write(`${new Date().toISOString()} WARN [log] log rotation disabled after ${rotateFails} consecutive failures — file keeps growing at ${file}\n`);
+    }
     fd = openSync(file, 'a', 0o600);
   };
   const fmt = (a) => (typeof a === 'string' ? a : (() => { try { return JSON.stringify(a); } catch { return String(a); } })());

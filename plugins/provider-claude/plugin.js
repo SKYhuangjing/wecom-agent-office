@@ -33,9 +33,17 @@ export function skillMarkdown(entry) {
   ].join('\n');
 }
 
+// rg 安装指引按平台给出（P2 跨平台）：macOS brew / Linux apt / Windows
+// winget·scoop。文本在物化时烤进 system prompt，四家 provider 字节一致
+//（复制即契约）。
+export const rgInstallHint = (platform = process.platform) => platform === 'win32'
+  ? 'winget install BurntSushi.ripgrep.MSVC（或 scoop install ripgrep）'
+  : platform === 'linux' ? 'sudo apt-get install ripgrep（或你的发行版包管理器）'
+    : 'brew install ripgrep';
+
 export const RIPGREP_GUIDANCE = [
   '代码检索一律使用 rg（ripgrep）而非 grep/find。示例：rg -t js \'pattern\'、rg -n "text" src/。',
-  'rg 未安装时先执行：brew install ripgrep。',
+  `rg 未安装时先执行：${rgInstallHint()}。`,
 ].join('\n');
 
 export const ripgrepText = (entry) => [
@@ -219,7 +227,7 @@ export default {
                 const rg = probeRg();
                 tools.push({ assetId: entry.assetId, kind: 'ripgrep', state: rg.available ? 'available' : 'unavailable', version: rg.version });
                 if (!rg.available) {
-                  notes.push({ assetId: entry.assetId, detail: 'rg 未安装：ripgrep 指引已注入但本机无效（预检不失败）——brew install ripgrep 后生效' });
+                  notes.push({ assetId: entry.assetId, detail: `rg 未安装：ripgrep 指引已注入但本机无效（预检不失败）——${rgInstallHint()} 后生效` });
                 }
               } else if (entry.content?.kind === 'rtk') {
                 // §7.1 (W3 T3): plan the rtk-init write; core-engine's

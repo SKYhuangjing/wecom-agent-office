@@ -34,7 +34,7 @@
 //     (verified: wrong/missing keys are accepted), so a live
 //     missing-credential shape is UNVERIFIED; the mapping is regex + fake
 //     layer, same closure path as codex's unknown lock wording.
-import { spawn } from 'node:child_process';
+import { spawnCli } from '../../src/kernel/spawn.js';
 import { readFileSync } from 'node:fs';
 import { readHistory } from './history.js';
 import { piAgentDirFor } from './models.js';
@@ -49,6 +49,13 @@ const LOCK_CONFLICT_RE = /session is locked|locked by another (?:codex |pi |proc
 const MISSING_CREDENTIAL_RE = /PI_[A-Z_]*API_KEY|MAGPIE_API_KEY|missing credential|invalid api key|unauthorized|authentication|401/i;
 const DEFAULT_ESCALATION_MS = 3000;
 const STDERR_TAIL_CHARS = 4000;
+
+// ripgrep 指引的安装行（P2 跨平台）：brew/apt/winget·scoop 按平台——与四家
+// plugin.js 的 rgInstallHint 字节一致（复制即契约）。
+const rgInstallHint = (platform = process.platform) => platform === 'win32'
+  ? 'winget install BurntSushi.ripgrep.MSVC（或 scoop install ripgrep）'
+  : platform === 'linux' ? 'sudo apt-get install ripgrep（或你的发行版包管理器）'
+    : 'brew install ripgrep';
 
 // The 前身 describeTool heuristic (provider-dsh/provider-claude/
 // provider-codex runners): first meaningful input field wins (url||command||
@@ -90,7 +97,7 @@ export function createRunner({ bot, providerConfig, assets, log, escalationMs = 
     } else if (entry?.type === 'tool' && entry?.content?.kind === 'ripgrep') {
       assetFlags.push('--append-system-prompt', [
         '代码检索一律使用 rg（ripgrep）而非 grep/find。示例：rg -t js \'pattern\'、rg -n "text" src/。',
-        'rg 未安装时先执行：brew install ripgrep。',
+        `rg 未安装时先执行：${rgInstallHint()}。`,
         ...(entry.content.options?.extraHints ? [String(entry.content.options.extraHints)] : []),
       ].join('\n'));
     }
@@ -146,7 +153,9 @@ export function createRunner({ bot, providerConfig, assets, log, escalationMs = 
 
       let child;
       try {
-        child = spawn(piBin, args, {
+        // spawnCli: passthrough here, cmd.exe+escaping on Windows (P1 —
+        // npm's .cmd shims EINVAL without a shell; see src/kernel/spawn.js).
+        child = spawnCli(piBin, args, {
           cwd: pc.cwd || undefined,
           env: { ...process.env, ...extraEnv, ...(pc.env && typeof pc.env === 'object' ? pc.env : {}) },
           stdio: ['pipe', 'pipe', 'pipe'],

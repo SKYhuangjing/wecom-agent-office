@@ -10,7 +10,8 @@ import process from 'node:process';
 import net from 'node:net';
 import { execFile } from 'node:child_process';
 import { accessSync, chmodSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, delimiter, dirname, join, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createLogger } from './kernel/log.js';
 import { lockDataDir, readJson, writeJson } from './kernel/config.js';
@@ -25,10 +26,11 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const defaultDataDir = () => process.env.WAO_HOME || join(process.cwd(), 'data');
 
 // Repo-bundled plugins first, then operator extras from WAO_PLUGINS_PATH
-// (colon-separated, empty segments dropped) — the §2.1 scan rule.
-const defaultPluginsDirs = () => {
+// (path.delimiter-separated — ':' on POSIX, ';' on Windows —; empty segments
+// dropped) — the §2.1 scan rule.
+export const defaultPluginsDirs = () => {
   const dirs = [join(repoRoot, 'plugins')];
-  for (const extra of (process.env.WAO_PLUGINS_PATH ?? '').split(':')) if (extra !== '') dirs.push(extra);
+  for (const extra of (process.env.WAO_PLUGINS_PATH ?? '').split(delimiter)) if (extra !== '') dirs.push(extra);
   return dirs;
 };
 
@@ -515,13 +517,25 @@ const checkPortFree = (host, port, timeoutMs = 2000) => new Promise((settled) =>
 
 // PATH scan without executing anything: the first executable entry named
 // `bin` wins (a `command -v` in pure node). null = not on PATH.
-const whichBin = (bin) => {
-  for (const dir of (process.env.PATH ?? '').split(':')) {
+// Cross-platform (P2): PATH splits on the PLATFORM delimiter — a Windows
+// PATH is ';'-joined and a ':' split would never match — and on Windows an
+// extensionless name must be probed against PATHEXT (.COM/.EXE/…/.CMD):
+// npm bin shims are .cmd files, accessSync(join(dir, 'dsh')) alone misses
+// them. delim/exts are injectable so the Windows behavior is unit-testable
+// on POSIX; both default to this platform's conventions.
+export const whichBin = (bin, { pathEnv = process.env.PATH ?? '', delim = delimiter, exts = null } = {}) => {
+  const tryExts = exts ?? (process.platform === 'win32'
+    ? (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter((e) => e !== '')
+    : ['']);
+  for (const dir of pathEnv.split(delim)) {
     if (dir === '') continue;
-    try {
-      accessSync(join(dir, bin), constants.X_OK);
-      return join(dir, bin);
-    } catch { /* keep scanning */ }
+    for (const ext of tryExts) {
+      try {
+        const p = join(dir, bin + ext);
+        accessSync(p, constants.X_OK);
+        return p;
+      } catch { /* keep scanning */ }
+    }
   }
   return null;
 };
@@ -533,9 +547,14 @@ const cmdDoctor = async (flags) => {
     if (sym === '✗') bad++;
   };
 
+  // Node floor (P2-12 修正, 2026-11-07): >=22.15.0 — node:zlib gained zstd
+  // (zstdDecompressSync, provider-dsh history decoding) in v23.0.0, backported
+  // to v22.15.0; below that provider-dsh cannot even import (加载即失败). The
+  // old 20.10 floor predated the zstd dependency and was never actually
+  // exercised — the old quoted test glob ran ZERO tests on node <21.
   const [major, minor] = process.versions.node.split('.').map(Number);
-  if (major > 20 || (major === 20 && minor >= 10)) mark('✓', 'node', `v${process.versions.node} (floor 20.10)`);
-  else mark('!', 'node', `v${process.versions.node} is below the 20.10 floor (engines >=20.10) — warn only`);
+  if (major > 22 || (major === 22 && minor >= 15)) mark('✓', 'node', `v${process.versions.node} (floor 22.15, node:zlib zstd)`);
+  else mark('!', 'node', `v${process.versions.node} is below the 22.15 floor (engines >=22.15.0 — provider-dsh 需要 node:zlib zstd, 低版本加载即失败) — warn only`);
 
   try {
     await import('ws');
@@ -637,30 +656,68 @@ const cmdDoctor = async (flags) => {
     mark('✗', 'lock', `${dataDir} not lockable (${err.message})`);
   }
 
-  // launchd install check (M3 T6): the agent is a user LaunchAgent from the
-  // docs/launchd.plist template. `!` not installed (informational — the
-  // production install is the cutover's job); `✗` installed but not running
-  // (a real failure for an unattended box: KeepAlive should have it up).
-  // `launchctl list` line shape: "<pid>|-\t<last-status>\t<label>".
-  const plistPath = join(process.env.HOME ?? '', 'Library', 'LaunchAgents', 'com.wecom-agent-office.plist');
-  if (!existsSync(plistPath)) {
-    mark('!', 'launchd', `not installed (informational — cp docs/launchd.plist ${plistPath} per its header, then launchctl load)`);
-  } else {
-    const [listed, lcErr] = await new Promise((resolve) => {
-      execFile('launchctl', ['list'], { timeout: 3000 }, (err, stdout) => resolve([err ? null : String(stdout ?? ''), err]));
-    });
-    if (lcErr != null) {
-      // launchctl itself failing (spawn error/timeout) says NOTHING about the
-      // agent's loaded state — reporting "not loaded" here would send the
-      // operator to re-load a healthy install. Informational, state unknown.
-      const why = lcErr.killed ? 'timed out after 3000ms' : (lcErr.code ?? lcErr.message);
-      mark('!', 'launchd', `cannot determine loaded state — launchctl list failed (${why}); check manually: launchctl list | grep com.wecom-agent-office`);
+  // Process-manager check, dispatched per platform (P1 跨平台):
+  // macOS = launchd 三态 (installed+running / not installed `!` / loaded-but-
+  // dead `✗`); Linux = systemd --user is-active against the docs/wao.service
+  // template; anything else (Windows…) = informational pointer to README §3.1
+  // (NSSM / 任务计划程序) — no native service manager probe exists there.
+  if (process.platform === 'darwin') {
+    // launchd install check (M3 T6): the agent is a user LaunchAgent from the
+    // docs/launchd.plist template. `!` not installed (informational — the
+    // production install is the cutover's job); `✗` installed but not running
+    // (a real failure for an unattended box: KeepAlive should have it up).
+    // `launchctl list` line shape: "<pid>|-\t<last-status>\t<label>".
+    const plistPath = join(homedir(), 'Library', 'LaunchAgents', 'com.wecom-agent-office.plist');
+    if (!existsSync(plistPath)) {
+      mark('!', 'launchd', `not installed (informational — cp docs/launchd.plist ${plistPath} per its header, then launchctl load)`);
     } else {
-      const m = new RegExp('^\\s*(\\d+|-)\\s+[-\\d]+\\s+com\\.wecom-agent-office\\s*$', 'm').exec(listed);
-      if (m != null && m[1] !== '-') mark('✓', 'launchd', `installed and running (pid ${m[1]})`);
-      else if (m != null) mark('✗', 'launchd', 'loaded but NOT running (tail the plist\'s launchd.err.log; launchctl kickstart -k gui/$(id -u)/com.wecom-agent-office to force-restart)');
-      else mark('✗', 'launchd', `installed at ${plistPath} but not loaded (launchctl load ${plistPath})`);
+      const [listed, lcErr] = await new Promise((resolve) => {
+        execFile('launchctl', ['list'], { timeout: 3000 }, (err, stdout) => resolve([err ? null : String(stdout ?? ''), err]));
+      });
+      if (lcErr != null) {
+        // launchctl itself failing (spawn error/timeout) says NOTHING about the
+        // agent's loaded state — reporting "not loaded" here would send the
+        // operator to re-load a healthy install. Informational, state unknown.
+        const why = lcErr.killed ? 'timed out after 3000ms' : (lcErr.code ?? lcErr.message);
+        mark('!', 'launchd', `cannot determine loaded state — launchctl list failed (${why}); check manually: launchctl list | grep com.wecom-agent-office`);
+      } else {
+        const m = new RegExp('^\\s*(\\d+|-)\\s+[-\\d]+\\s+com\\.wecom-agent-office\\s*$', 'm').exec(listed);
+        if (m != null && m[1] !== '-') mark('✓', 'launchd', `installed and running (pid ${m[1]})`);
+        else if (m != null) mark('✗', 'launchd', 'loaded but NOT running (tail the plist\'s launchd.err.log; launchctl kickstart -k gui/$(id -u)/com.wecom-agent-office to force-restart)');
+        else mark('✗', 'launchd', `installed at ${plistPath} but not loaded (launchctl load ${plistPath})`);
+      }
     }
+  } else if (process.platform === 'linux') {
+    // Same three-state contract as launchd, against the docs/wao.service
+    // user unit. `systemctl --user is-active` exits nonzero for
+    // inactive/failed but still PRINTS the state — stdout decides, the exit
+    // code does not.
+    const unitPath = join(homedir(), '.config', 'systemd', 'user', 'wao.service');
+    if (!existsSync(unitPath)) {
+      mark('!', 'systemd', `not installed (informational — cp docs/wao.service ${unitPath} per its header, then systemctl --user daemon-reload && systemctl --user enable --now wao)`);
+    } else {
+      const [state, why] = await new Promise((resolve) => {
+        execFile('systemctl', ['--user', 'is-active', 'wao.service'], { timeout: 3000 }, (err, stdout) => {
+          // Nonzero exit with a printed state (inactive/failed/activating) is
+          // a RESULT, not a probe failure — only a missing binary (ENOENT) or
+          // timeout means "cannot determine".
+          if (err != null && (err.code === 'ENOENT' || err.killed || typeof stdout !== 'string')) {
+            resolve([null, err.killed ? 'timed out after 3000ms' : (err.code ?? err.message)]);
+          } else {
+            resolve([String(stdout ?? '').trim(), null]);
+          }
+        });
+      });
+      if (state == null) {
+        mark('!', 'systemd', `cannot determine loaded state — systemctl --user is-active failed (${why}); check manually: systemctl --user status wao.service`);
+      } else if (state === 'active') {
+        mark('✓', 'systemd', 'installed and running (active)');
+      } else {
+        mark('✗', 'systemd', `installed at ${unitPath} but ${state || 'unknown'} (journalctl --user -u wao.service -n 50; systemctl --user restart wao)`);
+      }
+    }
+  } else {
+    mark('!', 'service', `no service-manager check on ${process.platform} — see README §3.1 (Windows: NSSM 或任务计划程序)`);
   }
   // Asset drift check (DESIGN-ASSETS §8.1 P1-8, W3 T5): read-only dryRun
   // verify per bound bot — the provider planners rebuild every product in

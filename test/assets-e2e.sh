@@ -19,7 +19,7 @@
 # Usage: bash test/assets-e2e.sh
 #   WAO_ASSETS_E2E_KEEP=1  keep the tmp workspace (artifacts inspection)
 #   WAO_ASSETS_E2E_PORT=   override the isolated port (default 18795)
-# Requires: node >=20.10, claude CLI (authenticated via ~/.claude/settings.json
+# Requires: node >=22.15, claude CLI (authenticated via ~/.claude/settings.json
 # env — the magpie gateway route), rtk on PATH, curl. NOT part of npm test
 # (real CLIs + real model gateway + 花钱).
 #

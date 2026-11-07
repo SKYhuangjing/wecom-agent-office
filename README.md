@@ -55,7 +55,7 @@
 
 ```sh
 npm install          # 仅一个依赖: ws
-node src/index.js doctor    # 自检: node≥20.10/ws/插件扫描/数据目录可写/端口/CLI在位(dsh·claude·codex·pi)/锁探测
+node src/index.js doctor    # 自检: node≥22.15(node:zlib zstd)/插件扫描/数据目录可写/端口/CLI在位(dsh·claude·codex·pi)/锁探测
 node src/index.js start     # 前台常驻; --port N --host H --data-dir DIR
 node src/index.js version   # → 0.1.0   (拼错命令会被拒绝, 不会猜)
 ```
@@ -63,7 +63,7 @@ node src/index.js version   # → 0.1.0   (拼错命令会被拒绝, 不会猜)
 | 环境变量 | 作用 | 默认 |
 |---|---|---|
 | `WAO_HOME` | 数据目录（bots.json/ledger/sessions/logs） | `./data` |
-| `WAO_PLUGINS_PATH` | 额外插件目录（冒号分隔，追加在仓库 plugins/ 之后） | 无 |
+| `WAO_PLUGINS_PATH` | 额外插件目录（按平台分隔符：POSIX `:` / Windows `;`，追加在仓库 plugins/ 之后） | 无 |
 | `WAO_LOG_LEVEL` | 日志级别 | `info` |
 | `WAO_TOKEN` | 访问鉴权令牌：设置后所有 `/api/*`、`/mcp` 请求须带 `Authorization: Bearer <t>` 或 `X-WAO-Token: <t>` 头 | 未设置=回环无鉴权 |
 
@@ -126,9 +126,9 @@ curl -X POST localhost:8792/api/plugins/<id>/disable|enable   # 禁/启用某插
 > pi bot 同理即时物化 models.json 到 `~/.pi/agent-wao-<botId>/`（文件只含 `$变量名`
 > 引用不含密钥）；`DELETE` 只删 models.json，`sessions/` 会话档案保留（离职留档）。
 
-### 3.1 无人值守运维（launchd）
+### 3.1 无人值守运维（launchd / systemd / NSSM）
 
-模板在 `docs/launchd.plist`（Label `com.wecom-agent-office`，KeepAlive+RunAtLoad+ProcessType
+**macOS（launchd，生产在用）** — 模板在 `docs/launchd.plist`（Label `com.wecom-agent-office`，KeepAlive+RunAtLoad+ProcessType
 Background；头部注释即安装三步）。安装（生产切换 T9 执行，平时调试装完记得卸）：
 
 ```sh
@@ -170,8 +170,35 @@ launchctl print gui/$(id -u)/com.wecom-agent-office | head -30   # launchd 视�
 | `curl -s localhost:8792/api/agents` | 每 bot `idle/working` + `channelState.state=online`（设 WAO_TOKEN 时加 `-H "X-WAO-Token: $WAO_TOKEN"`） | `offline` 带 reason → 查 wao.log 对应 bot 段 |
 | `curl -s localhost:8792/api/state` | 插件 active/failed/disabled | 出现 `failed` → 修后 `POST /api/service/reload` |
 | `tail -50 <DATA_DIR>/logs/wao.log` | `wao: stopping` / `orphan sweep` / drain 超时 | 有 sweep 行=曾有 CLI 活过停机，确认无残留 |
-| `node src/index.js doctor` | 全量自检（含 launchd 三态：✓运行/!未装/✗装了没跑） | 任何 ✗ 行=需要动手 |
+| `node src/index.js doctor` | 全量自检（进程管理三态按平台：macOS launchd / Linux systemd） | 任何 ✗ 行=需要动手 |
 | `launchctl list \| grep wecom-agent-office` | 首列 pid（`-`=没在跑） | `-` → kickstart -k 强拉 |
+
+**Linux（systemd --user）** — 模板在 `docs/wao.service`（`Restart=always`+`RestartSec=3`，头部注释即安装三步）：
+
+```sh
+cp docs/wao.service ~/.config/systemd/user/wao.service
+# 编辑 ExecStart：node 绝对路径（which node）、仓库 src/index.js、--data-dir
+systemctl --user daemon-reload && systemctl --user enable --now wao
+loginctl enable-linger $USER        # 不登录也自起（无人值守必做）
+curl -s localhost:8792/healthz      # 确认起来
+```
+
+升级=进程重启（与 macOS kickstart 同级裁定，理由同上表）：`systemctl --user restart wao`；
+配置级变化仍用 `POST /api/service/reload`。日志：`data/logs/wao.log` + `journalctl --user -u wao -n 50`
+（进程崩溃类）。无人值守巡检同 macOS 命令表，`launchctl` 行换成 `systemctl --user is-active wao`。
+
+**Windows（NSSM / 任务计划程序）** — 无原生服务管理器模板，二选一：
+
+- **NSSM（推荐，有 KeepAlive 等价物）**：`nssm install WAO "C:\Program Files\nodejs\node.exe" "<仓库>\src\index.js start --port 8792 --data-dir <数据目录>"`
+  再 `nssm set WAO AppDirectory <仓库>`、`nssm start WAO`（崩溃自拉活=Restart=always 等价）。
+  PATH 里须含 node 与各 agent CLI 的目录（nvm4w 机器写绝对路径最稳）。
+- **任务计划程序（系统自带）**：建"启动时触发"任务运行同上命令行，勾"如果任务失败，每 1 分钟重启"；
+  无 KeepAlive 语义，崩溃靠计划任务重试，弱于 NSSM。
+
+注意（Windows 已知边界）：provider CLI 是 npm `.cmd` shim，wao 已按 cmd.exe 路径 spawn（CVE-2024-27980
+背景，见 `src/kernel/spawn.js`）；但 claude/pi 的多行系统提示词走 argv，cmd.exe 命令行无法携带裸换行——
+Windows 上优先用 dsh/codex（提示词走 stdin）或把人设写成单行。`wao doctor` 在 Windows 上给出 NSSM
+指引信息行（无自动探测）。
 
 ### 3.2 MCP 接入（AI Agent 直连操作公司）
 
@@ -416,7 +443,7 @@ prefers-reduced-motion 全关动画（画布动画由 ofscene 的 reduced 标志
 | `plugins/_template/` | channel / provider / page 三套脚手架（`_` 前缀=内核不扫描） |
 | `data/`（WAO_HOME） | bots.json / plugins.json(启用表) / ledger/*.jsonl / sessions/*.json / logs/wao.log / .lock |
 | `test/` | kernel·engine·ledger·provider 单测 / contract 契约套件 / e2e 六场景 + switch-matrix.realtest 三家切换矩阵（真 CLI，npm run test:matrix） / fake-bin 假 CLI / probe-baselines 基线 / probe.sh·smoke-dsh.sh·accept-m1.sh·accept-m2.sh·ui-shot.sh / cutover.sh（生产切换半自动脚本，docs/CUTOVER.md §7） |
-| `docs/` | DESIGN.md（权威设计）· PLUGIN-DEV.md（插件开发契约）· CUTOVER.md（生产切换 runbook）· BLIND-REVIEW-CHECKLIST.md（盲评清单，含 UI 段）· launchd.plist（无人值守模板，§3.1） |
+| `docs/` | DESIGN.md（权威设计）· PLUGIN-DEV.md（插件开发契约）· CUTOVER.md（生产切换 runbook）· BLIND-REVIEW-CHECKLIST.md（盲评清单，含 UI 段）· launchd.plist（macOS 无人值守模板，§3.1）· wao.service（Linux systemd 模板，§3.1） |
 
 > 交接 Do：改插件后跑对应测试+契约；动内核先读 DESIGN §2；升级 CLI 先 `probe.sh --check`。
 > Don't：别双实例（锁会拒，但别绕）；别手改 data/ 运行中文件（API 有 last-good 语义）；别在插件间 import。

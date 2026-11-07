@@ -15,7 +15,7 @@
 //     INPUT id (the session already exists on disk),
 //   - unified events (session / step / tool / thinking / text) with the 前身
 //     describeTool heuristic carried over as the tool event's brief.
-import { spawn } from 'node:child_process';
+import { spawnCli } from '../../src/kernel/spawn.js';
 import { readHistory } from './history.js';
 
 // dsh reports a held session.lock this way when the GUI (or another dsh
@@ -66,7 +66,9 @@ export function createRunner({ bot, providerConfig, log, escalationMs = DEFAULT_
 
       let child;
       try {
-        child = spawn(dshBin, args, {
+        // spawnCli: passthrough here, cmd.exe+escaping on Windows (P1 —
+        // npm's .cmd shims EINVAL without a shell; see src/kernel/spawn.js).
+        child = spawnCli(dshBin, args, {
           cwd: pc.cwd || undefined,
           env: { ...process.env, ...extraEnv },
           stdio: ['pipe', 'pipe', 'pipe'],

@@ -14,6 +14,7 @@
 //      (same override chain as the 前身).
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { zstdDecompressSync } from 'node:zlib';
 
 export const TURN_LIMIT = 2000;
@@ -41,7 +42,9 @@ function cwdEscapes(cwd) {
 }
 
 export function dshHomeOf(providerConfig) {
-  return providerConfig?.dshHome || process.env.DSH_HOME || join(process.env.HOME || '', '.dsh');
+  // homedir() not $HOME (P1 跨平台): no HOME under a Windows service — must
+  // resolve the SAME tree profiles.js writes and materializer.js jails.
+  return providerConfig?.dshHome || process.env.DSH_HOME || join(homedir(), '.dsh');
 }
 
 // Candidate session files for (providerConfig, sessionId), most specific

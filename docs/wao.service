@@ -1,0 +1,32 @@
+# =============================================================================
+# wao systemd user unit 模板（Linux 无人值守运维；macOS 用 docs/launchd.plist，
+# Windows 见 README §3.1 NSSM/任务计划段）。头部注释即安装三步——把
+# /path/to/... 与 /usr/bin/node 换成本机绝对路径（which node）。
+#
+#   1) cp docs/wao.service ~/.config/systemd/user/wao.service
+#      # 编辑：ExecStart 的 node 路径、仓库 src/index.js 路径、--data-dir
+#   2) systemctl --user daemon-reload && systemctl --user enable --now wao
+#      curl -s localhost:8792/healthz          # 确认起来
+#   3) 升级 = 代码落地后 systemctl --user restart wao（进程重启语义，与 macOS
+#      kickstart 同级——ESM 模块缓存刷不掉，换代码必须重启进程）；配置级变化
+#      （plugins.json/bot 表）仍用 POST /api/service/reload，无需重启。
+#
+# 长期驻留（不登录也要自起）：loginctl enable-linger $USER
+# 日志：data/logs/wao.log（结构化运行日志）+ journalctl --user -u wao -n 50
+#       （systemd 侧 stdout/stderr：进程崩溃类 wao.log 里看不到的东西）。
+# 卸载：systemctl --user disable --now wao && rm ~/.config/systemd/user/wao.service
+# =============================================================================
+[Unit]
+Description=Wecom Agent Office
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/node /path/to/src/index.js start --port 8792 --data-dir /path/to/data
+Restart=always
+RestartSec=3
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:%h/.local/bin
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=default.target

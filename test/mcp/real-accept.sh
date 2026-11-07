@@ -10,7 +10,7 @@
 # Usage: bash test/mcp/real-accept.sh
 #   WAO_REAL_ACCEPT_KEEP=1  keep the tmp workspace (artifacts inspection)
 #   WAO_REAL_ACCEPT_PORT=   override the isolated port (default 18793)
-# Requires: node >=20.10, claude CLI, codex CLI (authenticated), curl.
+# Requires: node >=22.15, claude CLI, codex CLI (authenticated), curl.
 #
 # Headless tool authorization: claude runs with --dangerously-skip-permissions
 # and codex with --approve-for-me (its MCP calls are blocked by the default

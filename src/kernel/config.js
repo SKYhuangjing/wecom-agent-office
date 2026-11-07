@@ -10,7 +10,29 @@ export function atomicWrite(file, data) {
   // pid suffix keeps two writers of the same file from clobbering each other's stage.
   const tmp = `${file}.tmp.${process.pid}`;
   writeFileSync(tmp, data, { mode: 0o600 }); // owner-only (DESIGN §3); the rename carries it onto the final path
-  renameSync(tmp, file); // atomic on POSIX: readers see old or new content, never partial
+  renameWithRetry(renameSync, tmp, file); // atomic on POSIX: readers see old or new content, never partial
+}
+
+// Windows rename race (P1 跨平台): renameSync over a destination held open by
+// an editor / antivirus / indexer fails EPERM/EBUSY/EACCES — a POSIX-style
+// one-shot rename then fails the whole write. Bounded retry with escalating
+// sync backoff (atomicWrite must stay synchronous: callers rely on
+// write-then-read consistency within a tick). Only the target-held codes
+// retry — anything else (ENOENT, EXDEV…) is a real error, not contention.
+export function renameWithRetry(rename, from, to) {
+  for (let i = 0; ; i++) {
+    try {
+      rename(from, to);
+      return;
+    } catch (e) {
+      if (i === 2) throw e; // final attempt
+      if (!['EPERM', 'EBUSY', 'EACCES'].includes(e?.code)) throw e;
+      // brief sync backoff (50ms then 100ms): long enough for a transient
+      // holder to let go, short enough not to stall boot.
+      const end = Date.now() + 50 * (i + 1);
+      while (Date.now() < end) {} // sync by necessity — see comment above
+    }
+  }
 }
 
 export function readJson(file) {

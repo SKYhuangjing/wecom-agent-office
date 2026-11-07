@@ -7,7 +7,7 @@
 
 ## 环境
 
-- 机器：本机（darwin）。Node 在 PATH（v24.2.0，要求 ≥20.10）。仓库：
+- 机器：本机（darwin）。Node 在 PATH（v24.2.0，要求 ≥22.15）。仓库：
   `/Users/sky/develop/workbuddy_workspace/wecom-agent-office`
 - 准备（一次性）：
   ```sh

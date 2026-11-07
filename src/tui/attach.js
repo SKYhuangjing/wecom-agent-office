@@ -70,12 +70,25 @@ export const makeLogTailer = (file) => {
   };
 };
 
-// e 键的宿主侧执行：macOS `open` / 其他平台 `xdg-open`，失败降级为可复制
-// URL 的通知行（无 GUI 环境不炸、不清屏）。
+// e 键的宿主侧执行：macOS `open` / Windows `cmd /c start` / 其他平台
+// `xdg-open`，失败降级为可复制 URL 的通知行（无 GUI 环境不炸、不清屏）。
+// browserOpenSpec 拆成纯函数：三个平台的命令分派可在任意平台单测。
+export const browserOpenSpec = (platform) => {
+  if (platform === 'win32') {
+    // Windows 没有 open/xdg-open；`start` 是 cmd.exe 内建命令（不是可执行
+    // 文件），必须经 cmd /c。空串 '' 是 start 的窗口标题占位——不带它，
+    // 带引号的 URL 会被当成标题而不打开浏览器。
+    return { cmd: 'cmd', args: (url) => ['/c', 'start', '', url] };
+  }
+  return platform === 'darwin'
+    ? { cmd: 'open', args: (url) => [url] }
+    : { cmd: 'xdg-open', args: (url) => [url] };
+};
+
 export const openInBrowser = (url) => {
-  const cmd = process.platform === 'darwin' ? 'open' : 'xdg-open';
+  const spec = browserOpenSpec(process.platform);
   try {
-    const r = spawnSync(cmd, [url], { timeout: 5000 });
+    const r = spawnSync(spec.cmd, spec.args(url), { timeout: 5000 });
     if (r.error == null && r.status === 0) return { ok: true, degraded: false };
   } catch { /* degraded */ }
   return { ok: true, degraded: true };

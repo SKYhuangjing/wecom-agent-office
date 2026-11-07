@@ -16,19 +16,29 @@
 //     so a throw anywhere above leaves the previous file untouched, and the
 //     error names the path it was working from.
 import { readFileSync, existsSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, delimiter } from 'node:path';
+import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { atomicWrite } from '../../src/kernel/config.js';
 
 const PERM = new Set(['workspace-write', 'read-only', 'danger-full-access']);
 
+// Single source for the dsh home (P1 跨平台): os.homedir(), NOT $HOME —
+// under a Windows service (no HOME env) process.env.HOME is undefined and the
+// old join(HOME || '', '.dsh') collapsed to a RELATIVE '.dsh', splitting the
+// profile tree from materializer.js's jail roots (which use homedir()). On
+// POSIX homedir() ≡ $HOME when set, so behavior there is unchanged.
 function profileHome() {
-  return process.env.DSH_HOME || join(process.env.HOME || '', '.dsh');
+  return process.env.DSH_HOME || join(homedir(), '.dsh');
 }
 
 export function profilePatchPath(profile) {
   return join(profileHome(), 'profiles', profile, 'cordis.patch.yml');
 }
+
+// Prepend a dir to env.PATH with the PLATFORM delimiter (P2 跨平台): a ':'
+// literal would be a path character on Windows, not a separator.
+export const withDirOnPath = (env, dir) => ({ ...env, PATH: `${dir}${delimiter}${env?.PATH || ''}` });
 
 // Ensure the profile directory exists by bootstrapping it from the shipped
 // headless default via the dsh CLI itself (spawnSync kept from 前身 — it is
@@ -37,7 +47,7 @@ export function ensureProfileExists(profile, { dshBin, nodeBin }) {
   const dir = join(profileHome(), 'profiles', profile);
   if (existsSync(join(dir, 'cordis.patch.yml'))) return { created: false, dir };
   const r = spawnSync(dshBin, ['--profile', profile, '--from-default-profile', 'headless', '--help'], {
-    env: { ...process.env, PATH: `${join(nodeBin, '..')}:${process.env.PATH || ''}` },
+    env: withDirOnPath(process.env, join(nodeBin, '..')),
     encoding: 'utf8',
     timeout: 60000,
   });

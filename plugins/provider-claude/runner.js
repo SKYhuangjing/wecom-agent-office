@@ -16,15 +16,21 @@
 //   - gateway routing (M2 评审事实): model.baseURL → ANTHROPIC_BASE_URL and
 //     model.apiKey → ANTHROPIC_AUTH_TOKEN (or model.apiKeyEnv); there is no
 //     OPENAI_BASE_URL route for claude.
-import { spawn } from 'node:child_process';
+import { spawnCli } from '../../src/kernel/spawn.js';
 import { readHistory } from './history.js';
 
 // ripgrep tool-asset guidance (§7.2) — byte-identical copy of the dsh/codex/pi
 // guidance block (复制即契约: the four providers carry the same lines, the
-// contract suite pins them equal).
+// contract suite pins them equal). rgInstallHint 同样复制（P2 跨平台：
+// brew/apt/winget·scoop 按平台）。
+const rgInstallHint = (platform = process.platform) => platform === 'win32'
+  ? 'winget install BurntSushi.ripgrep.MSVC（或 scoop install ripgrep）'
+  : platform === 'linux' ? 'sudo apt-get install ripgrep（或你的发行版包管理器）'
+    : 'brew install ripgrep';
+
 const RIPGREP_GUIDANCE = [
   '代码检索一律使用 rg（ripgrep）而非 grep/find。示例：rg -t js \'pattern\'、rg -n "text" src/。',
-  'rg 未安装时先执行：brew install ripgrep。',
+  `rg 未安装时先执行：${rgInstallHint()}。`,
 ].join('\n');
 const ripgrepAssetText = (entry) => [
   RIPGREP_GUIDANCE,
@@ -115,7 +121,9 @@ export function createRunner({ bot, providerConfig, assets, log, escalationMs = 
 
       let child;
       try {
-        child = spawn(claudeBin, args, {
+        // spawnCli: passthrough here, cmd.exe+escaping on Windows (P1 —
+        // npm's .cmd shims EINVAL without a shell; see src/kernel/spawn.js).
+        child = spawnCli(claudeBin, args, {
           cwd: pc.cwd || undefined,
           env: { ...process.env, ...extraEnv, ...(pc.env && typeof pc.env === 'object' ? pc.env : {}) },
           stdio: ['pipe', 'pipe', 'pipe'],

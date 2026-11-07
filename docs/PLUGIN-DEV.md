@@ -71,7 +71,7 @@ plugins/<id>/
 `plugin.js` 用的是 ESM 语法。Node **< 22.7** 默认把无 `type` 声明的 `.js` 按 CommonJS 解析，
 于是插件直接 import 失败（报一个 V8 的 CJS 语法错误）。loader 会附一句
 `(plugin dir needs package.json {"type":"module"} on Node <22.7)` 帮你诊断，但正确做法就是：
-**每个插件目录都带自己的 `package.json` 且 `"type":"module"`**。本项目 engines 下限是 Node 20.10。
+**每个插件目录都带自己的 `package.json` 且 `"type":"module"`**。本项目 engines 下限是 Node 22.15（node:zlib zstd，provider-dsh 依赖）。
 
 ---
 
