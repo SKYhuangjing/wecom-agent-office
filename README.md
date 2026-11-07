@@ -54,11 +54,18 @@
 ## 2. 快速开始
 
 ```sh
-npm install          # 仅一个依赖: ws
+npm install          # 运行时依赖: ws + @dicebear/core + @dicebear/notionists（头像，全离线）
 node src/index.js doctor    # 自检: node≥22.15(node:zlib zstd)/插件扫描/数据目录可写/端口/CLI在位(dsh·claude·codex·pi)/锁探测
+                       #   doctor/tui 与 start 同参: --port N --host H --data-dir DIR
 node src/index.js start     # 前台常驻; --port N --host H --data-dir DIR
 node src/index.js version   # → 0.1.0   (拼错命令会被拒绝, 不会猜)
 ```
+
+**企微凭证获取**（第一次接入必读）：在**企微管理后台 → 应用管理 → 智能机器人**中创建
+**API 模式**机器人，获取 **Bot ID** 和 **Secret**——这两个值填进 bot 记录的
+`account.botId` / `account.secret`（Web 入职向导第 5 步「通信渠道」的凭证表单，或
+`POST /api/bots`）。WebSocket 地址留默认（官方 `wss://openws.work.weixin.qq.com`）即可。
+凭证填错不致命：bot 会显示「休假」并在原因里带出鉴权错误，改对凭证即返岗。
 
 | 环境变量 | 作用 | 默认 |
 |---|---|---|
@@ -300,6 +307,20 @@ curl -si -X POST localhost:8792/mcp -H 'content-type: application/json' \
 | `unbind_asset` | 解绑（删除盘上产物；私发副本内容随卸载丢失） | ⚠️ |
 | `rematerialize` | 强制重物化（确定性/幂等；漂移修复与失败重试） | ⚠️ |
 
+### 3.3 备份、恢复与版本回滚
+
+完整手册在 **`docs/BACKUP.md`**（含 Windows/权限细节与频率建议）。速查：
+
+- **备份**：停服 → `cp -R <DATA_DIR> <备份>/` → 重启；不想停服时可直接热备
+  `bots.json` / `assets.json`（tmp+rename 原子写，任意时刻 cp 不会撕裂）与 `ledger/`（追加型）。
+- **恢复**：停服 → 备份覆盖 `data/` → 重启 → `node src/index.js doctor --data-dir <DATA_DIR>` 验证 →
+  `/api/agents` 确认每 bot 在岗。
+- **版本回滚**：`git log --oneline` 找上一个可用 commit → `git checkout <hash>` →
+  `launchctl kickstart -k gui/$(id -u)/com.wecom-agent-office`（代码升级只有进程重启可信）→
+  `bash test/probe.sh --check` 对基线。
+- **密钥纪律**：`bots.json` 含企微 secret、`assets.json` 可能含 env 值——备份副本
+  `chmod -R go-rwx`，不进网盘/仓库等会被同步走的地方。
+
 ## 4. 开发（写插件）
 
 - 脚手架：`cp -r plugins/_template/<channel|provider|page> plugins/<你的名字>/`，改三处名字
@@ -394,7 +415,7 @@ prefers-reduced-motion 全关动画（画布动画由 ofscene 的 reduced 标志
 
 | 命令 | 内容 | 时长 |
 |---|---|---|
-| `npm test` | 417 用例：内核（含 log ENOSPC 降级）/loader/engine（含 createdAt 服务端落戳）/ledger/provider（dsh/claude/codex/pi 剖析）+ web 基建（静态托管/穿越拒绝/uiPlugins/SSE 桥）+ e2e 六场景（fake ws + fake-dsh 全链路）+ ops（孤儿扫尾：单元 + 真服务进程 SIGINT e2e） | ~40s |
+| `npm test` | 637 用例：内核（含 log ENOSPC 降级）/loader/engine（含 createdAt 服务端落戳、healthz 口径与 /api/agents 统一、cwd 存在性校验）/ledger/provider（dsh/claude/codex/pi 剖析）+ web 基建（静态托管/穿越拒绝/uiPlugins/SSE 桥）+ e2e 六场景（fake ws + fake-dsh 全链路）+ ops（孤儿扫尾：单元 + 真服务进程 SIGINT e2e） | ~40s |
 | `npm run contract -- --plugin plugins/provider-dsh --port dsh` | provider 端口契约 11/11（真子进程语义；四家各有套件：dsh/claude/codex/pi 全部 11/11 零跳过） | 秒级 |
 | `npm run contract` | _template 参考实现（4 pass + 7 skip，skip=需真 CLI 的组） | 秒级 |
 | `bash test/smoke-dsh.sh` | **真 dsh**：两轮对话记忆（同 sessionId 续跑记暗号）+ 真 session 文件解码 | ~10s+ |

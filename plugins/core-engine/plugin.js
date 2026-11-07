@@ -21,7 +21,7 @@ import { maskOutbound } from './middleware.js';
 import { loadBots, revalidateAll, validateBot } from './bots.js';
 import { loadAssets, buildPlan } from './assets.js';
 import { createMaterializer } from './materializer.js';
-import { companyOps, createApi } from './api.js';
+import { companyOps, createApi, rosterSummary } from './api.js';
 
 const isBotRecord = (bot) => bot != null && typeof bot === 'object' && typeof bot.id === 'string' && bot.id !== '';
 
@@ -153,22 +153,13 @@ export default {
         await engine.sendDrainRefusals();
       },
       status: (botId) => engine.status(botId),
-      // /healthz bots 汇总 (P2 observability): roster truth over engine
-      // runtime state — total counts every REGISTERED bot record; the engine
-      // itself only knows attached bots, so unattached (disabled/failed-attach
-      // /channel-dead) bots close the gap as offline. online=在岗待命(idle),
-      // working=干活中, three disjoint buckets summing to total.
-      summary: () => {
-        const rows = doc.bots.filter(isBotRecord);
-        let online = 0;
-        let working = 0;
-        for (const bot of rows) {
-          const st = engine.status(bot.id).status;
-          if (st === 'working') working++;
-          else if (st === 'idle') online++;
-        }
-        return { total: rows.length, online, working, offline: rows.length - online - working };
-      },
+      // /healthz bots 汇总 (P2 observability, R4 口径统一): SAME computation as
+      // GET /api/agents — api.js rosterSummary over the full bots.json roster
+      // (engine runtime state + the channel-dead 补差: an attached bot whose
+      // adapter is terminal 'stopped' — subscribe 鉴权失败/被踢 — cannot
+      // receive and counts offline, never online). `state` is bound below in
+      // this same activate() closure; summary runs per request, after it.
+      summary: () => rosterSummary(state),
       // A4 seam: an engine-side channel-event handler returning true means
       // "the engine handled it" — the channel then skips its default behavior
       // (e.g. the default enter_chat welcome).

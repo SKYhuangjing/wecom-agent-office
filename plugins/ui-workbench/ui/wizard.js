@@ -28,6 +28,8 @@ const CHANNEL_META = {
   wecom: {
     label: '企业微信', color: '#0082EF', tech: 'wecom · 企业微信机器人',
     blurb: '公司群里 @ 它或私聊它都能接单——填上机器人凭证，工牌就激活了。',
+    // R4: 凭证零指路——拿到 Bot ID / Secret 的路径写在这里，别让维护者猜。
+    guide: '凭证获取：在企微管理后台 → 应用管理 → 智能机器人 中创建 API 模式机器人，获取 Bot ID 和 Secret。',
   },
 };
 const channelMeta = (id) => (CHANNEL_META[id] ?? {
@@ -323,11 +325,16 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
                 '装备会写进它的工位（技能文件/配置/钩子），下一轮接单即可用；至少配发一件——整包配发后仍可逐件微调。')));
   } else if (step === 3) {
     const required = (providerSchema ?? []).filter((it) => it?.required === true);
+    const hasCwd = (providerSchema ?? []).some((it) => it?.key === 'cwd');
     body = h('div', { className: 'wb-form', style: { maxWidth: 560 } },
       h(SchemaFields, {
         WAO, schema: required, state: draft.providerConfig, editingExisting: false,
         onChange: (providerConfig) => setDraft({ ...draft, providerConfig }),
       }),
+      // R4: cwd 缺失会让 spawn 报 ENOENT、看着像 CLI 没装——前端先说清楚：
+      // 目录要已存在（后端提交时也会校验并拒绝）。
+      hasCwd ? h('p', { className: 'wb-hint' },
+        '工作目录（cwd）确认目录已存在——wao 不会替你创建；目录缺失时办理入职会被拒绝（工作目录不存在：<路径>）。') : null,
       h('div', { className: 'wb-field' },
         h('label', null, '门禁名单（allowedUsers）', h('span', { className: 'wb-hint', style: { marginLeft: 8 } }, '每行一个企微 userid；留空＝公司群里所有人都可以找它')),
         h('textarea', {
@@ -362,6 +369,7 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
       channels.length > 1 ? h('p', { className: 'wb-hint' }, '换渠道会按新渠道的凭证表单重新填写。') : null,
       draft.channel !== '' ? h('p', { className: 'wb-hint' },
         `${chosen.label}机器人凭证（channel-${draft.channel} 账号）——这是它的工牌，刷开${chosen.label}的门。`) : null,
+      draft.channel !== '' && chosen.guide != null ? h('p', { className: 'wb-hint' }, chosen.guide) : null,
       draft.channel !== '' ? h(SchemaFields, {
         WAO, schema: channelSchema, state: draft.account, editingExisting: false,
         onChange: (account) => setDraft({ ...draft, account }),

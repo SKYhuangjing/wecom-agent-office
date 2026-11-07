@@ -20,6 +20,18 @@ import { loadBots, saveBots, validateBot, validateSchema, revalidateAll } from '
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
+// R4: the API now rejects a providerConfig.cwd that does not exist on disk
+// (spawn-time ENOENT attribution fix), so the fake provider's behavior
+// sentinels below must be REAL directories. One tmp root created at module
+// load — the FAKE_PROVIDER template bakes the absolute paths in.
+const sentinelRoot = mkdtempSync(join(tmpdir(), 'wao-plugin-sentinel-'));
+const SENTINEL = {};
+for (const name of ['fail', 'rm-fail', 'hang', 'err', 'bye', 'tmp2']) {
+  SENTINEL[name] = join(sentinelRoot, name);
+  mkdirSync(SENTINEL[name]);
+}
+const S = (name) => JSON.stringify(SENTINEL[name]);
+
 // Fake plugins (T8 template shapes, manifest ids provider-fake/channel-fake,
 // port ids 'fakechan'/'fakeprov' — bots.json references the PORT ids).
 const FAKE_CHANNEL = `
@@ -69,13 +81,13 @@ export default {
       materializeConfig(bot) {
         globalThis.__waoFakeMaterialize = (globalThis.__waoFakeMaterialize ?? 0) + 1;
         (globalThis.__waoFakeMaterializeLog ??= []).push({ id: bot.id, cwd: bot.providerConfig?.cwd, mode: bot.providerConfig?.mode });
-        if (bot.providerConfig?.cwd === '/fail') throw new Error('materialize boom');
+        if (bot.providerConfig?.cwd === ${S('fail')}) throw new Error('materialize boom');
         return { changed: true };
       },
       removeConfig(bot) {
         globalThis.__waoFakeRemoveCfg = (globalThis.__waoFakeRemoveCfg ?? 0) + 1;
         (globalThis.__waoFakeRemoveCfgLog ??= []).push({ id: bot.id, cwd: bot.providerConfig?.cwd });
-        if (bot.providerConfig?.cwd === '/rm-fail') throw new Error('removeConfig boom');
+        if (bot.providerConfig?.cwd === ${S('rm-fail')}) throw new Error('removeConfig boom');
         return { removed: true };
       },
       createRunner({ bot }) {
@@ -86,7 +98,7 @@ export default {
             if (signal?.aborted) {
               return { ok: false, code: 'aborted', finalText: '', aborted: true, sessionId: sessionId ?? null, reason: 'aborted before start', detail: {} };
             }
-            if (bot.providerConfig?.cwd === '/hang') {
+            if (bot.providerConfig?.cwd === ${S('hang')}) {
               // Park mid-run until aborted — mirrors a real provider whose
               // subprocess settles on abort (what drainBot relies on).
               await new Promise((resolve) => {
@@ -94,7 +106,7 @@ export default {
               });
               return { ok: false, code: 'aborted', finalText: '', aborted: true, sessionId: sessionId ?? null, reason: 'aborted (hang)', detail: {} };
             }
-            if (bot.providerConfig?.cwd === '/err') {
+            if (bot.providerConfig?.cwd === ${S('err')}) {
               return {
                 ok: false, code: 'error', finalText: '', aborted: false,
                 sessionId: 'session-err-' + bot.id,
@@ -163,6 +175,7 @@ after(async () => {
   await kernel.stop();
   rmSync(dataDir, { recursive: true, force: true });
   rmSync(fakesDir, { recursive: true, force: true });
+  rmSync(sentinelRoot, { recursive: true, force: true });
 });
 
 const BOT_B1 = {
@@ -240,7 +253,7 @@ test('PATCH /api/bots/:id re-materializes providerConfig and reconnects', async 
 });
 
 test('PATCH with failing materialize → 400, bot offline with reason, last-good config kept', async () => {
-  const resp = await patch('/api/bots/b1', { providerConfig: { cwd: '/fail', mode: 'b' } });
+  const resp = await patch('/api/bots/b1', { providerConfig: { cwd: SENTINEL.fail, mode: 'b' } });
   assert.equal(resp.status, 400);
   assert.match((await resp.json()).error, /boom/);
   let agents = await agentsOf();
@@ -346,18 +359,18 @@ test('PATCH object fields preserve stripped nested keys; explicit values replace
 
   // Editor round-trip: the block EXACTLY as the UI saw it (stripped), cwd edited
   const resp = await patch('/api/bots/kvbot', {
-    providerConfig: { cwd: '/tmp2', mode: 'a', extra: kv.providerConfig.extra },
+    providerConfig: { cwd: SENTINEL.tmp2, mode: 'a', extra: kv.providerConfig.extra },
   });
   assert.equal(resp.status, 200);
   let onDisk = loadBots(join(dataDir, 'bots.json')).bots.find((b) => b.id === 'kvbot');
-  assert.equal(onDisk.providerConfig.cwd, '/tmp2');
+  assert.equal(onDisk.providerConfig.cwd, SENTINEL.tmp2);
   assert.equal(onDisk.providerConfig.extra.apiKey, 'sk-old', 'stripped key backfilled from the stored value');
   assert.equal(onDisk.providerConfig.extra.apiKeyEnv, 'MY_ENV');
   assert.equal(onDisk.providerConfig.extra.note, 'keep');
 
   // Explicit replacement wins; absent siblings still backfill
   const resp2 = await patch('/api/bots/kvbot', {
-    providerConfig: { cwd: '/tmp2', mode: 'a', extra: { apiKey: 'sk-new', note: 'edited' } },
+    providerConfig: { cwd: SENTINEL.tmp2, mode: 'a', extra: { apiKey: 'sk-new', note: 'edited' } },
   });
   assert.equal(resp2.status, 200);
   onDisk = loadBots(join(dataDir, 'bots.json')).bots.find((b) => b.id === 'kvbot');
@@ -366,7 +379,7 @@ test('PATCH object fields preserve stripped nested keys; explicit values replace
   assert.equal(onDisk.providerConfig.extra.note, 'edited');
 
   // materialize saw the backfilled values — the runner gets the real config
-  assert.equal(globalThis.__waoFakeMaterializeLog.at(-1).cwd, '/tmp2');
+  assert.equal(globalThis.__waoFakeMaterializeLog.at(-1).cwd, SENTINEL.tmp2);
 
   // cleanup: later tests assert the exact bots.json registry ids
   assert.equal((await fetch(url('/api/bots/kvbot'), { method: 'DELETE' })).status, 200);
@@ -444,7 +457,7 @@ test('POST /api/bots/:id/test runs the provider runner engine-independently; led
 });
 
 test('POST /api/bots/:id/test failure answers WHY inline: reason, truncated detail, provider errorText', async () => {
-  assert.equal((await post('/api/bots', { ...BOT_B1, id: 'errbot', providerConfig: { cwd: '/err', mode: 'a' } })).status, 200);
+  assert.equal((await post('/api/bots', { ...BOT_B1, id: 'errbot', providerConfig: { cwd: SENTINEL.err, mode: 'a' } })).status, 200);
   const resp = await post('/api/bots/errbot/test');
   assert.equal(resp.status, 200);
   const body = await resp.json();
@@ -513,8 +526,8 @@ test('POST /api/bots/:id/test optional body.prompt reaches the runner; junk 400;
 });
 
 test('DELETE /api/bots/:id detaches, removeConfig cleans materialized files, persists; failure is non-fatal', async () => {
-  assert.equal((await post('/api/bots', { ...BOT_B1, id: 'bye', providerConfig: { cwd: '/tmp/bye', mode: 'a' } })).status, 200);
-  assert.equal((await post('/api/bots', { ...BOT_B1, id: 'boom', providerConfig: { cwd: '/rm-fail', mode: 'a' } })).status, 200);
+  assert.equal((await post('/api/bots', { ...BOT_B1, id: 'bye', providerConfig: { cwd: SENTINEL.bye, mode: 'a' } })).status, 200);
+  assert.equal((await post('/api/bots', { ...BOT_B1, id: 'boom', providerConfig: { cwd: SENTINEL['rm-fail'], mode: 'a' } })).status, 200);
   const before = globalThis.__waoFakeRemoveCfg ?? 0;
 
   // A throwing removeConfig must NOT block the delete (best-effort cleanup).
@@ -523,7 +536,7 @@ test('DELETE /api/bots/:id detaches, removeConfig cleans materialized files, per
 
   assert.equal((await fetch(url('/api/bots/bye'), { method: 'DELETE' })).status, 200);
   assert.equal((globalThis.__waoFakeRemoveCfg ?? 0) - before, 2, 'DELETE calls provider removeConfig');
-  assert.equal(globalThis.__waoFakeRemoveCfgLog.at(-1).cwd, '/tmp/bye', 'removeConfig saw the deleted bot');
+  assert.equal(globalThis.__waoFakeRemoveCfgLog.at(-1).cwd, SENTINEL.bye, 'removeConfig saw the deleted bot');
   assert.deepEqual(loadBots(join(dataDir, 'bots.json')).bots.map((b) => b.id), ['b1'], 'both bots gone from bots.json');
   assert.ok(!(await agentsOf()).some((a) => a.id === 'bye' || a.id === 'boom'), 'gone from /api/agents');
   assert.equal((await fetch(url('/api/bots/bye'), { method: 'DELETE' })).status, 404, 'second delete 404s');
@@ -841,7 +854,7 @@ test('allowedUsers: non-empty admit-list drops strangers silently; empty list al
 // --- per-bot drain on the CRUD surface (DESIGN §8 校验→materialize→串行链 drain→重连)
 
 test('mid-run PATCH: the in-flight turn settles with its final frame BEFORE the adapter swap; ledger row intact', async () => {
-  assert.equal((await post('/api/bots', { ...BOT_B1, id: 'hangbot', providerConfig: { cwd: '/hang', mode: 'a' } })).status, 200);
+  assert.equal((await post('/api/bots', { ...BOT_B1, id: 'hangbot', providerConfig: { cwd: SENTINEL.hang, mode: 'a' } })).status, 200);
   await waitFor(() => globalThis.__waoFakeAdapters.get('hangbot') != null, 'hangbot attached');
   const svc = kernel.services.get('engine');
   const bot = loadBots(join(dataDir, 'bots.json')).bots.find((b) => b.id === 'hangbot');
@@ -886,7 +899,7 @@ test('mid-run PATCH: the in-flight turn settles with its final frame BEFORE the 
 // for their own owners.
 test('per-bot drain answers its swept queued messages before the swap; other bots\' refusals are not consumed', async () => {
   const REFUSAL = '⚠️ 服务维护，未处理，请重发';
-  const mk = (id) => ({ ...BOT_B1, id, providerConfig: { cwd: '/hang', mode: 'a' } });
+  const mk = (id) => ({ ...BOT_B1, id, providerConfig: { cwd: SENTINEL.hang, mode: 'a' } });
   assert.equal((await post('/api/bots', mk('qbot'))).status, 200);
   assert.equal((await post('/api/bots', mk('obot'))).status, 200);
   await waitFor(() => globalThis.__waoFakeAdapters.get('qbot') != null && globalThis.__waoFakeAdapters.get('obot') != null, 'both attached');
@@ -948,4 +961,77 @@ test('per-bot drain answers its swept queued messages before the swap; other bot
 
   assert.equal((await fetch(url('/api/bots/qbot'), { method: 'DELETE' })).status, 200);
   assert.equal((await fetch(url('/api/bots/obot'), { method: 'DELETE' })).status, 200);
+});
+
+// --- R4 维护者体验: healthz 口径与 /api/agents 统一；cwd 存在性前置校验 ----------
+
+// R4 #1/#5: a channel-dead bot (subscribe 鉴权失败/被踢 → adapter terminal
+// 'stopped') is STILL attached, so raw engine state says idle — healthz must
+// count it offline through the SAME computation /api/agents uses, never
+// online. The fake adapter's status() is overridden in place to the terminal
+// shape a dead channel reports.
+test('R4: channel-dead bot (auth fail/kicked) counts OFFLINE in /healthz — same 口径 as /api/agents', async () => {
+  const adapter = globalThis.__waoFakeAdapters.get('b1');
+  assert.ok(adapter, 'b1 attached with a live fake adapter');
+  // R4 #5 helper: the two faces must agree — /healthz buckets == the same
+  // buckets recomputed from /api/agents rows (the unification this test pins).
+  const facesAgree = async () => {
+    const hz = (await (await get('/healthz')).json()).bots;
+    const rows = await agentsOf();
+    const agg = { online: 0, working: 0, offline: 0 };
+    for (const a of rows) agg[a.status === 'working' ? 'working' : a.status === 'idle' ? 'online' : 'offline']++;
+    assert.deepEqual({ total: rows.length, ...agg }, hz, '/healthz and /api/agents tell the same story');
+    return hz;
+  };
+  const healthy = await facesAgree();
+  assert.ok(healthy.online >= 1 && healthy.offline === 0, `baseline: healthy roster, b1 online: ${JSON.stringify(healthy)}`);
+
+  const original = adapter.status.bind(adapter);
+  adapter.status = () => ({ state: 'stopped', lastError: 'subscribe auth failed errcode=40029' });
+  try {
+    const agents = await agentsOf();
+    const b1 = agents.find((a) => a.id === 'b1');
+    assert.equal(b1.status, 'offline', 'roster row reports offline (pre-existing botRow semantics)');
+    assert.match(b1.reason ?? '', /auth failed/);
+    const hz = await facesAgree();
+    assert.equal(hz.offline, healthy.offline + 1, `healthz offline > 0 after auth failure: ${JSON.stringify(hz)}`);
+    assert.equal(hz.online, healthy.online - 1, 'the channel-dead bot is never counted online');
+  } finally {
+    adapter.status = original;
+  }
+  // restored → online again (the summary reads live state per probe)
+  const hz2 = await facesAgree();
+  assert.deepEqual(hz2, healthy);
+});
+
+// R4 #2: a missing working directory used to surface as a spawn-time ENOENT
+// that reads like a missing CLI. The API now refuses it up front on every
+// spawn-adjacent path, naming the directory.
+test('R4: nonexistent providerConfig.cwd → 400 naming the directory on POST, PATCH and /test', async () => {
+  // POST: the wizard's 提交时后端校验
+  const ghost = '/no/such/workdir-' + process.pid;
+  const create = await post('/api/bots', { ...BOT_B1, id: 'ghostbot', providerConfig: { cwd: ghost, mode: 'a' } });
+  assert.equal(create.status, 400);
+  const body = await create.json();
+  assert.equal(body.error, `工作目录不存在：${ghost}，请先创建或修正路径`);
+  assert.equal(loadBots(join(dataDir, 'bots.json')).bots.some((b) => b.id === 'ghostbot'), false, 'nothing persisted');
+
+  // PATCH submitting providerConfig: same refusal; unrelated fields never
+  // re-litigate a stored cwd (rename below still passes with cwd '/tmp')
+  const p1 = await patch('/api/bots/b1', { providerConfig: { cwd: ghost, mode: 'a' } });
+  assert.equal(p1.status, 400);
+  assert.equal((await p1.json()).error, `工作目录不存在：${ghost}，请先创建或修正路径`);
+  const p2 = await patch('/api/bots/b1', { name: '一号机器人' });
+  assert.equal(p2.status, 200, 'a PATCH not touching providerConfig never re-checks the stored cwd');
+
+  // /test: a bot whose cwd existed at create but vanished before the probe —
+  // spawn 前检查 answers 400 with the directory named, not an ENOENT probe.
+  const gone = join(sentinelRoot, 'gone');
+  mkdirSync(gone);
+  assert.equal((await post('/api/bots', { ...BOT_B1, id: 'gonedir', providerConfig: { cwd: gone, mode: 'a' } })).status, 200);
+  rmSync(gone, { recursive: true, force: true });
+  const probe = await post('/api/bots/gonedir/test');
+  assert.equal(probe.status, 400);
+  assert.equal((await probe.json()).error, `工作目录不存在：${gone}，请先创建或修正路径`);
+  assert.equal((await fetch(url('/api/bots/gonedir'), { method: 'DELETE' })).status, 200);
 });

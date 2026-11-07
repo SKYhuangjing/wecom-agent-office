@@ -5,6 +5,7 @@
 // under /api does. Body parsing is ours (64KB cap; the shell parses nothing),
 // and EVERY JSON response is scrubbed by sanitize before serialization:
 // §8 — 响应永不回显 secret.
+import { existsSync } from 'node:fs';
 import { saveBots, validateBot } from './bots.js';
 import {
   bindingSummary, bindAsset, buildPlan, maskAsset, newAssetId, rematerializeBots,
@@ -181,6 +182,17 @@ const mergePreserving = (patchVal, oldVal) => {
   return out;
 };
 
+// R4 维护者体验: cwd 存在性前置校验。All four providers spawn their CLI with
+// `cwd: providerConfig.cwd` — a missing directory makes spawn throw ENOENT,
+// which the probe surfaces as a CLI-looking failure (归因误导). Reject up front
+// with a message that names the actual problem. Presence/type stay the
+// schema's job; only a non-empty string cwd is existence-checked here.
+const cwdExistsError = (bot) => {
+  const cwd = bot?.providerConfig?.cwd;
+  if (typeof cwd !== 'string' || cwd === '') return null;
+  return existsSync(cwd) ? null : `工作目录不存在：${cwd}，请先创建或修正路径`;
+};
+
 const validateOrThrow = (bot, ports) => {
   const errors = validateBot(bot, { channels: ports?.channel, providers: ports?.provider });
   if (errors.length > 0) {
@@ -281,13 +293,53 @@ const assetWarningsOf = (state, bot) => {
   return out;
 };
 
+// 连接态口径 (§8, R4 统一数据源): engine runtime state corrected by the
+// channel adapter's connection state — a terminal 'stopped' adapter (subscribe
+// 鉴权失败, kicked) means the bot cannot receive, so an attached-and-idle bot
+// still reports offline. Single extraction point shared by the roster row
+// (GET /api/agents / companyOps / get_employee) and the /healthz bots summary
+// (rosterSummary below) so the two faces can never drift.
+function botStatusOf(state, botId) {
+  const st = state.engine.status(botId);
+  const adapter = state.adapterFor(botId);
+  let chan = null;
+  try { chan = typeof adapter?.status === 'function' ? adapter.status() : null; } catch { chan = null; }
+  const chanStopped = chan?.state === 'stopped';
+  return {
+    status: st.status === 'offline' || chanStopped ? 'offline' : st.status,
+    running: st.running,
+    progress: st.progress,
+    chan,
+    chanStopped,
+  };
+}
+
+// /healthz bots 汇总 (P2 observability, R4): roster truth over engine runtime
+// state — total counts every REGISTERED bot record; the engine itself only
+// knows attached bots, so unattached (disabled/failed-attach/channel-dead)
+// bots close the gap as offline. online=在岗待命(idle), working=干活中, three
+// disjoint buckets summing to total. SAME status computation as the roster
+// row (botStatusOf), so healthz can never call a channel-dead bot online
+// while /api/agents calls it offline.
+export function rosterSummary(state) {
+  const rows = state.doc.bots.filter(isObject);
+  let online = 0;
+  let working = 0;
+  for (const bot of rows) {
+    const { status } = botStatusOf(state, bot.id);
+    if (status === 'working') working++;
+    else if (status === 'idle') online++;
+  }
+  return { total: rows.length, online, working, offline: rows.length - online - working };
+}
+
 // One roster row — shared by GET /api/agents, companyOps.agents and the
 // get_employee tool aggregate (single extraction point so the three cannot
 // drift).
 function botRow(state, bot) {
   const midnight = new Date();
   midnight.setHours(0, 0, 0, 0);
-  const st = state.engine.status(bot.id);
+  const view = botStatusOf(state, bot.id);
   const rows = state.ledgerFor(bot.id).ledger.turns();
   const todayTurns = rows.filter((r) => (r.at ?? 0) >= midnight.getTime()).length;
   const users = new Set(rows.map((r) => r.userid).filter(Boolean)).size;
@@ -299,13 +351,7 @@ function botRow(state, bot) {
   const lastRow = rows.length > 0 ? rows[rows.length - 1] : null;
   const totalTokens = rows.reduce((n, r) => n + (Number.isFinite(r.tokens) ? r.tokens : 0), 0);
   const lastRun = state.engine?.lastRunOf?.(bot.id) ?? null;
-  // 连接态 (§8): a terminal 'stopped' adapter (subscribe 鉴权失败, kicked)
-  // means the bot cannot receive — report offline with the adapter's
-  // lastError as the reason (DESIGN §4 凭证错误快速失败: bot 标 error).
-  const adapter = state.adapterFor(bot.id);
-  let chan = null;
-  try { chan = typeof adapter?.status === 'function' ? adapter.status() : null; } catch { chan = null; }
-  const chanStopped = chan?.state === 'stopped';
+  const chan = view.chan;
   // Blind-review P2-4: enabled bots get an offline reason when a port
   // vanishes, but a DISABLED bot was never attached — no reason, no signal.
   // Flag the missing provider/channel port so the list card can hint it
@@ -335,13 +381,13 @@ function botRow(state, bot) {
   return {
     id: bot.id, name: bot.name, enabled: bot.enabled !== false,
     provider: bot.provider, channel: bot.channel,
-    status: st.status === 'offline' || chanStopped ? 'offline' : st.status,
-    running: st.running, progress: st.progress,
+    status: view.status,
+    running: view.running, progress: view.progress,
     todayTurns, users, chats, turns: rows.length,
     lastRunAt: lastRow?.at ?? null,
     lastDurationMs: lastRun?.durationMs ?? null,
     totalTokens,
-    reason: state.offlineReason(bot.id) ?? (chanStopped ? (chan.lastError ?? 'channel stopped') : null),
+    reason: state.offlineReason(bot.id) ?? (view.chanStopped ? (chan.lastError ?? 'channel stopped') : null),
     channelState: chan == null ? null : { state: chan.state ?? null, lastError: chan.lastError ?? null },
     providerMissing,
     assetWarnings: assetWarningsOf(state, bot),
@@ -378,6 +424,10 @@ async function createBotOp(state, bot) {
     throw httpError(400, `bot id already exists: ${bot.id}`);
   }
   validateOrThrow(bot, state.ports);
+  // R4: a submitted cwd must exist on disk (the wizard's 提交时后端校验) — see
+  // cwdExistsError for why this 400 beats a spawn-time ENOENT.
+  const cwdErr = cwdExistsError(bot);
+  if (cwdErr != null) throw httpError(400, cwdErr);
   // 入职日期 (redesign P2): stamped at creation, echoed by GET /api/bots for
   // the 工牌. Refuse a caller-supplied value — createdAt is registry truth,
   // not editable record data.
@@ -413,6 +463,13 @@ async function patchBotOp(state, id, patchBody) {
     patchBody.providerConfig, bot.providerConfig);
   const merged = { ...bot, ...patchBody, id: bot.id }; // id is immutable
   validateOrThrow(merged, state.ports);
+  // R4: only a PATCH that submits providerConfig re-litigates the cwd — an
+  // unrelated rename of a legacy bot never fails over a dir that vanished
+  // after creation (that surfaces via the probe/test path instead).
+  if (patchBody.providerConfig !== undefined) {
+    const cwdErr = cwdExistsError(merged);
+    if (cwdErr != null) throw httpError(400, cwdErr);
+  }
   if (patchBody.provider !== undefined || patchBody.providerConfig !== undefined) {
     try {
       await materialize(state, merged);
@@ -584,6 +641,10 @@ async function testBotOp(state, id, reqBody) {
     }
     prompt = reqBody.prompt;
   }
+  // R4: spawn 前检查 — a missing cwd spawns ENOENT that reads like a missing
+  // CLI; 400 with the directory named instead (same copy as the CRUD path).
+  const cwdErr = cwdExistsError(bot);
+  if (cwdErr != null) throw httpError(400, cwdErr);
   // §3.1 asset faces (W3 T5): the probe must interrogate the bot AS EQUIPPED
   // — the same enrichment the engine's runner gets (bare plan + manifest file
   // targets), so 岗前测试 exercises prompt (--append-system-prompt) and mcp

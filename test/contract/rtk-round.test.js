@@ -183,6 +183,7 @@ test('API unavailable flow: rtk bind succeeds with rtk missing — receipt notes
     const post = (p, body) => req(p, 'POST', body);
 
     const cfgDir = join(sc, 'claude-cfg');
+    mkdirSync(join(sc, 'cwd'), { recursive: true }); // R4: the API 400s a nonexistent providerConfig.cwd
     const botBody = {
       id: 'rtk-api-b1', name: 'rtk 冒烟', enabled: true, channel: 'fakechan',
       account: { endpoint: 'http://fake.local' }, allowedUsers: [],

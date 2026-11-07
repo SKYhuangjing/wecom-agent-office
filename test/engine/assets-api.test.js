@@ -129,7 +129,11 @@ before(async () => {
   writePluginDir(join(fakesDir, 'channel-fake'), FAKE_CHANNEL);
   writePluginDir(join(fakesDir, 'provider-fake'), FAKE_PROVIDER);
   kernel = await createKernel({ port: 0, dataDir, pluginsDirs: [fakesDir, join(repoRoot, 'plugins')] });
-  for (const id of ['ab1', 'ab2']) {
+  // R4: the API 400s a providerConfig.cwd that does not exist on disk —
+  // the per-bot 工位 dirs must be real before the bots are created.
+  for (const id of ['ab1', 'ab2', 'ab3']) {
+    mkdirSync(join(dataDir, 'cwds', id), { recursive: true });
+    if (id === 'ab3') continue; // ab3 is created inside a test (assets-直写 400 leg first)
     const r = await post('/api/bots', mkBot(id));
     assert.equal(r.status, 200, `boot bot ${id}`);
   }
