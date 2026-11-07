@@ -59,7 +59,7 @@ export default {
   id: 'session',
   title: '工作档案室',
   icon: '🗄️',
-  order: 3,
+  order: 4,
   component({ WAO }) {
     const { h, useState, useEffect, api, useAgents } = WAO;
     ensurePageStyle();

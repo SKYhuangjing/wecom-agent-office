@@ -1,14 +1,18 @@
-// 入职向导 (company-metaphor redesign P2): 四步把一位新同事办进公司——
-// ①名片（姓名+化身 roll 骰子）②技能岗位（三部门卡片）③工位与权限（cwd+
-// 门禁名单）④工牌激活（企微凭证）。「办理入职」→ POST /api/bots → 成功页
-// （工牌预览 + 去办公室看看）。enabled 概念后置：入职即上岗，调休/返岗在
-// 花名册上随时可办。化身由工牌号（botId）决定——同一张脸跟它一生。
+// 入职向导 (company-metaphor redesign P2; W3 T4 增第 3.5 步): 五步把一位新同事
+// 办进公司——①名片（姓名+化身 roll 骰子）②技能岗位（三部门卡片）③配发装备
+// （可跳过——资产多选，默认私发；W3 T4）④工位与权限（cwd+门禁名单）⑤工牌激活
+// （企微凭证）。「办理入职」→ POST /api/bots →（选了装备则逐件 POST
+// /api/bots/:id/assets，失败不回滚入职，成功页点名补配）→ 成功页（工牌预览 +
+// 去办公室看看）。enabled 概念后置：入职即上岗，调休/返岗在花名册上随时可办。
+// 化身由工牌号（botId）决定——同一张脸跟它一生。
 import { Avatar, PROVIDER_META, providerMeta, rollBadgeId, fmtDate, ensurePageStyle } from './hr.js';
 import { fieldsFromSchema, SchemaFields, serializeSchema } from './form.js';
+import { TYPE_LABEL } from './assets.js';
 
 const STEPS = [
   { key: 'card', title: '名片', sub: '先认识一下：叫什么、长什么样' },
   { key: 'dept', title: '技能岗位', sub: '它会哪家手艺？' },
+  { key: 'equip', title: '配发装备', sub: '可跳过——现在不配，之后到资产科再配也行' },
   { key: 'desk', title: '工位与权限', sub: '在哪个目录干活、听谁的' },
   { key: 'badge', title: '工牌激活', sub: '填上企微凭证就能上班' },
 ];
@@ -18,12 +22,21 @@ const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 const errorLines = (message) => String(message ?? '').split('; ').filter((s) => s.trim() !== '');
 
 export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated }) => {
-  const { h, useState } = WAO;
+  const { h, useState, useEffect, api } = WAO;
   ensurePageStyle();
   const [step, setStep] = useState(0);
   const [done, setDone] = useState(null); // created bot record (sanitized echo)
   const [submitting, setSubmitting] = useState(false);
   const [submitErrors, setSubmitErrors] = useState(null);
+  const [bindFailures, setBindFailures] = useState([]); // 入职后配发失败清单（不阻断入职）
+  const [assets, setAssets] = useState(null); // null=读取中 []=空清单
+  useEffect(() => {
+    let alive = true;
+    api('/api/assets')
+      .then((data) => { if (alive) setAssets(Array.isArray(data?.assets) ? data.assets : []); })
+      .catch(() => { if (alive) setAssets([]); }); // 资产面不可用不拦入职——这步可跳过
+    return () => { alive = false; };
+  }, []);
   const [draft, setDraft] = useState(() => {
     const channel = ports?.channels?.[0]?.id ?? '';
     const provider = ports?.providers?.[0]?.id ?? '';
@@ -33,6 +46,8 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated 
       account: fieldsFromSchema(ports?.channels?.[0]?.accountSchema),
       providerConfig: fieldsFromSchema(ports?.providers?.[0]?.configSchema),
       allowedUsers: '',
+      equip: [], // 选中的资产 id（第 3.5 步）
+      equipMode: 'exclusive', // 默认私发：快照独立、不随源漂移
     };
   });
   const channelSchema = ports?.channels?.find((c) => c.id === draft.channel)?.accountSchema ?? [];
@@ -57,12 +72,12 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated 
       else if (existingIds.has(draft.id.trim())) errs.push(`工牌号已被占用：${draft.id.trim()}`);
     }
     if (which === 1 && draft.provider === '') errs.push('请选择一个技能岗位');
-    if (which === 2) {
+    if (which === 3) {
       const required = (providerSchema ?? []).filter((it) => it?.required === true);
       const { errors } = serializeSchema(required, draft.providerConfig);
       errs.push(...errors);
     }
-    if (which === 3) {
+    if (which === 4) {
       const { errors } = serializeSchema(channelSchema, draft.account);
       errs.push(...errors);
     }
@@ -81,6 +96,18 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated 
         channel: draft.channel, account: account.values,
         allowedUsers: allowed, provider: draft.provider, providerConfig: providerConfig.values,
       });
+      // 第 3.5 步装备：入职成功后逐件配发——失败不回滚入职（人已办进来了），
+      // 成功页点名哪些没配上、到资产科装备台补配。
+      const failures = [];
+      for (const assetId of draft.equip) {
+        try {
+          await WAO.api(`/api/bots/${encodeURIComponent(draft.id.trim())}/assets`, { assetId, mode: draft.equipMode });
+        } catch (err) {
+          const asset = (assets ?? []).find((a) => a.id === assetId);
+          failures.push(`${asset?.name ?? assetId}：${err?.message ?? err}`);
+        }
+      }
+      setBindFailures(failures);
       setDone(resp?.bot ?? { ...draft });
       onCreated?.(); // refresh the roster behind the success page
     } catch (err) {
@@ -106,6 +133,12 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated 
             h('div', null, h('span', { className: 'wb-sub' }, '状态 '), h('span', null, '已上岗，工牌激活成功'))),
           h('div', { className: 'wb-hint' },
             done.createdAt == null ? '（老数据没有入职日期记录，从今天开始记）' : null))),
+      bindFailures.length > 0 ? h('div', { className: 'wb-notice' },
+        h('div', null, `${bindFailures.length} 件装备未配成——同事已入职，可稍后到资产科装备台补配：`),
+        h('ul', { className: 'wb-offboard-list' }, bindFailures.map((f, i) => h('li', { key: i }, f)))) : null,
+      draft.equip.length > 0 && bindFailures.length === 0
+        ? h('p', { className: 'wb-hint' }, `已随入职配发 ${draft.equip.length} 件装备（${draft.equipMode === 'exclusive' ? '私发' : '配发'}）。`)
+        : null,
       h('div', { className: 'wb-toolbar' },
         h('a', { className: 'wb-btn wb-btn-primary', href: '#/office3d' }, '去办公室看看'),
         h('button', { className: 'wb-btn', onClick: () => onOpenFile(done.id) }, '查看员工档案'),
@@ -164,6 +197,45 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated 
         : h('div', { className: 'wb-notice' }, '没有可用的技能岗位（provider 插件）——请先到后勤部门启用至少一个岗位部门。')),
       h('p', { className: 'wb-hint' }, '岗位=provider：决定它用什么工具干活。入职后可转岗（历史对话仅文本问答对迁移）。'));
   } else if (step === 2) {
+    // 第 3.5 步（W3 T4）：可选装备。资产多选（默认全私发）+ 跳过——直接点
+    // 下一步不选任何资产即空手入职，之后随时到资产科装备台补配。
+    const toggleEquip = (id, on) => setDraft((d) => ({
+      ...d,
+      equip: on ? [...d.equip, id] : d.equip.filter((x) => x !== id),
+    }));
+    const mcpOnly = (a) => a.origin === 'mcp'; // Agent 自建资产仅可私发
+    body = h('div', { className: 'wb-form', style: { maxWidth: 620 } },
+      assets == null
+        ? h('p', { className: 'muted' }, '盘点资产清单中…')
+        : assets.length === 0
+          ? h('div', { className: 'wb-notice' },
+              '资产清单还是空的——可以空手入职，之后到资产科（登记资产 → 装备台配发）随时补配。')
+          : h('div', { className: 'wb-group open' },
+              h('div', { className: 'wb-group-body' },
+                assets.map((a) => h('label', {
+                  key: a.id, className: 'wb-check', style: { alignItems: 'flex-start' },
+                  title: `${a.type} · ${a.name}${a.description ? ` · ${a.description}` : ''}`,
+                },
+                  h('input', {
+                    type: 'checkbox', checked: draft.equip.includes(a.id),
+                    onChange: (e) => toggleEquip(a.id, e.target.checked),
+                  }),
+                  h('span', null,
+                    h('span', { className: `badge wb-atype-${a.type}` }, TYPE_LABEL[a.type] ?? a.type), ' ',
+                    h('span', { className: 'wb-mono' }, a.name),
+                    mcpOnly(a) ? h('span', { className: 'wb-hint' }, '（Agent 自建·仅可私发）') : null,
+                    a.description ? h('div', { className: 'wb-hint' }, a.description) : null)))),
+              h('div', { className: 'wb-field', style: { maxWidth: 320 } },
+                h('label', null, '配发方式', h('span', { className: 'wb-hint', style: { marginLeft: 8 } }, '对上面勾选的每件资产生效')),
+                h('select', {
+                  className: 'wb-select', value: draft.equipMode,
+                  onChange: (e) => setDraft((d) => ({ ...d, equipMode: e.target.value })),
+                },
+                  h('option', { value: 'exclusive' }, '私发（默认·快照独立，不随源改动漂移）'),
+                  h('option', { value: 'shared' }, '配发（跟源更新）')))),
+      h('p', { className: 'wb-hint' },
+        '装备会写进它的工位（技能文件/配置/钩子），下一轮接单即可用；这步可以整页跳过——直接点「下一步」。'));
+  } else if (step === 3) {
     const required = (providerSchema ?? []).filter((it) => it?.required === true);
     body = h('div', { className: 'wb-form', style: { maxWidth: 560 } },
       h(SchemaFields, {
@@ -202,7 +274,7 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated 
         h('span', null, s.title))),
       h('span', { className: 'wb-step-sub' }, STEPS[step].sub)),
     body,
-    errs.length > 0 && step !== 3 ? h('div', { className: 'wb-field-error' }, errs[0]) : null,
+    errs.length > 0 && step !== STEPS.length - 1 ? h('div', { className: 'wb-field-error' }, errs[0]) : null,
     h('div', { className: 'wb-wizard-nav' },
       h('button', { className: 'wb-btn', disabled: step === 0, onClick: () => setStep(step - 1) }, '上一步'),
       step < STEPS.length - 1

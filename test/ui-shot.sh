@@ -2,7 +2,8 @@
 # test/ui-shot.sh (M3 T5) — harness 截图工作流固化（改 UI 红线的工具面）。
 #
 # 一条命令产出全部页面插件 harness 基线截图到 test/ui-shots/（提交进库）：
-#   - ui-workbench 六页（workbench/bots/session/push/plugins/timeline）× 浅/深
+#   - ui-workbench 七页（workbench/bots/assets/session/push/plugins/timeline）× 浅/深
+#     + 资产科装备台第二视图（?view=equip&bot=bot-2，含警示条/私发快照）× 浅/深
 #   - ui-office3d  Magpie iso/2d × 浅/深
 #   - ui-office-studio 白棚 × 浅
 #   - template-page demo × 浅（脚手架示例）
@@ -129,11 +130,16 @@ shot() { # shot <name> <theme> <waitMs> <query>
   node "$DRIVER" "$CDP_PORT" "$url" "$OUT_DIR/$1-$2.png" "$3" "$2"
 }
 
-echo "· ui-workbench 六页 × 浅/深"
-for page in workbench bots session push plugins timeline; do
+echo "· ui-workbench 七页 × 浅/深"
+for page in workbench bots assets session push plugins timeline; do
   for theme in light dark; do
     shot "ui-workbench-$page" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=$page"
   done
+done
+
+echo "· ui-workbench 资产科装备台（第二视图）× 浅/深"
+for theme in light dark; do
+  shot "ui-workbench-assets-equip" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=assets&view=equip&bot=bot-2"
 done
 
 echo "· ui-office3d Magpie iso/2d × 浅/深"
@@ -154,7 +160,7 @@ shot "ui-workbench-workbench-error" light 2600 "api/ui/ui-workbench/harness.html
 shot "ui-office3d-iso-empty" light 4000 "api/ui/ui-office3d/harness.html?state=empty"
 shot "ui-office3d-iso-error" light 4000 "api/ui/ui-office3d/harness.html?state=error"
 
-# ---- 校验：22 张基线全部存在且 ≥5KB ----------------------------------------
+# ---- 校验：26 张基线全部存在且 ≥5KB ----------------------------------------
 # 注意：set -u 下 $VAR 紧跟全角字符（如「）」）会被当成变量名一部分，
 # 因此这里一律用 ${VAR} 括起来。
 EXPECTED="
@@ -162,6 +168,10 @@ ui-workbench-workbench-light
 ui-workbench-workbench-dark
 ui-workbench-bots-light
 ui-workbench-bots-dark
+ui-workbench-assets-light
+ui-workbench-assets-dark
+ui-workbench-assets-equip-light
+ui-workbench-assets-equip-dark
 ui-workbench-session-light
 ui-workbench-session-dark
 ui-workbench-push-light
@@ -195,4 +205,4 @@ if [ "$fails" -gt 0 ]; then
   echo "✗ $fails 张基线不合格（${OUT_DIR}）" >&2
   exit 1
 fi
-echo "✓ 22 张基线齐备 → $OUT_DIR"
+echo "✓ 26 张基线齐备 → $OUT_DIR"

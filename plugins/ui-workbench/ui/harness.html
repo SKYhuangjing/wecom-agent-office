@@ -1,11 +1,11 @@
 <!doctype html>
-<!-- ui-workbench harness (M3 T2/T3 截图工作流, kernel-hosted same-origin):
-     ?page=workbench (default) renders 工作台; also bots / session / push /
-     plugins / timeline. ?state=empty (no bots) / ?state=error (服务断联的
-     fetch 失败文案) swap the fake data for those boundary states —
-     test/ui-shot.sh 截空态/错误态基线用. Swap fake-data.js entries for the
-     state you want to screenshot (empty ledger, offline bot, failed plugin,
-     push error...), then:
+<!-- ui-workbench harness (M3 T2/T3 截图工作流, W3 T4 增资产科, kernel-hosted same-origin):
+     ?page=workbench (default) renders 工作台; also bots / assets / session /
+     push / plugins / timeline. assets 页 ?view=equip 直达装备台（&bot=<id>
+     选同事）。?state=empty (no bots) / ?state=error (服务断联的 fetch 失败文案)
+     swap the fake data for those boundary states — test/ui-shot.sh 截空态/错误态
+     基线用. Swap fake-data.js entries for the state you want to screenshot
+     (empty ledger, offline bot, failed plugin, push error...), then:
        chrome --headless=new --disable-gpu --screenshot=list-light.png \
          --window-size=1280,800 http://127.0.0.1:8792/api/ui/ui-workbench/harness.html
        chrome ... --screenshot=session-light.png \

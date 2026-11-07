@@ -39,7 +39,7 @@ export default {
   id: 'plugins',
   title: '后勤部门',
   icon: '🧰',
-  order: 5,
+  order: 6,
   component({ WAO }) {
     const { h, useState, useEffect, api, useAgents } = WAO;
     ensurePageStyle();

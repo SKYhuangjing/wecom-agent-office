@@ -73,6 +73,34 @@ export const FAKE_TIMELINE = [
   { botId: 'bot-2', chatKey: 'wecom:single:wangwu', kind: 'thinking', text: '这份周报要覆盖 M3 的六个页面插件交付，按页罗列风险与验证方式。', at: minAgo(3) },
 ].sort((a, b) => a.at - b.at);
 
+// 资产科 (W3 T4)：/api/assets 清单行（mcp env/headers 是位置掩码 __MASKED__ 的
+// 剥敏回显——红线：假数据也不放明文机密）+ bots 的 assets 绑定摘要（§2.2 形状：
+// 无 content；exclusive 带 snapshotVersion/exclusiveBehind/sourceDeleted）+
+// agents 的 assetWarnings。ast-rtk09 刻意不在清单里——它是已下架资产的私发快照
+// （源删除后快照独立生效，§3.2 DELETE row）。
+export const FAKE_ASSETS = [
+  {
+    id: 'ast-skl001', type: 'skill', name: 'wao-company', description: '公司话术与台账规范',
+    content: { name: 'wao-company', description: '回工单前先查台账；公司话词表见 README §4.2', body: '# WAO 公司规范\n\n1. 回工单先查台账\n2. 公司话主层，技术词进 tooltip\n' },
+    origin: 'operator', version: 3, createdAt: now - 12 * 24 * 3600_000, updatedAt: minAgo(3000), bindings: 1,
+  },
+  {
+    id: 'ast-mcp002', type: 'mcp', name: 'gateway', description: 'MCP 网关（stdio + http 各一）',
+    content: {
+      servers: {
+        company: { command: 'node', args: ['server.js'], env: { TOKEN: '__MASKED__', NOTE: '__MASKED__' } },
+        docs: { type: 'http', url: 'https://example.com/mcp', headers: { 'X-K': '__MASKED__' } },
+      },
+    },
+    origin: 'mcp', version: 2, createdAt: minAgo(7200), updatedAt: minAgo(90), bindings: 1,
+  },
+  {
+    id: 'ast-mem003', type: 'memory', name: 'team-notes', description: '团队记事本（发版窗口/周报模板）',
+    content: { notes: ['周报模板：本周完成 / 下周计划 / 风险', '发版窗口：周四 14:00', '值班表在 ops/oncall.md，改动先打招呼'] },
+    origin: 'operator', version: 2, createdAt: now - 30 * 24 * 3600_000, updatedAt: minAgo(2880), bindings: 1,
+  },
+];
+
 export const FAKE = {
   agents: [
     {
@@ -80,12 +108,17 @@ export const FAKE = {
       provider: 'dsh', channel: 'wecom',
       progress: { line: '🔧 正在修复 plugins/core-engine/api.js 的测试用例' },
       todayTurns: 12, users: 3, chats: 2, reason: null,
+      assetWarnings: [],
     },
     {
       id: 'bot-2', name: '二号机器人', enabled: true, status: 'offline',
       provider: 'claude', channel: 'wecom',
       progress: null, todayTurns: 0, users: 0, chats: 0,
       reason: 'provider claude 已禁用（插件停用或加载失败）',
+      assetWarnings: [
+        'memory 共享 cwd：跨会话记忆可能被同目录其他会话互见',
+        'rtk 已绑定但二进制不可用（rtk 未安装或不在 PATH）——装备暂未生效，绑定保留',
+      ],
     },
     {
       // 盲评 P2-4 基线：已停用 + provider 插件（codex，见 FAKE_PLUGINS）已停用的
@@ -101,12 +134,20 @@ export const FAKE = {
       account: { botId: '1000002', wsUrl: 'wss://openws.work.weixin.qq.com' },
       provider: 'dsh', createdAt: now - 62 * 24 * 3600_000, // 入职两个月
       providerConfig: { cwd: '/Users/sky/work/main', permission: 'workspace-write', progressCoT: true },
+      assets: [
+        { assetId: 'ast-skl001', name: 'wao-company', type: 'skill', mode: 'shared', origin: 'operator' },
+      ],
     },
     {
       id: 'bot-2', name: '二号机器人', enabled: true, channel: 'wecom',
       account: { botId: '1000003' },
       provider: 'claude', createdAt: now - 9 * 24 * 3600_000,
       providerConfig: { cwd: '/Users/sky/work/bot2', progressCoT: true },
+      assets: [
+        { assetId: 'ast-mcp002', name: 'gateway', type: 'mcp', mode: 'exclusive', origin: 'mcp', exclusiveBehind: 1, snapshotVersion: 1, snapshotAt: minAgo(7200) },
+        { assetId: 'ast-mem003', name: 'team-notes', type: 'memory', mode: 'shared', origin: 'operator' },
+        { assetId: 'ast-rtk09', name: 'rtk-slim', type: 'tool', mode: 'exclusive', origin: 'operator', exclusiveBehind: null, snapshotVersion: 1, snapshotAt: now - 3 * 24 * 3600_000, sourceDeleted: true },
+      ],
     },
     {
       id: 'bot-3', name: '归档机器人', enabled: false, channel: 'wecom',
@@ -223,4 +264,100 @@ export const FAKE_API = {
   '/api/plugins/provider-codex/enable': flipPlugin('provider-codex'),
   '/api/plugins/provider-claude/disable': flipPlugin('provider-claude'),
   '/api/service/reload': () => ({ ok: true }),
+  // —— 资产科 (W3 T4) ————————————————————————————————————————————————
+  // stub 的 api() 按 path 键（method-blind）：无 body 视为 GET/DELETE，有 body
+  // 视为 POST/PATCH。处理器直接改 FAKE_ASSETS / FAKE.bots，让 harness 里的
+  // 建资产→配发→卸下→重物化操作流真的走通（回执形状照抄 §3.2）。
+  '/api/assets': (body) => {
+    if (body === undefined) return { assets: FAKE_ASSETS };
+    const created = {
+      id: `ast-${Math.random().toString(36).slice(2, 8)}`,
+      type: body.type, name: body.name,
+      ...(body.description !== undefined && body.description !== '' ? { description: body.description } : {}),
+      content: body.content, origin: 'operator', version: 1,
+      createdAt: Date.now(), updatedAt: Date.now(), bindings: 0,
+    };
+    FAKE_ASSETS.push(created);
+    return { asset: created, rematerialized: [], failed: [], writes: [] };
+  },
+  ...Object.fromEntries(FAKE_ASSETS.map((a) => [`/api/assets/${a.id}`, (body) => {
+    if (body === undefined) { // DELETE（页面不用 GET 单读）
+      const holders = FAKE.bots.filter((b) => (b.assets ?? []).some((x) => x.assetId === a.id));
+      let removedBindings = 0;
+      let keptExclusive = 0;
+      for (const bot of holders) {
+        const kept = [];
+        for (const x of bot.assets) {
+          if (x.assetId !== a.id) { kept.push(x); continue; }
+          if (x.mode === 'shared') removedBindings += 1; else { keptExclusive += 1; kept.push(x); }
+        }
+        bot.assets = kept;
+      }
+      FAKE_ASSETS.splice(FAKE_ASSETS.indexOf(a), 1);
+      return {
+        ok: true, id: a.id, removedBindings, keptExclusive,
+        rematerialized: holders.filter((b) => b.assets.some((x) => x.assetId !== a.id) || removedBindings > 0).map((b) => b.id),
+        failed: [], writes: [],
+        ...(keptExclusive > 0 ? { note: `源资产已删除，${keptExclusive} 个私发（exclusive）副本仍生效（快照保留在各自 bot 记录中）` } : {}),
+      };
+    }
+    // PATCH：version 递增 + 共享绑定 fan-out 回执
+    Object.assign(a, { ...body, version: a.version + 1, updatedAt: Date.now() });
+    const sharedBots = FAKE.bots.filter((b) => (b.assets ?? []).some((x) => x.assetId === a.id && x.mode === 'shared'));
+    return {
+      asset: a, rematerialized: sharedBots.map((b) => b.id), failed: [],
+      writes: sharedBots.map((b) => ({ action: 'write', path: `${b.providerConfig?.cwd ?? '/tmp'}/.wao/${a.type}--${a.name}.md` })),
+    };
+  }])),
+  ...Object.fromEntries(FAKE.bots.filter((b) => b.id !== 'bot-3').map((bot) => [
+    `/api/bots/${bot.id}/assets`,
+    (body) => { // POST 绑定（配发/私发）
+      const asset = FAKE_ASSETS.find((x) => x.id === body?.assetId) ?? { id: body?.assetId, name: body?.assetId, type: 'skill', origin: 'operator' };
+      const mode = body?.mode === 'exclusive' ? 'exclusive' : 'shared';
+      bot.assets = [...(bot.assets ?? []), mode === 'exclusive'
+        ? { assetId: asset.id, name: asset.name, type: asset.type, mode, origin: asset.origin, exclusiveBehind: 0, snapshotVersion: asset.version ?? 1, snapshotAt: Date.now() }
+        : { assetId: asset.id, name: asset.name, type: asset.type, mode, origin: asset.origin }];
+      if (FAKE_ASSETS.includes(asset)) asset.bindings = (asset.bindings ?? 0) + 1;
+      return {
+        ok: true,
+        binding: { assetId: asset.id, mode, name: asset.name, type: asset.type, origin: asset.origin ?? 'operator' },
+        rematerialized: [bot.id], failed: [],
+        writes: [{ action: 'write', path: `${bot.providerConfig?.cwd ?? '/tmp'}/.wao/${asset.type}--${asset.name}.md` }],
+        ...(asset.type === 'memory' && !bot.providerConfig?.claudeConfigDir
+          ? { warnings: ['记忆落在共享 cwd，对同目录其他会话可见，建议配专属 config 目录（claudeConfigDir/codexHome/piAgentDir）'] } : {}),
+      };
+    },
+  ])),
+  ...Object.fromEntries(FAKE.bots.filter((b) => b.id !== 'bot-3').flatMap((bot) => {
+    // 预登记「注册表全部资产 + 初始绑定（含已下架快照）」的解绑面；新建资产的
+    // 解绑不在矩阵内——harness 会走错误横幅（真实流在真服务上验收）。
+    const ids = [...new Set([...FAKE_ASSETS.map((a) => a.id), ...(bot.assets ?? []).map((x) => x.assetId)])];
+    return ids.map((assetId) => [
+      `/api/bots/${bot.id}/assets/${assetId}`,
+      () => { // DELETE 解绑
+        const x = (bot.assets ?? []).find((b) => b.assetId === assetId);
+        if (x == null) throw new Error(`资产 ${assetId} 未绑定到 bot ${bot.id}`);
+        bot.assets = (bot.assets ?? []).filter((b) => b.assetId !== assetId);
+        const src = FAKE_ASSETS.find((a) => a.id === assetId);
+        if (src != null) src.bindings = Math.max(0, (src.bindings ?? 1) - 1);
+        return {
+          ok: true,
+          removed: { assetId: x.assetId, mode: x.mode, name: x.name, type: x.type, exclusiveContentLost: x.mode === 'exclusive' },
+          rematerialized: [bot.id], failed: [],
+          writes: [{ action: 'unlink', path: `${bot.providerConfig?.cwd ?? '/tmp'}/.wao/${x.type}--${x.name}.md` }],
+        };
+      },
+    ]);
+  })),
+  ...Object.fromEntries(FAKE.bots.filter((b) => b.id !== 'bot-3').map((bot) => [
+    `/api/bots/${bot.id}/rematerialize-assets`,
+    () => ({
+      ok: true, botId: bot.id, rematerialized: [bot.id], failed: [],
+      writes: (bot.assets ?? []).map((x) => (x.type === 'tool'
+        ? { action: 'rtk-init', path: `${bot.providerConfig?.cwd ?? '/tmp'}/.wao` }
+        : { action: 'write', path: `${bot.providerConfig?.cwd ?? '/tmp'}/.wao/${x.type}--${x.name}.md` })),
+      ...((bot.assets ?? []).some((x) => x.type === 'tool')
+        ? { notes: ['rtk 不可用：二进制未安装或不在 PATH——绑定保留，装好 rtk 后重跑「重新物化」即可装备'] } : {}),
+    }),
+  ])),
 };

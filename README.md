@@ -320,6 +320,10 @@ curl -si -X POST localhost:8792/mcp -H 'content-type: application/json' \
 | 工作档案 / 原生档案 | 台账 ledger / provider 原生会话 |
 | 广播站 / 播音员 | 服务端主动推送 / 发送者 bot |
 | 后勤部门 / 部门重组 | 插件 / 四阶段重载（reload） |
+| 资产科 / 资产清单 / 装备台 | 资产注册表（/api/assets）/ per-bot 绑定面（/api/bots/:id/assets） |
+| 配发 / 私发 | 绑定模式 mode:'shared'（跟源更新）/ 'exclusive'（快照独立，不随源改动漂移） |
+| 卸下装备 / 下架资产 | 解绑（DELETE /api/bots/:id/assets/:id）/ 删除资产（DELETE /api/assets/:id） |
+| 重新物化 | rematerialize（POST /api/bots/:id/rematerialize-assets，按当前绑定重写盘面） |
 | 状态：工作中 / 待命 / 休假 | working / idle / offline(+disabled) |
 | 工牌号 | bot id（同时是化身 seed——同 id 全站同脸） |
 

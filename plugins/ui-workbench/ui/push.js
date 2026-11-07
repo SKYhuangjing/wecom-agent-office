@@ -13,7 +13,7 @@ export default {
   id: 'push',
   title: '广播站',
   icon: '📣',
-  order: 4,
+  order: 5,
   component({ WAO }) {
     const { h, useState, useEffect, api, useAgents } = WAO;
     ensurePageStyle();

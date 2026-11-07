@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+资产科（W3 T4，DESIGN-ASSETS §2/§8）——资产注册表 + per-bot 装备面。
+
+### Added
+
+- 资产科页（nav 第 3 位，人事部之后）：「资产清单」表（类型五色徽章/绑定数 tooltip 点名/来源 控制台·Agent 自建/更新时间）+ 登记资产 per-type 表单（skill/mcp·servers JSON 编辑器+机密位「保存后不回显」/prompt/memory/tool rtk·ripgrep）+ 编辑（type immutable）+ 下架确认弹层（点名解绑同事与保留私发快照）。
+- 装备台视图：assetWarnings 警示条、已装备表（配发/私发徽章、私发快照落后 N 版与「源已删·快照独立」标识）、配发选择器（Agent 自建强制私发）、卸下装备确认（私发副本丢失警示）、「重新物化」危险确认 + 回执 writes/failed/notes 逐条展示。
+- 入职向导第 3.5 步「配发装备」（可跳过）：资产多选 + 配发方式（默认私发）；配发失败不回滚入职，成功页点名到资产科补配。
+
+### Changed
+
+- 页序：资产科插到人事部后（order 3），工作档案室/广播站/后勤部门/工作日志顺移 4-7。
+- 假数据：三资产（mcp 位置掩码剥敏）+ 两 bot 绑定摘要（含私发落后与源已删快照）+ assetWarnings；截图基线 22→26 张（资产科两视图 × 浅/深）。
+
 provider-pi 第四技能部门接入的 UI 面（11-07）。
 
 ### Added

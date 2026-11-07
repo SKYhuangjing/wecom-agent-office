@@ -19,7 +19,7 @@ export default {
   id: 'timeline',
   title: '工作日志',
   icon: '📜',
-  order: 6,
+  order: 7,
   component({ WAO }) {
     const { h, useState, useEffect, useAgents, useTimeline } = WAO;
     ensurePageStyle();

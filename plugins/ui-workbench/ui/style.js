@@ -314,6 +314,28 @@ const CSS = `
 @keyframes wb-toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
 @media (prefers-reduced-motion: reduce) { .wb-toast { animation: none; } }
 
+/* —— W3 T4: 资产科（类型五色徽章 / 配发·私发徽章 / 回执落盘清单） ————————— */
+.wb-atype-skill { color: var(--accent); border-color: var(--accent); }
+.wb-atype-memory { color: #0e7490; border-color: #0e7490; }
+.wb-atype-mcp { color: #7c3aed; border-color: #7c3aed; }
+.wb-atype-prompt { color: #b45309; border-color: #b45309; }
+.wb-atype-tool { color: #15803d; border-color: #15803d; }
+.wb-bmode-shared { color: var(--accent); border-color: var(--accent); }
+.wb-bmode-exclusive { color: #7c3aed; border-color: #7c3aed; }
+.wb-srcdel { color: var(--warn); border-color: var(--warn); }
+.wb-writes {
+  margin: 4px 0 0; padding-left: 18px; max-height: 180px; overflow: auto;
+  font-size: 12px; color: var(--muted);
+}
+.wb-writes li { overflow-wrap: anywhere; }
+@media (prefers-color-scheme: dark) {
+  .wb-atype-memory { color: #22d3ee; border-color: #22d3ee; }
+  .wb-atype-mcp { color: #a78bfa; border-color: #a78bfa; }
+  .wb-atype-prompt { color: #fbbf24; border-color: #fbbf24; }
+  .wb-atype-tool { color: #4ade80; border-color: #4ade80; }
+  .wb-bmode-exclusive { color: #a78bfa; border-color: #a78bfa; }
+}
+
 /* —— P5 收口：窄屏（shell 侧栏折顶时，双栏布局也收成单列） ———————————— */
 @media (max-width: 900px) {
   .wb-crud { grid-template-columns: 1fr; }
