@@ -27,7 +27,7 @@ export function skillMarkdown(entry) {
   return [
     '---',
     `name: ${name}`,
-    ...(c.description !== undefined && c.description !== '' ? [`description: ${String(c.description).replace(/\n/g, ' ')}`] : []),
+    ...(c.description !== undefined && c.description !== '' ? [`description: ${JSON.stringify(String(c.description))}`] : []),
     `x-wao-asset: ${entry.assetId}`,
     '---',
     '',
@@ -49,7 +49,16 @@ export const memoryMarkdown = (entry) => [
 
 export const promptMarkdown = (entry) => [`## WAO 提示词约束：${entry.name}`, '', String(entry.content?.text ?? '')].join('\n');
 
-const TOML_ESCAPE = (s) => String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+// W3 T2 review Critical 2: \n \r \t MUST be escaped — a raw newline inside a
+// TOML basic string is illegal TOML, and the registration surface legitimately
+// admits them (CONTROL_CHARS excludes \n\r\t), so an unescaped value would
+// silently poison the host config.toml.
+const TOML_ESCAPE = (s) => String(s)
+  .replace(/\\/g, '\\\\')
+  .replace(/"/g, '\\"')
+  .replace(/\n/g, '\\n')
+  .replace(/\r/g, '\\r')
+  .replace(/\t/g, '\\t');
 const tomlStr = (s) => `"${TOML_ESCAPE(s)}"`;
 const ENV_REF = /^\$\{([A-Z_][A-Z0-9_]*)\}$/;
 

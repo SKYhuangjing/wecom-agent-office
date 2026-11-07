@@ -55,11 +55,29 @@
 
 ### Fixed
 
+- 资产物化评审修复（W3 T2 review，3 Critical + Minor 1/4/5）：
+  **Critical 1** pi 默认 agent 目录（`~/.pi/agent-wao-<botId>`，piAgentDirFor 公式内联，同 DSH_HOME 先例）
+  补入 §8.3 越狱防护白名单——默认目录 pi bot 的绑定此前落库后物化必败；
+  **Critical 2** codex TOML 值转义补 `\n`/`\r`/`\t`（注册面放行换行，未转义产物=非法 TOML 静默毒化宿主
+  config.toml），SKILL.md frontmatter description 四家统一改 JSON.stringify 落 YAML（含冒号/换行安全）；
+  **Critical 3** 启动扫尾（startupSweep）在 attach 之后跑——迁移成功的 bot 由扫尾后逐个 refreshRunner
+  重铸，文件目标富集在首个进程周期生效；**Minor 1（owned 真值）** manifest 的 owned 改记「写入时文件
+  是否不存在（或上一好清单已归我）」——宿主文件（用户自建 CLAUDE.md/AGENTS.md/config.toml）记 false，
+  卸载只剥节不整删，剥空的宿主文件保留，verify 孤儿判定对剥节后的宿主文件不再误报；
+  **Minor 4** 资产校验拒收正文中的 wao 标记行模式（`wao:assets:…:vN`，400 指名字段——自造 §3.4 漂移）；
+  **Minor 5** 启动回验遇 provider 端口缺失改为 log.warn 指名 botId+原因（原先 drift/orphans 双空静默跳过）。
 - W1 T2 `*Op` 重构的两处错误优先级回归（终审 Important）：`GET /api/timeline` 未知 bot +
   坏 window 组合回到 404 bot 优先（bot 存在性预检查回到 window 解析前，镜像 patchBotHandler）；
   `POST /api/bots/:id/test` provider 端口不可用 + 坏 JSON body 组合回到 400 provider
   unavailable 优先（端口预检查回到 body 解析前）。「HTTP 行为零变化」的承诺在这两个组合上
   恢复成立（plugin.test.js 锁定组合序）。
+
+### Notes
+
+- 评审 Minor 2（atomicWrite 落盘 0600 权限归零）**不改**：0600 是设计背书的原语（data/ 纪律、
+  密钥红线），宿主侧文件本就不该由 atomicWrite 承载组/其他权限。
+- 评审 Minor 3（cleanupEmptyParents 至多 6 层空目录攀爬）**不改**：极低频路径，且攀爬以
+  allowedRoots 为止点、仅删「确实为空」的目录；如需收紧改「仅删 WAO 命名空间目录」另立任务。
 
 ## [0.1.0] - 2026-11-06
 

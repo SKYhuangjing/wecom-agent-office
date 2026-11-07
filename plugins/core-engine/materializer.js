@@ -225,13 +225,19 @@ export function createMaterializer({ ports, dataDir, log }) {
   // declared dirs + WAO data/) with no `..` segment. dsh's profile tree under
   // DSH_HOME/~/.dsh is the provider's own config domain — same trust face as
   // its pre-existing materializeConfig writes — so it joins the root set for
-  // dsh bots only.
+  // dsh bots only. pi's DEFAULT agent dir (~/.pi/agent-wao-<botId>, the
+  // piAgentDirFor formula in provider-pi/models.js — inlined here, no
+  // plugin-to-plugin import) joins the same way: without it every default-dir
+  // pi bot's asset writes would fail the jail (W3 T2 review Critical 1).
   const allowedRootsOf = (bot) => {
     const pc = isObject(bot?.providerConfig) ? bot.providerConfig : {};
     const roots = [pc.cwd, pc.claudeConfigDir, pc.codexHome, pc.piAgentDir, dataDir]
       .filter((v) => typeof v === 'string' && v !== '');
     if (bot?.provider === 'dsh') {
       roots.push(process.env.DSH_HOME || join(homedir(), '.dsh'));
+    }
+    if (bot?.provider === 'pi' && !(typeof pc.piAgentDir === 'string' && pc.piAgentDir !== '')) {
+      roots.push(join(homedir(), '.pi', `agent-wao-${bot?.id ?? 'bot'}`));
     }
     return roots.map((r) => resolve(r));
   };
@@ -350,13 +356,26 @@ export function createMaterializer({ ports, dataDir, log }) {
       jailCheck(bot, diskWrites.map((w) => w.target));
 
       const oldManifest = readManifest(bot.id);
+      // owned 真值 (W3 T2 review): a row is ours-whole-file only when the file
+      // was ABSENT at write time (we created it) or an earlier manifest of ours
+      // already owned it — a HOST file that pre-dates our first write (user
+      // CLAUDE.md/AGENTS.md/config.toml/settings.json) records owned:false and
+      // unloads by section-strip only, never whole-file delete. The snapshot
+      // map (taken before each mutation) is the did-not-exist oracle.
+      const oldOwned = new Map();
+      for (const w of oldManifest?.writes ?? []) {
+        if (typeof w?.path === 'string') oldOwned.set(resolve(w.path), w.owned !== false);
+      }
       const newTargets = new Set(diskWrites.map((w) => resolve(w.target)));
       // §3.6 stale cleanup: paths the last-good manifest owns that the new
       // plan no longer covers (unbind / renamed asset → precise cleanup).
+      // owned:false file rows are HOST files — never file-deleted; their
+      // marker-section rows still get STRIPPED below (剥节保留其余内容).
       // hook-entry rows NEVER file-delete here — their host file survives and
       // the entry leaves by precise-match delete (below, step 1b).
-      const stale = (oldManifest?.writes ?? []).filter((w) => w?.owned !== false && w?.kind !== 'hook-entry'
-        && typeof w?.path === 'string' && !newTargets.has(resolve(w.path)));
+      const stale = (oldManifest?.writes ?? []).filter((w) => w?.kind !== 'hook-entry'
+        && typeof w?.path === 'string' && !newTargets.has(resolve(w.path))
+        && (w?.owned !== false || w?.kind === 'marker-section'));
       const newEntryTexts = new Set(entries.map((e) => stableStringify(e?.entry)));
       const staleEntries = (oldManifest?.entries ?? []).filter((e) => !newEntryTexts.has(stableStringify(e?.entry)));
 
@@ -487,7 +506,11 @@ export function createMaterializer({ ports, dataDir, log }) {
         writes: diskWrites.map((w) => ({
           path: w.target,
           action: 'write',
-          owned: w.owned !== false,
+          // 写入时真值（见 oldOwned 注）：provider 明示 owned:false 仍尊重；
+          // 其余以「写入时文件不存在 或 上一好清单已归我」判定。
+          owned: w.owned === false
+            ? false
+            : (snapshots.get(w.target) === null || oldOwned.get(resolve(w.target)) === true),
           kind: w.kind,
           ...(w.for !== undefined ? { for: w.for } : {}),
           ...(w.appliesTo !== undefined ? { appliesTo: w.appliesTo } : {}),
@@ -527,6 +550,12 @@ export function createMaterializer({ ports, dataDir, log }) {
       for (const w of [...(manifest.writes ?? [])].reverse()) {
         if (w.kind === 'hook-entry') continue; // entries loop above owns these (precise delete, never file-delete)
         if (w.kind === 'argv') continue;
+        // owned:false = 宿主文件（写入时已存在，owned 真值）——卸载不整删；
+        // marker-section 走下方剥节路径（owned 只决定剥空后是否删文件）。
+        if (w.owned === false && w.kind !== 'marker-section') {
+          warnings.push(`清单记为非 WAO 所建（写入时宿主文件已存在），未整删：${w.path}`);
+          continue;
+        }
         const existing = readText(w.path);
         if (existing == null) continue;
         if (w.kind === 'marker-section') {
@@ -584,13 +613,21 @@ export function createMaterializer({ ports, dataDir, log }) {
         }
         if (actual !== expected) drift.push({ path: w.target, expected: expected.slice(0, 200), actual: (actual ?? '<缺失>').slice(0, 200) });
       }
-      // stale manifest rows: paths we own on the manifest but no longer plan
+      // stale manifest rows: paths we own on the manifest but no longer plan.
+      // owned:false file rows are host files (not ours to flag); a marker-
+      // section row is an orphan only while OUR markers still sit in the file
+      // (a stripped host file legitimately remains — owned 真值).
       const manifest = readManifest(bot.id);
       if (manifest != null) {
         const planned = new Set((result.writes ?? []).map((w) => resolve(String(w?.target ?? ''))));
         for (const w of manifest.writes ?? []) {
-          if (w?.owned === false || typeof w?.path !== 'string') continue;
+          if (typeof w?.path !== 'string') continue;
+          if (w?.owned === false && w?.kind !== 'marker-section') continue;
           if (!planned.has(resolve(w.path)) && existsSync(w.path)) {
+            if (w?.kind === 'marker-section') {
+              const text = readText(w.path);
+              if (text == null || scanMarkers(text, bot.id).own.length === 0) continue;
+            }
             orphans.push({ path: w.path, detail: '清单记有但当前 plan 不再覆盖（应已清理的残留）' });
           }
         }
@@ -642,6 +679,13 @@ export function createMaterializer({ ports, dataDir, log }) {
         if (plan.length === 0) continue;
         try {
           const v = await this.verify(bot, plan);
+          if (v.error != null) {
+            // W3 T2 review Minor 5: a provider port missing at boot (plugin
+            // disabled) used to fall through SILENTLY here (drift+orphans both
+            // empty) — name the bot and the reason, never throw.
+            logger.warn?.(`materializer: bot ${bot.id} 启动回验不可用（provider 端口缺失或计划失败）：${v.error}`);
+            continue;
+          }
           if ((v.drift?.length ?? 0) > 0 || (v.orphans?.length ?? 0) > 0) {
             out.drift.push({ botId: bot.id, drift: v.drift ?? [], orphans: v.orphans ?? [] });
             logger.warn?.(`materializer: bot ${bot.id} 资产物化漂移（${v.drift.length} drift / ${v.orphans.length} orphan）——盘面与绑定不一致，走 wao doctor 或 POST /api/bots/${bot.id}/rematerialize-assets 修复（不自动改写）`);

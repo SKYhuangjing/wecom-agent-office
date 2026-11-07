@@ -258,7 +258,16 @@ export default {
       // rematerialize them ONCE (log says so); afterwards read-only 回验 —
       // drift is logged for doctor/rematerialize, never auto-rewritten.
       try {
-        await materializer.startupSweep(doc.bots, planFor);
+        const swept = await materializer.startupSweep(doc.bots, planFor);
+        // W3 T2 review Critical 3: attach ran BEFORE the sweep, so a migrated
+        // bot's live runner was minted from the BARE plan (missing manifest →
+        // targetsFor degrades). Re-mint every attached migrated bot so the
+        // file targets enrich the runner on the FIRST process cycle; offline
+        // bots re-runner at their own attach (refreshRunner no-ops there).
+        for (const botId of swept.migrated) {
+          const bot = doc.bots.find((b) => isBotRecord(b) && b.id === botId);
+          if (bot != null) refreshRunner(bot);
+        }
       } catch (err) {
         log.warn?.(`core-engine: asset startup sweep failed: ${err?.message ?? err}`);
       }

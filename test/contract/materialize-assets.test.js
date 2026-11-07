@@ -427,6 +427,127 @@ test('pi: skills/memory/mcp into the WAO-namespaced agentDir, x-wao-managed mark
   }
 });
 
+// ————————————————————————————————————————————————————————————————————————————
+// pi — default agentDir (no piAgentDir): the jail must allow the provider's
+// own default root (W3 T2 review Critical 1)
+// ————————————————————————————————————————————————————————————————————————————
+
+test('pi: bot WITHOUT piAgentDir materializes into the default ~/.pi/agent-wao-<botId> — jail allows the provider default root', async () => {
+  const booted = await bootProvider(join(REPO, 'plugins/provider-pi'));
+  let prevHome;
+  try {
+    const sc = scenario('pi-default');
+    // os.homedir() reads $HOME at call time on POSIX — point it at the
+    // scenario dir so the default root lands in the sandbox, never the real ~.
+    prevHome = process.env.HOME;
+    const fakeHome = join(sc, 'home');
+    mkdirSync(fakeHome, { recursive: true });
+    process.env.HOME = fakeHome;
+    mkdirSync(join(sc, 'cwd'), { recursive: true });
+    const mat = matOver(booted.impl, dataDirOf('pi-default', sc));
+    const bot = { id: 'pi-b3', provider: 'pi', providerConfig: { cwd: join(sc, 'cwd'), model: { model: 'm1' } } };
+
+    const plan = mkPlan([SKILL, MCP]);
+    await mat.materialize(bot, plan);
+    const agentDir = join(fakeHome, '.pi', 'agent-wao-pi-b3');
+    assert.ok(existsSync(join(agentDir, 'skills', 'wao-company', 'SKILL.md')), 'skill under the DEFAULT agent dir');
+    assert.ok(existsSync(join(agentDir, 'mcp.json')), 'mcp.json under the DEFAULT agent dir');
+    // read-only verify agrees (drift-free) on the same default-dir targets
+    const v = await mat.verify(bot, plan);
+    assert.deepEqual(v.drift, []);
+    assert.deepEqual(v.orphans, []);
+  } finally {
+    if (prevHome !== undefined) process.env.HOME = prevHome; else delete process.env.HOME;
+    await booted.stop();
+  }
+});
+
+// ————————————————————————————————————————————————————————————————————————————
+// codex — TOML newline escaping through the REAL materializer (Critical 2)
+// ————————————————————————————————————————————————————————————————————————————
+
+test('codex: env value with \\n/\\r/\\t materializes as escaped TOML — never a raw newline inside the quotes, byte-stable', async () => {
+  const booted = await bootProvider(join(REPO, 'plugins/provider-codex'));
+  try {
+    const sc = scenario('codex-nl');
+    const home = join(sc, 'codex-home');
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, 'config.toml'), 'model = "gpt-5"\n');
+    const mat = matOver(booted.impl, dataDirOf('codex-nl', sc));
+    const bot = { id: 'cx-nl', provider: 'codex', providerConfig: { cwd: join(sc, 'cwd'), codexHome: home } };
+    const MCP_NL = {
+      assetId: 'ast-c2', type: 'mcp', name: 'company-mcp-nl', mode: 'shared',
+      content: { servers: { multiline: { command: 'node', args: ['server.js'], env: { NOTE: '第一行\n第二行', TAB: 'a\tb', CR: 'x\ry' } } } },
+    };
+    await mat.materialize(bot, mkPlan([MCP_NL]));
+    const toml = readFileSync(join(home, 'config.toml'), 'utf8');
+    // the registration surface admits \n\r\t; the product must carry them as
+    // literal escape sequences — a raw newline would make the host config.toml
+    // unparseable TOML (silent poisoning, Critical 2)
+    const lines = toml.split('\n');
+    assert.ok(lines.includes('NOTE = "第一行\\n第二行"'), 'newline → literal \\n');
+    assert.ok(lines.includes('TAB = "a\\tb"'), 'tab → literal \\t');
+    assert.ok(lines.includes('CR = "x\\ry"'), 'CR → literal \\r');
+    assert.ok(lines.every((l) => !l.includes('\r')), 'no raw CR anywhere in the file');
+    const userLine = lines.find((l) => l.startsWith('model ='));
+    assert.equal(userLine, 'model = "gpt-5"', 'user row untouched');
+    // byte-stable: re-materialization is idempotent (§3.5)
+    const snap = snapshotDir(sc);
+    await mat.materialize(bot, mkPlan([MCP_NL]));
+    assert.deepEqual(snapshotDir(sc), snap, 'idempotent bytes with escaped values');
+  } finally {
+    await booted.stop();
+  }
+});
+
+// ————————————————————————————————————————————————————————————————————————————
+// claude — owned 真值 (W3 T2 review Minor 1): host file pre-dating our first
+// write records owned:false and survives unload by strip, never whole-delete
+// ————————————————————————————————————————————————————————————————————————————
+
+test('claude: user-created CLAUDE.md records owned:false and survives unload even when stripped empty; WAO-created products stay owned:true', async () => {
+  const booted = await bootProvider(join(REPO, 'plugins/provider-claude'));
+  try {
+    const sc = scenario('claude-owned');
+    const cfgDir = join(sc, 'claude-home');
+    mkdirSync(cfgDir, { recursive: true });
+    mkdirSync(join(sc, 'cwd'), { recursive: true });
+    // the toughest shape: a user-created EMPTY CLAUDE.md — after stripping our
+    // section the remainder is empty; owned:false must keep the file in place
+    writeFileSync(join(cfgDir, 'CLAUDE.md'), '');
+    const ownedDataDir = dataDirOf('claude-owned', sc);
+    const mat = matOver(booted.impl, ownedDataDir);
+    const bot = { id: 'cl-ow', provider: 'claude', providerConfig: { cwd: join(sc, 'cwd'), claudeConfigDir: cfgDir } };
+
+    // memory rides the CLAUDE.md marker section; mcp rides our owned file
+    await mat.materialize(bot, mkPlan([MEMORY, MCP]));
+    const manifest = JSON.parse(readFileSync(join(ownedDataDir, 'assets', 'cl-ow', 'manifest.json'), 'utf8'));
+    const ownedOf = (p) => manifest.writes.find((w) => w.path === p).owned;
+    assert.equal(ownedOf(join(cfgDir, 'CLAUDE.md')), false, 'host file existed at write time → owned:false');
+    const mcpFile = join(ownedDataDir, 'assets', 'cl-ow', 'claude-mcp.json');
+    assert.equal(ownedOf(mcpFile), true, 'absent at write time (our product) → owned:true');
+
+    // unload: our section stripped, the user-created file SURVIVES (empty)
+    await mat.materialize(bot, []);
+    assert.ok(existsSync(join(cfgDir, 'CLAUDE.md')), 'user-created CLAUDE.md survives the strip-to-empty unload');
+    assert.equal(readFileSync(join(cfgDir, 'CLAUDE.md'), 'utf8'), '', 'back to the user\'s original bytes');
+    assert.ok(!existsSync(mcpFile), 'our own product still goes away');
+
+    // bot-DELETE unload path (removeAssets): same rule — host file spared
+    await mat.materialize(bot, mkPlan([MEMORY]));
+    const r = await mat.removeAssets(bot);
+    assert.ok(existsSync(join(cfgDir, 'CLAUDE.md')), 'user-created CLAUDE.md survives removeAssets too');
+    assert.equal(readFileSync(join(cfgDir, 'CLAUDE.md'), 'utf8'), '', 'stripped back to the user\'s bytes');
+    // and the read-only verify does not flag the spared host file as orphan
+    await mat.materialize(bot, mkPlan([MEMORY])); // fresh manifest (removeAssets consumed it)
+    await mat.materialize(bot, []);
+    const v = await mat.verify(bot, []);
+    assert.deepEqual(v.orphans, [], 'stripped host file with our markers gone is not a false orphan');
+  } finally {
+    await booted.stop();
+  }
+});
+
 // data dir per scenario (manifests + claude-mcp.json live in the data domain)
 function dataDirOf(name, sc) {
   const d = join(sc, `data-${name}`);

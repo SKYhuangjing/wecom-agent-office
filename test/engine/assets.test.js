@@ -91,6 +91,35 @@ test('validateAsset: control characters rejected inside content bodies of every 
   }
 });
 
+// W3 T2 review: a wao marker-line pattern inside asset text would land
+// verbatim in a materialized product and self-manufacture marker drift (§3.4
+// refuses a duplicated own-marker pair) — refused at the registry door, 400
+// copy naming the field.
+test('validateAsset: wao marker-line pattern refused in every text surface, field named; harmless mentions pass', () => {
+  const markerShapes = [
+    '# wao:assets:begin:v1:bot=cl-b1',
+    '# wao:assets:end:v1:bot=x',
+    '<!-- wao:assets:begin:v1:bot=cl-b1 -->',
+    '# wao:assets:begin:v2:bot=x', // forward version refused by the same rule
+  ];
+  const cases = [
+    ['description', (v) => ({ type: 'prompt', name: 'p1', description: v, content: { text: 'x' } })],
+    ['content.body', (v) => ({ type: 'skill', name: 's1', content: { name: 's1', body: v } })],
+    ['content.description', (v) => ({ type: 'skill', name: 's1', content: { name: 's1', description: v, body: 'b' } })],
+    ['content.notes[0]', (v) => ({ type: 'memory', name: 'm1', content: { notes: [v] } })],
+    ['content.text', (v) => ({ type: 'prompt', name: 'p1', content: { text: v } })],
+    ['content.options.extraHints', (v) => ({ type: 'tool', name: 't1', content: { kind: 'ripgrep', options: { extraHints: v } } })],
+  ];
+  for (const [field, mk] of cases) {
+    for (const bad of markerShapes) {
+      const errors = validateAsset(mk(`说明\n${bad}\n结尾`));
+      assert.ok(errors.some((e) => e.includes(field) && /标记行/.test(e)), `${field} refuses ${bad}: ${errors.join(';')}`);
+    }
+    // harmless mentions of the namespace without a version segment pass
+    assert.deepEqual(validateAsset(mk('讲一下 wao:assets 机制即可')), [], `${field} allows non-marker mentions`);
+  }
+});
+
 test('validateAsset: prototype-pollution keys rejected at any depth of content', () => {
   const evil = JSON.parse('{"text":"x","__proto__":{"polluted":1}}');
   const errors = validateAsset({ type: 'prompt', name: 'p1', content: evil });

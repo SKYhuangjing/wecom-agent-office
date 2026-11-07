@@ -17,13 +17,37 @@ const ENTRY = (over = {}) => ({ assetId: 'ast-x1', type: 'skill', name: 'wao-com
 test('skillMarkdown + RIPGREP_GUIDANCE are byte-identical across the four providers (复制即契约)', () => {
   const docs = [dshSkill(ENTRY()), claudeSkill(ENTRY()), codexSkill(ENTRY()), piSkill(ENTRY())];
   for (const d of docs.slice(1)) assert.equal(d, docs[0]);
-  assert.match(docs[0], /^---\nname: wao-company\ndescription: 描述\nx-wao-asset: ast-x1\n---\n\n# 正文\n$/);
+  assert.match(docs[0], /^---\nname: wao-company\ndescription: "描述"\nx-wao-asset: ast-x1\n---\n\n# 正文\n$/);
   const guides = [dshRg, claudeRg, codexRg, piRg];
   for (const g of guides.slice(1)) assert.equal(g, guides[0]);
   assert.match(guides[0], /rg -t js/);
-  // description with newlines flattens (frontmatter-safe)
-  const multi = dshSkill(ENTRY({ content: { name: 's', description: '行1\n行2', body: 'b' } }));
-  assert.match(multi, /^description: 行1 行2$/m);
+  // W3 T2 review: description lands as a JSON string (valid YAML double-quoted
+  // scalar) — newlines/tabs/colons/quotes stay frontmatter-safe, one line.
+  const risky = ENTRY({ content: { name: 's', description: '行1\n行2\t含:冒号 与 "引号"', body: 'b' } });
+  const riskyDocs = [dshSkill(risky), claudeSkill(risky), codexSkill(risky), piSkill(risky)];
+  for (const d of riskyDocs.slice(1)) assert.equal(d, riskyDocs[0], 'four providers stay byte-identical');
+  assert.match(riskyDocs[0], /^description: "行1\\n行2\\t含:冒号 与 \\"引号\\""$/m, 'JSON-escaped, no raw newline');
+  const lines = riskyDocs[0].split('\n');
+  const descLine = lines.find((l) => l.startsWith('description:'));
+  assert.equal((descLine.match(/行2/g) ?? []).length, 1, 'the description stays ONE physical line');
+});
+
+test('codex mcpTomlBlock: \\n \\r \\t escape to literal backslash sequences (raw newline = illegal TOML), round-trip decodes byte-identically', () => {
+  const block = mcpTomlBlock('esc', { command: 'node', env: { NOTE: '行1\n行2', TAB: 'a\tb', CR: 'x\ry', BS: 'a\\b', Q: 'c"d' } });
+  const lines = block.split('\n');
+  assert.ok(lines.includes('NOTE = "行1\\n行2"'), 'newline → literal \\n sequence');
+  assert.ok(lines.includes('TAB = "a\\tb"'), 'tab → literal \\t');
+  assert.ok(lines.includes('CR = "x\\ry"'), 'CR → literal \\r');
+  assert.ok(lines.includes('BS = "a\\\\b"'), 'backslash stays escaped');
+  assert.ok(lines.includes('Q = "c\\"d"'), 'quote stays escaped');
+  assert.ok(lines.every((l) => !l.includes('\r') && !/\t/.test(l.replace(/\\t/g, ''))), 'no raw CR/tab anywhere');
+  // single-pass unescape round-trip: the quoted value decodes back to the original
+  const unescapeToml = (s) => s.replace(/\\(.)/g, (_, c) => ({ n: '\n', r: '\r', t: '\t', '"': '"', '\\': '\\' }[c] ?? c));
+  for (const [k, v] of Object.entries({ NOTE: '行1\n行2', TAB: 'a\tb', CR: 'x\ry', BS: 'a\\b', Q: 'c"d' })) {
+    const m = new RegExp(`^${k} = "(.*)"$`, 'm').exec(block);
+    assert.ok(m, k);
+    assert.equal(unescapeToml(m[1]), v, `${k} round-trips byte-identically`);
+  }
 });
 
 test('dsh combinePersonaPrefix: empty plan = operator prompt alone (pre-asset bytes); assets in binding order; mcp/rtk sections never emitted', () => {

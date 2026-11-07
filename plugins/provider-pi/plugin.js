@@ -29,7 +29,7 @@ export function skillMarkdown(entry) {
   return [
     '---',
     `name: ${name}`,
-    ...(c.description !== undefined && c.description !== '' ? [`description: ${String(c.description).replace(/\n/g, ' ')}`] : []),
+    ...(c.description !== undefined && c.description !== '' ? [`description: ${JSON.stringify(String(c.description))}`] : []),
     `x-wao-asset: ${entry.assetId}`,
     '---',
     '',

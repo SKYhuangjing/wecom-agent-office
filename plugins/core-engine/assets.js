@@ -89,6 +89,15 @@ const checkText = (value, where, { max, required = false, label = '' } = {}, err
     errors.push(`${where} 含控制字符（仅允许 \\n \\r \\t）`);
     return errors;
   }
+  // W3 T2 review: a wao marker-line pattern inside a TEXT payload lands
+  // verbatim in the materialized product and self-manufactures marker drift
+  // (§3.4 refuses a duplicated own-marker pair / unknown version) — refuse it
+  // at the registry door. :v\d+ (not just :v1) so a forward-version marker
+  // line is refused by the same rule.
+  if (/wao:assets:[^\n]*:v\d+/.test(value)) {
+    errors.push(`${where} 含 wao 资产标记行模式（wao:assets:…:vN）——会与物化标记节自造漂移，请移除`);
+    return errors;
+  }
   if (max !== undefined && value.length > max) {
     errors.push(`${where} 太长（${label ? `${label}≤` : '≤'}${max} 字符）`);
   }

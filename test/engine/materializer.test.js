@@ -343,3 +343,73 @@ test('startupSweep: pre-T2 bindings without manifest migrate once; existing mani
   assert.equal(out2.drift[0].botId, 'w1');
   assert.equal(readFileSync(join(cwd, 'skills', 'wao-company', 'SKILL.md'), 'utf8'), 'tampered\n', '启动不自动改写（盘面即真相的例外=迁移扫尾）');
 });
+
+// W3 T2 review Minor 5: a bot whose provider port is gone (plugin disabled at
+// boot) has a manifest → sweep takes the VERIFY path → plan failure must WARN
+// naming the bot, not fall through silently (drift+orphans both empty).
+test('startupSweep: verify-path provider failure warns naming botId+reason — never silent, never throws', async () => {
+  const dataDir = botDir('d-sweep-verr');
+  const cwd = botDir('b-sweep-verr-cwd');
+  const warns = [];
+  const recLog = { info() {}, warn: (...a) => warns.push(a.join(' ')), error() {} };
+  const mat = createMaterializer({ ports: portsOf(stubPort('p1')), dataDir, log: recLog });
+  const bot = { id: 'sw2', provider: 'stub', providerConfig: { cwd } };
+  await mat.materialize(bot, [SKILL_ENTRY]); // manifest exists → next boot verifies
+  const matNoPort = createMaterializer({ ports: { getProvider: () => undefined }, dataDir, log: recLog });
+  const out = await matNoPort.startupSweep([bot], () => [SKILL_ENTRY]);
+  assert.deepEqual(out.migrated, []);
+  assert.deepEqual(out.drift, []);
+  assert.ok(
+    warns.some((w) => w.includes('sw2') && w.includes('暂不支持资产装备')),
+    `warn names botId + reason: ${JSON.stringify(warns)}`,
+  );
+});
+
+// W3 T2 review Minor 1 (owned 真值): owned records "file ABSENT at write time"
+// (or already ours per the last-good manifest) — a host file that pre-dates our
+// first write is owned:false and unloads by strip, never whole-file delete.
+test('owned truth: pre-existing host file → owned:false, survives strip-to-empty unload; our own product stays owned across runs', async () => {
+  const dataDir = botDir('d-owned');
+  const cwd = botDir('b-owned-cwd');
+  writeFileSync(join(cwd, 'NOTES.md'), ''); // user-created (empty) host file
+  const mat = mkMat(stubPort('p1'), dataDir);
+  const bot = { id: 'ow1', provider: 'stub', providerConfig: { cwd } };
+  const manifestOf = () => JSON.parse(readFileSync(join(dataDir, 'assets', 'ow1', 'manifest.json'), 'utf8'));
+  const mcpFile = join(dataDir, 'assets', 'ow1', 'mcp.json');
+
+  await mat.materialize(bot, [MEM_ENTRY, MCP_ENTRY]);
+  let manifest = manifestOf();
+  const ownedOf = (p) => manifest.writes.find((w) => w.path === p).owned;
+  assert.equal(ownedOf(join(cwd, 'NOTES.md')), false, 'host file existed at write time → owned:false');
+  assert.equal(ownedOf(mcpFile), true, 'absent at write time (our product) → owned:true');
+
+  // re-materialize: our product now EXISTS, but the last-good manifest owns it
+  await mat.materialize(bot, [MEM_ENTRY, MCP_ENTRY]);
+  manifest = manifestOf();
+  assert.equal(manifest.writes.find((w) => w.path === mcpFile).owned, true, 'own product stays owned across runs');
+
+  // unload: the host file's OUR section is stripped, the file itself SURVIVES
+  await mat.materialize(bot, []);
+  assert.ok(existsSync(join(cwd, 'NOTES.md')), 'user-created host file survives the strip-to-empty unload');
+  assert.equal(readFileSync(join(cwd, 'NOTES.md'), 'utf8'), '', 'back to the user\'s original bytes');
+  assert.ok(!existsSync(mcpFile), 'our own product still goes away');
+  assert.ok(!readFileSync(join(cwd, 'NOTES.md'), 'utf8').includes('wao:assets'), 'our markers are gone from the spared file');
+
+  // removeAssets guard: an owned:false FILE row (a host file a provider
+  // overwrote) is never whole-deleted — a named warning instead.
+  const cwdH = botDir('b-owned-host-cwd');
+  const hostFile = join(cwdH, 'host.json');
+  writeFileSync(hostFile, '{"host":true}');
+  const hostMat = mkMat({
+    async materializeAssets() {
+      return { writes: [{ kind: 'file-create', target: hostFile, content: '{"ours":1}' }], notes: [], entries: [] };
+    },
+  }, dataDir);
+  const hostBot = { id: 'ow2', provider: 'stub', providerConfig: { cwd: cwdH } };
+  await hostMat.materialize(hostBot, [MCP_ENTRY]);
+  const hm = JSON.parse(readFileSync(join(dataDir, 'assets', 'ow2', 'manifest.json'), 'utf8'));
+  assert.equal(hm.writes.find((w) => w.path === hostFile).owned, false, 'pre-existing target → owned:false');
+  const rr = await hostMat.removeAssets(hostBot);
+  assert.ok(existsSync(hostFile), 'host target spared by removeAssets');
+  assert.ok(rr.warnings.some((w) => /未整删/.test(w) && w.includes(hostFile)), `warning names the spared file: ${JSON.stringify(rr.warnings)}`);
+});
