@@ -2,6 +2,14 @@
 
 本插件版本史（Keep a Changelog 1.1 格式；版本号与 `manifest.version` 同步）。
 
+## [Unreleased]
+
+### Added
+
+- 资产面（W3 T2，§3.3 pi 列）：`materializeAssets` 纯计划钩子——skill→`<agentDir>/skills/` + runner
+  `--skill`；memory→`wao-memory.md` + runner 读文件拼文本传参（设计 V3 回退形态，不依赖文件旗标）；
+  prompt/ripgrep→`--append-system-prompt`（F19 可重复）；mcp→`<agentDir>/mcp.json` 整文件重写 0600，
+  `x-wao-managed` 注记（V9 实证 pi 容忍未知顶层键且自身重写保留），自定义 piAgentDir 外来文件拒写。
 ## [0.1.0] - 2026-11-07
 
 初始发布：第四家 provider（pi coding agent，`@earendil-works/pi-coding-agent` 1.5.0）。

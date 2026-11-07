@@ -608,10 +608,10 @@ export async function bindAsset(state, botId, { assetId, mode } = {}) {
   const supportErrors = state.materializer.checkBind(bot, asset, projected);
   if (supportErrors.length > 0) throw fail(400, supportErrors.join('; '), supportErrors);
   const { plan } = buildPlan(state.assetsDoc.assets, { assets: projected });
-  for (const foreign of state.materializer.detectForeignTargets(bot, plan)) {
+  for (const foreign of await state.materializer.detectForeignTargets(bot, plan)) {
     throw fail(400, `目标已有非 WAO 技能：${foreign.path}；请改资产名或先移除该技能`);
   }
-  for (const conflict of state.materializer.detectFileConflicts(bot, plan, state.doc.bots)) {
+  for (const conflict of await state.materializer.detectFileConflicts(bot, plan, state.doc.bots)) {
     throw fail(400, `与 bot ${conflict.botId} 的资产目标文件冲突：${conflict.path}；同目录 bot 请改用专属 config 目录或先解绑`);
   }
   // Commit: binding into the bot record (bots.json is the binding store, §2.2).

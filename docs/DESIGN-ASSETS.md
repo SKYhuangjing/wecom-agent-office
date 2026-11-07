@@ -30,6 +30,8 @@
 
 **rev.2 实现勘误（2026-11-07，W3 T1 评审落地）**：§8.1 绑定面按 T1 实现形状改专用端点 `POST/DELETE /api/bots/:id/assets`（bot POST/PATCH 直写 `assets` 拒绝），行序调和为「校验→绑定落库→物化（失败不回滚）→仅成功轻量重 attach」；五类 content 未知键拒绝（closed schema，mcp server 亦按形态闭键）；agents 名册面回显 `assetWarnings`（memory 共享 cwd 警示，判定源同 §7.3 memoryWarning）。
 
+**T2 实现勘误（2026-11-07，W3 T2 落地）**：§3.1 端口形状按实现细化为**纯计划者**——`materializeAssets(bot, plan, {log, dryRun, assetsDir})` 返回写计划（`file-create | marker-section | hook-entry | argv` 四型，含 `for`/`appliesTo` 归属标记），**不落盘**；一切盘面纪律（§8.3 越狱防护、§3.4 标记节手术、§3.7 原子/回滚、§3.8 manifest、§3.6 卸载）收敛到 core-engine 的 materializer.js 单点，provider 只做格式翻译（dsh patch.yml 例外说明：组合器仍走 profiles.js 的纯构建 `buildBotPatch`，profile 引导留在 materializeConfig）。§3.1 的 `removeAssets` 端口钩子随之上收到 core（manifest 驱动精确清理）；`createRunner` 的 `assets` 计划由 core 以 manifest 富集文件目标（`--mcp-config`/`--skill`/记忆文件路径）后传入。**V 项实证结论（§9 记录）已按冻结点落地**：claude mcp `${VAR}` 引用态经 V8 实证 spawn 期展开（缺变量=字面量透传）→ 引用串原样落 claude-mcp.json；codex 引用态=env_vars 转发（V8 实证从 codex 自身环境转发）；pi `x-wao-managed` 注记经 V9 实证可落文件（pi 容忍且自身重写保留，manifest 回退判据不需要）；claude `--mcp-config` 经 V7 实证覆盖用户 scope 同名（旗标即权威面），且该旗标为 variadic——runner argv 中置末位。
+
 ### 目标（W3）
 
 1. **五类资产**：`skill | memory | mcp | prompt | tool`，统一注册表 `data/assets.json`，统一绑定模型（bot × 资产 × 共享/独享）。
@@ -514,6 +516,15 @@ doctor 漂移比对（§8.1）、pi 外来文件判据回退（V9 不容忍时�
 ---
 
 ## 9. 验证项清单（T2/T3 首步，全部实证后才能标注「已验证」）
+
+> **T2 实证记录（2026-11-07，W3 T2 首步，全部真跑，探针目录 /tmp/wao-v{1,2,7,8,9}-\*）**：
+> - **V1 ✅ 已验证**：`CLAUDE_CONFIG_DIR` 重定向后 `<dir>/skills/<name>/SKILL.md` **被技能发现装载**、`<dir>/CLAUDE.md` **被读入指令**（真 claude -p 两问两答「有；是」）。附带发现：重定向后认证随 settings.json 走——生产 provider-claude 经 providerConfig.env 注入凭证不受影响；裸重定向需自带 settings.json。
+> - **V2 ✅ 已验证**：CODEX_HOME 重定向后 `<CODEX_HOME>/skills/<name>/SKILL.md` 仍被发现（F1↔F3 缝隙闭合），**且 `<CODEX_HOME>/AGENTS.md` 被读**（F10 重定向生效；真 codex exec 三问答「有；有」「是」）。
+> - **V7 ✅ 已验证**：`--mcp-config` 传入的 server **覆盖**用户 scope 同名 server——双向实证（用户侧好+旗标坏→failed；用户侧坏+旗标好→connected；无旗标→用户侧生效）。WAO `wao-` 前缀 + `--mcp-config` 即权威面。
+> - **V8 ✅ 已验证**：claude 在**spawn server 时**对 env 值与 **headers 值**展开 `${VAR}`（展开自 claude 进程环境）；**缺失变量=字面量原样透传**（不报错/不清空）；父环境整体透传给 stdio server。codex `env` 表值原样透传给子进程；`env_vars=["X"]` 从 codex 自身进程环境转发 X（父缺 X→子进程无此变量，不报错）。
+> - **V9 ✅ 已验证**：pi 容忍 mcp.json 未知顶层键（`pi mcp list` 正常列出 server），**且 pi 自身重写（`pi mcp add`）保留未知键**——`x-wao-managed` 注记既作外来判据又抗 pi 改写，manifest 回退判据不需要。
+> - V3（pi --append-system-prompt 文件形态）不在 T2 清单：runner 采用设计回退「WAO 读文件拼文本传参」，不依赖文件形态。
+> - V4/V5/V6 留 T3（rtk/项目级 config.toml/目录外 mcp-config）。
 
 | # | 待验证 | 方法 | 回退 |
 |---|---|---|---|

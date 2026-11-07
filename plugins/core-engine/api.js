@@ -193,12 +193,16 @@ const validateOrThrow = (bot, ports) => {
 };
 
 // materialize through the provider port if it implements the hook; a throw
-// becomes a 400 with the provider's own message.
+// becomes a 400 with the provider's own message. The §3.1-rev2 extension:
+// providers with asset faces receive the effective plan (`assets`) — dsh's
+// personaPrefix combiner rebuilds the FULL prefix on providerConfig changes
+// (契约用例「dsh 改模型→资产节仍在」), so a config change never drops assets.
 async function materialize(state, bot) {
   const port = state.ports?.getProvider?.(bot.provider);
   if (port != null && typeof port.materializeConfig === 'function') {
+    const { plan } = buildPlan(state.assetsDoc.assets, bot);
     try {
-      await port.materializeConfig(bot, { log: state.log });
+      await port.materializeConfig(bot, { log: state.log, assets: plan });
     } catch (err) {
       throw httpError(400, `materializeConfig failed: ${err?.message ?? err}`);
     }
@@ -382,6 +386,17 @@ async function patchBotOp(state, id, patchBody) {
   }
   Object.assign(bot, patchBody, { id: bot.id });
   saveBots(state.botsFile, state.doc);
+  // Asset products ride the provider dirs (cwd/claudeConfigDir/codexHome/
+  // piAgentDir) — a providerConfig move re-materializes them to the new
+  // roots (§3.2 asset path: per-bot isolation; a failure logs and stays
+  // retryable via rematerialize, it never rolls the bot PATCH back).
+  if ((patchBody.provider !== undefined || patchBody.providerConfig !== undefined)
+    && Array.isArray(bot.assets) && bot.assets.length > 0) {
+    const receipt = await rematerializeBots(state, [bot]);
+    for (const f of receipt.failed) {
+      state.log?.warn?.(`core-engine: asset rematerialize after PATCH failed for ${f.botId}: ${f.error}（POST /api/bots/${f.botId}/rematerialize-assets 重试）`);
+    }
+  }
   if (bot.enabled !== false) { // any accepted change reconnects the runtime
     await drainBotOf(state, bot.id); // §8: the bot's serial chain settles (final frames out) before the adapter swap
     state.detach(bot.id, 're-attach after update');

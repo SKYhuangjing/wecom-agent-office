@@ -19,7 +19,8 @@ import { Timeline } from './timeline.js';
 import { createProgressor } from './progressor.js';
 import { maskOutbound } from './middleware.js';
 import { loadBots, revalidateAll, validateBot } from './bots.js';
-import { loadAssets, noopMaterializer } from './assets.js';
+import { loadAssets, buildPlan } from './assets.js';
+import { createMaterializer } from './materializer.js';
 import { companyOps, createApi } from './api.js';
 
 const isBotRecord = (bot) => bot != null && typeof bot === 'object' && typeof bot.id === 'string' && bot.id !== '';
@@ -65,11 +66,12 @@ export default {
     let doc = { bots: [] };
     let assetsDoc = { assets: [] }; // data/assets.json registry (DESIGN-ASSETS §2.1)
 
-    // 资产物化管线 (W3 T1): injectable seam — every bind/unbind/patch/delete
-    // fans materialization through here. T1 ships the noop (skipped receipts);
-    // T2 swaps in the real provider-port pipeline (materializeAssets hooks,
-    // manifests) without touching the API contracts above the seam.
-    const materializer = noopMaterializer();
+    // 资产物化管线 (DESIGN-ASSETS §3, W3 T2): the REAL materializer —
+    // providers plan (materializeAssets), THIS executor owns every disk
+    // mutation (jail guard/atomicity/manifest/精确卸载/回验). All bind/unbind/
+    // patch/delete/rematerialize paths fan out through the same seam T1
+    // established; the noop survives only in unit tests as the seam contract.
+    const materializer = createMaterializer({ ports, dataDir, log });
 
     const ledgerFor = (botId) => {
       let pair = ledgers.get(botId);
@@ -132,10 +134,21 @@ export default {
       onChannelEvent: (ev) => engine.onChannelEvent(botRecord, ev),
     });
 
+    // The effective asset plan for one bot (§2.2/§2.3): bindings in 生效顺序,
+    // shadowed shared entries and dangling bindings dropped.
+    const planFor = (bot) => buildPlan(assetsDoc.assets, bot).plan;
+
     const makeRunner = (bot) => {
       const port = ports?.getProvider?.(bot.provider);
       if (port == null) throw new Error(`provider ${bot.provider} 不可用`);
-      const runner = port.createRunner({ bot, providerConfig: bot.providerConfig, log });
+      // §3.1 createRunner({..., assets}): the effective plan enriched with
+      // file targets from the last-good manifest (--mcp-config/--skill/
+      // --append-system-prompt values). SYNC by design — attach/refresh stay
+      // sync; entries are COPIES (可变引用纪律 §3.1), a missing manifest
+      // degrades to the bare plan (the bind receipt already said failed).
+      const barePlan = planFor(bot);
+      const assets = barePlan.length > 0 ? materializer.targetsFor(bot, barePlan) : barePlan;
+      const runner = port.createRunner({ bot, providerConfig: bot.providerConfig, assets, log });
       // engine.js resolves describeError via the RUNNER first (defaultRunTurn:
       // `runner.describeError ?? bot.describeError ?? …`) — bind the provider
       // port's copy onto the runner we hand over (T13 review pin).
@@ -222,7 +235,7 @@ export default {
     });
 
     // Boot + reload phase 4 (§1/§2.5): every other plugin's ports are live.
-    ctx.afterAllActivated(() => {
+    ctx.afterAllActivated(async () => {
       doc = loadBots(botsFile);
       assetsDoc = loadAssets(assetsFile);
       const { bad } = revalidateAll(doc.bots, ports);
@@ -240,6 +253,14 @@ export default {
         if (!isBotRecord(bot) || bot.enabled === false) continue;
         const r = attach(bot);
         if (!r.ok) log.warn?.(`core-engine: bot ${bot.id} offline: ${r.reason}`);
+      }
+      // §3.2 服务启动 row + T1 扫尾: pre-T2 bindings carry no manifest —
+      // rematerialize them ONCE (log says so); afterwards read-only 回验 —
+      // drift is logged for doctor/rematerialize, never auto-rewritten.
+      try {
+        await materializer.startupSweep(doc.bots, planFor);
+      } catch (err) {
+        log.warn?.(`core-engine: asset startup sweep failed: ${err?.message ?? err}`);
       }
     });
 

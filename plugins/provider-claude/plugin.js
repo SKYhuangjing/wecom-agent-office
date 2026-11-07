@@ -6,10 +6,93 @@
 // This file is the port registration: manifest, configSchema (the bots.json
 // providerConfig block), semantic validate, materializeConfig hook (claude
 // needs no side files → null) and the code→中文 describeError copy.
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { createRunner } from './runner.js';
 
 const PORT_ID = 'claude';
 const PERMISSION_MODES = ['default', 'acceptEdits', 'bypassPermissions', 'plan'];
+
+// —— asset faces (DESIGN-ASSETS §3.3 claude column, W3 T2) ——————————————————
+// V1 (§9, verified 2026-11-07): CLAUDE_CONFIG_DIR redirect carries skills/
+// AND CLAUDE.md — the dedicated-dir target face is real; cwd/.claude/skills +
+// cwd/CLAUDE.md stay the documented fallback (F14).
+
+export function skillMarkdown(entry) {
+  const c = entry.content ?? {};
+  const name = c.name ?? entry.name;
+  return [
+    '---',
+    `name: ${name}`,
+    ...(c.description !== undefined && c.description !== '' ? [`description: ${String(c.description).replace(/\n/g, ' ')}`] : []),
+    `x-wao-asset: ${entry.assetId}`,
+    '---',
+    '',
+    String(c.body ?? ''),
+    '',
+  ].join('\n');
+}
+
+export const RIPGREP_GUIDANCE = [
+  '代码检索一律使用 rg（ripgrep）而非 grep/find。示例：rg -t js \'pattern\'、rg -n "text" src/。',
+  'rg 未安装时先执行：brew install ripgrep。',
+].join('\n');
+
+export const ripgrepText = (entry) => [
+  RIPGREP_GUIDANCE,
+  ...(entry?.content?.options?.extraHints ? [String(entry.content.options.extraHints)] : []),
+].join('\n');
+
+// Memory section body (§4.3): 节首标注来源资产名, notes in binding order.
+export const memoryMarkdown = (entry) => [
+  `## WAO 跨会话记忆：${entry.name}`,
+  '',
+  ...((entry.content?.notes ?? []).flatMap((n, i) => [...(i > 0 ? [''] : []), n])),
+].join('\n');
+
+// mcp translation (§4.2): claude face keeps server shapes as-is (keys land
+// sorted via stableStringify downstream of core-engine? No — THIS file owns
+// the deterministic bytes), server renamed wao-<serverId>. ${VAR} references
+// in env/headers values pass through VERBATIM — V8 (§9, verified): claude
+// expands ${VAR} at server spawn from its own env; a missing var stays a
+// literal ${VAR} (no error, no empty). Plaintext secrets land only in the
+// WAO-owned single file → 0600 (§4.2 ③).
+export function claudeMcpDocument(plan) {
+  const servers = {};
+  for (const entry of plan) {
+    if (entry.type !== 'mcp') continue;
+    const contentServers = entry.content?.servers ?? {};
+    for (const serverId of Object.keys(contentServers).sort()) {
+      const s = contentServers[serverId];
+      const out = {};
+      for (const key of ['command', 'args', 'env', 'type', 'url', 'headers']) {
+        if (s[key] === undefined) continue;
+        out[key] = key === 'env' || key === 'headers'
+          ? Object.fromEntries(Object.keys(s[key]).sort().map((k) => [k, s[key][k]]))
+          : s[key];
+      }
+      servers[`wao-${serverId}`] = out;
+    }
+  }
+  // stable key order at the top level too (determinism, §3.5)
+  return { mcpServers: Object.fromEntries(Object.keys(servers).sort().map((k) => [k, servers[k]])) };
+}
+
+// The stable-JSON serializer providers share with core-engine's expectations:
+// sorted keys, no whitespace variance — idempotence anchor (§3.5).
+export function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${stableJson(value[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+const hasBin = (name) => {
+  try {
+    return spawnSync(name, ['--version'], { timeout: 3000 }).error == null;
+  } catch { return false; }
+};
 
 export default {
   manifest: {
@@ -83,13 +166,82 @@ export default {
 
       // claude needs no dsh-style config file materialization: every knob is
       // a CLI flag or env var assembled per run. Returning null = "nothing
-      // to materialize" (PLUGIN-DEV).
+      // to materialize" (PLUGIN-DEV). (Asset products have their own hook
+      // below — materializeConfig stays the providerConfig-only face.)
       materializeConfig() {
         return null;
       },
 
-      createRunner({ bot, providerConfig, log }) {
-        return createRunner({ bot, providerConfig, log });
+      // 资产物化 (§3.3 claude column): PURE PLANNER — returns the write plan;
+      // core-engine's materializer owns disk mutations (jail guard/atomicity/
+      // manifest). Faces: skills → <configDir>/skills or <cwd>/.claude/skills
+      // (V1); memory → CLAUDE.md marker section; mcp → ONE WAO-owned file in
+      // the data domain + runner --mcp-config (V7 verified: the flag OVERRIDES
+      // same-named user-scope servers — wao- 前缀 + 旗标即权威面); prompt/
+      // ripgrep → runner --append-system-prompt (F11, ephemeral per turn).
+      async materializeAssets(bot, plan, { log, assetsDir } = {}) {
+        if (typeof bot?.id !== 'string' || bot.id === '') throw new Error('materializeAssets: bot.id is required');
+        const pc = bot.providerConfig ?? {};
+        if (typeof pc.cwd !== 'string' || pc.cwd === '') throw new Error(`materializeAssets: bot ${bot.id} has no providerConfig.cwd`);
+        const dir = typeof pc.claudeConfigDir === 'string' && pc.claudeConfigDir !== '' ? pc.claudeConfigDir : pc.cwd;
+        const redirected = dir === pc.claudeConfigDir;
+        const skillsRoot = redirected ? join(dir, 'skills') : join(dir, '.claude', 'skills');
+        const claudeMd = join(dir, 'CLAUDE.md');
+        const writes = [];
+        const notes = [];
+        let memorySection = [];
+        for (const entry of plan ?? []) {
+          switch (entry.type) {
+            case 'skill': {
+              const name = entry.content?.name ?? entry.name;
+              writes.push({ kind: 'file-create', target: join(skillsRoot, name, 'SKILL.md'), content: skillMarkdown(entry), for: entry.assetId });
+              notes.push({ assetId: entry.assetId, detail: `技能 ${name} → ${redirected ? '$CLAUDE_CONFIG_DIR/skills' : '<cwd>/.claude/skills'}/${name}/SKILL.md（V1 已验证装载）` });
+              break;
+            }
+            case 'memory':
+              memorySection.push(memoryMarkdown(entry));
+              break;
+            case 'prompt':
+              writes.push({ kind: 'argv', flags: ['--append-system-prompt', String(entry.content?.text ?? '')], for: entry.assetId });
+              break;
+            case 'mcp':
+              break; // aggregated below into the single owned file
+            case 'tool':
+              if (entry.content?.kind === 'ripgrep') {
+                writes.push({ kind: 'argv', flags: ['--append-system-prompt', ripgrepText(entry)], for: entry.assetId });
+              } else if (entry.content?.kind === 'rtk') {
+                // §7.1 state machine: CLI missing = unavailable — bind stays,
+                // note tells the operator; the PreToolUse hook-entry write is
+                // T3's (F25 本机无 rtk，V5 未实证 hook 形状——不写未经实证的
+                // hook 命令进 bot 域 settings.json). rtk without claudeConfigDir
+                // never reaches here (§2.3/§7.1 hard line refuses at bind).
+                notes.push(hasBin('rtk')
+                  ? { assetId: entry.assetId, detail: 'rtk 已安装但 hook 形状待 T3 经 rtk init --dry-run 实证——本轮未写 hook（重物化不会装备）' }
+                  : { assetId: entry.assetId, detail: 'rtk 未安装（unavailable）：brew install rtk 后经 rematerialize-assets 装备' });
+              }
+              break;
+            default:
+              break;
+          }
+        }
+        if (memorySection.length > 0) {
+          writes.push({ kind: 'marker-section', target: claudeMd, format: 'markdown', content: memorySection.join('\n\n') });
+          notes.push({ detail: `记忆 → ${claudeMd} 标记节（V1 已验证 CLAUDE_CONFIG_DIR 重定向装载）` });
+        }
+        const mcpEntries = (plan ?? []).filter((e) => e.type === 'mcp');
+        if (mcpEntries.length > 0) {
+          if (typeof assetsDir !== 'string' || assetsDir === '') throw new Error('materializeAssets: assetsDir is required for mcp assets');
+          const target = join(assetsDir, bot.id, 'claude-mcp.json');
+          writes.push({ kind: 'file-create', target, content: `${stableJson(claudeMcpDocument(plan))}\n`, mode: 0o600, appliesTo: 'mcp', owned: true });
+          writes.push({ kind: 'argv', flags: ['--mcp-config', target], appliesTo: 'mcp' });
+          notes.push({ detail: `MCP → ${target}（WAO 独立文件 0600，runner 加 --mcp-config；V7 实证旗标覆盖用户 scope 同名）` });
+        }
+        log?.info?.(`provider-claude: asset plan for ${bot.id} → ${writes.length} writes`);
+        return { writes, notes, entries: [] };
+      },
+
+      createRunner({ bot, providerConfig, assets, log }) {
+        return createRunner({ bot, providerConfig, assets, log });
       },
 
       // runResult → human sentence for logs / the diagnostics page / the

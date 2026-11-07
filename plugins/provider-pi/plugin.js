@@ -9,12 +9,88 @@
 // providerConfig block), semantic validate, materializeConfig hook (writes
 // the per-bot models.json declaring the magpie gateway with an $ENV apiKey
 // reference — no secret on disk) and the code→中文 describeError copy.
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRunner } from './runner.js';
-import { writeBotModels, removeBotModels } from './models.js';
+import { writeBotModels, removeBotModels, piAgentDirFor } from './models.js';
 
 const PORT_ID = 'pi';
 const APIS = ['anthropic-messages', 'openai-completions', 'openai-responses', 'google-generative-ai'];
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+// —— asset faces (DESIGN-ASSETS §3.3 pi column, W3 T2) ————————————————————
+// Everything rides EXPLICIT flags (F19: --skill repeatable, --append-system-
+// prompt repeatable) or the WAO-namespaced agent dir — no cwd discovery.
+
+export function skillMarkdown(entry) {
+  const c = entry.content ?? {};
+  const name = c.name ?? entry.name;
+  return [
+    '---',
+    `name: ${name}`,
+    ...(c.description !== undefined && c.description !== '' ? [`description: ${String(c.description).replace(/\n/g, ' ')}`] : []),
+    `x-wao-asset: ${entry.assetId}`,
+    '---',
+    '',
+    String(c.body ?? ''),
+    '',
+  ].join('\n');
+}
+
+export const RIPGREP_GUIDANCE = [
+  '代码检索一律使用 rg（ripgrep）而非 grep/find。示例：rg -t js \'pattern\'、rg -n "text" src/。',
+  'rg 未安装时先执行：brew install ripgrep。',
+].join('\n');
+
+export const memoryMarkdown = (entry) => [
+  `## WAO 跨会话记忆：${entry.name}`,
+  '',
+  ...((entry.content?.notes ?? []).flatMap((n, i) => [...(i > 0 ? [''] : []), n])),
+].join('\n');
+
+// V9 (§9, verified 2026-11-07): pi TOLERATES unknown top-level keys in
+// mcp.json AND preserves them through its own rewrites (pi mcp add kept
+// x-wao-managed) — the marker is both the foreign-file judgement (custom
+// piAgentDir, F22 guard twin) and survives pi editing the file. The manifest
+// fallback judgement is NOT needed.
+export function piMcpDocument(botId, plan) {
+  const servers = {};
+  for (const entry of plan) {
+    if (entry.type !== 'mcp') continue;
+    const contentServers = entry.content?.servers ?? {};
+    for (const serverId of Object.keys(contentServers).sort()) {
+      const s = contentServers[serverId];
+      const out = {};
+      for (const key of ['command', 'args', 'env', 'type', 'url', 'headers']) {
+        if (s[key] === undefined) continue;
+        out[key] = key === 'env' || key === 'headers'
+          ? Object.fromEntries(Object.keys(s[key]).sort().map((k) => [k, s[key][k]]))
+          : s[key];
+      }
+      servers[`wao-${serverId}`] = out;
+    }
+  }
+  return {
+    'x-wao-managed': true,
+    'x-wao-bot-id': botId,
+    mcpServers: Object.fromEntries(Object.keys(servers).sort().map((k) => [k, servers[k]])),
+  };
+}
+
+export function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${stableJson(value[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+const hasBin = (name) => {
+  try {
+    return spawnSync(name, ['--version'], { timeout: 3000 }).error == null;
+  } catch { return false; }
+};
 
 export default {
   manifest: {
@@ -153,8 +229,76 @@ export default {
         return { removed };
       },
 
-      createRunner({ bot, providerConfig, log }) {
-        return createRunner({ bot, providerConfig, log });
+      createRunner({ bot, providerConfig, assets, log }) {
+        return createRunner({ bot, providerConfig, assets, log });
+      },
+
+      // 资产物化 (§3.3 pi column): PURE PLANNER. skill → <agentDir>/skills/
+      // + runner --skill (F19 显式旗标，不依赖发现); memory → <agentDir>/
+      // wao-memory.md (runner reads it and appends the TEXT — the design's
+      // V3 fallback, zero dependence on pi's file-form flag semantics);
+      // prompt/ripgrep → runner --append-system-prompt; mcp → <agentDir>/
+      // mcp.json 整文件重写 (default dir = WAO 命名空间；custom dir 遇外来
+      // 文件拒写, V9 marker judgement), 0600, server 名 wao- 前缀.
+      async materializeAssets(bot, plan, { log } = {}) {
+        if (typeof bot?.id !== 'string' || bot.id === '') throw new Error('materializeAssets: bot.id is required');
+        const pc = bot.providerConfig ?? {};
+        if (typeof pc.cwd !== 'string' || pc.cwd === '') throw new Error(`materializeAssets: bot ${bot.id} has no providerConfig.cwd`);
+        const agentDir = piAgentDirFor({ botId: bot.id, piAgentDir: pc.piAgentDir });
+        const customDir = typeof pc.piAgentDir === 'string' && pc.piAgentDir !== '';
+        const writes = [];
+        const notes = [];
+        for (const entry of plan ?? []) {
+          switch (entry.type) {
+            case 'skill': {
+              const name = entry.content?.name ?? entry.name;
+              writes.push({ kind: 'file-create', target: join(agentDir, 'skills', name, 'SKILL.md'), content: skillMarkdown(entry), for: entry.assetId });
+              writes.push({ kind: 'argv', flags: ['--skill', join(agentDir, 'skills', name, 'SKILL.md')], for: entry.assetId });
+              notes.push({ assetId: entry.assetId, detail: `技能 ${name} → ${agentDir}/skills/${name}/SKILL.md + runner --skill（F19 显式旗标）` });
+              break;
+            }
+            case 'prompt':
+              writes.push({ kind: 'argv', flags: ['--append-system-prompt', String(entry.content?.text ?? '')], for: entry.assetId });
+              break;
+            case 'memory': {
+              const target = join(agentDir, 'wao-memory.md');
+              writes.push({ kind: 'file-create', target, content: `${memoryMarkdown(entry)}\n`, for: entry.assetId });
+              writes.push({ kind: 'argv', flags: ['--append-system-prompt', target], for: entry.assetId });
+              notes.push({ assetId: entry.assetId, detail: `记忆 → ${target}（runner 读文件拼文本传参——设计回退形态，不依赖 V3）` });
+              break;
+            }
+            case 'mcp':
+              break; // aggregated below
+            case 'tool':
+              if (entry.content?.kind === 'ripgrep') {
+                writes.push({ kind: 'argv', flags: ['--append-system-prompt', [RIPGREP_GUIDANCE, ...(entry.content.options?.extraHints ? [String(entry.content.options.extraHints)] : [])].join('\n')], for: entry.assetId });
+              } else if (entry.content?.kind === 'rtk') {
+                notes.push(hasBin('rtk')
+                  ? { assetId: entry.assetId, detail: 'rtk 已安装但 hook 形状待 T3 实证——本轮未写 hook' }
+                  : { assetId: entry.assetId, detail: 'rtk 未安装（unavailable）：brew install rtk 后经 rematerialize-assets 装备' });
+              }
+              break;
+            default:
+              break;
+          }
+        }
+        const mcpEntries = (plan ?? []).filter((e) => e.type === 'mcp');
+        if (mcpEntries.length > 0) {
+          const target = join(agentDir, 'mcp.json');
+          if (customDir && existsSync(target)) {
+            // F22 guard twin: a foreign mcp.json (no x-wao-managed) refuses —
+            // same trade as writeBotModels' models.json guard.
+            let existing = null;
+            try { existing = JSON.parse(readFileSync(target, 'utf8')); } catch { /* unparsable = foreign */ }
+            if (existing?.['x-wao-managed'] !== true) {
+              throw new Error(`目标已有非 WAO mcp.json：${target}（如需接管请先手动迁移或改 piAgentDir）`);
+            }
+          }
+          writes.push({ kind: 'file-create', target, content: `${stableJson(piMcpDocument(bot.id, plan))}\n`, mode: 0o600, appliesTo: 'mcp', owned: true });
+          notes.push({ detail: `MCP → ${target} 整文件重写（x-wao-managed 注记，V9 已验证 pi 容忍且重写保留；0600）` });
+        }
+        log?.info?.(`provider-pi: asset plan for ${bot.id} → ${writes.length} writes`);
+        return { writes, notes, entries: [] };
       },
 
       // runResult → human sentence for logs / the diagnostics page / the

@@ -6,11 +6,82 @@
 // This file is the port registration: manifest, configSchema (the bots.json
 // providerConfig block), semantic validate, materializeConfig hook and the
 // code→中文 describeError copy (前身 bridge.js _friendly/_describeFailure).
+import { join } from 'node:path';
 import { createRunner } from './runner.js';
-import { writeBotProfile, removeProfile } from './profiles.js';
+import { buildBotPatch, profilePatchPath, writeBotProfile, removeProfile } from './profiles.js';
 
 const PORT_ID = 'dsh';
 const PERMS = ['workspace-write', 'read-only', 'danger-full-access'];
+
+// —— asset faces (DESIGN-ASSETS §3.3 dsh column, W3 T2) ———————————————————
+// dsh has no skill/MCP face (F23): every asset rides the profile's
+// system-prompt personaPrefix or the WAO-namespace .wao/skills/ tree.
+
+// SKILL.md (§4.1): frontmatter name/description + the x-wao-asset annotation
+// (claude F14 ignores unknown frontmatter keys; dsh only ever reads this file
+// through the personaPrefix index) + body.
+export function skillMarkdown(entry) {
+  const c = entry.content ?? {};
+  const name = c.name ?? entry.name;
+  return [
+    '---',
+    `name: ${name}`,
+    ...(c.description !== undefined && c.description !== '' ? [`description: ${String(c.description).replace(/\n/g, ' ')}`] : []),
+    `x-wao-asset: ${entry.assetId}`,
+    '---',
+    '',
+    String(c.body ?? ''),
+    '',
+  ].join('\n');
+}
+
+export const RIPGREP_GUIDANCE = [
+  '代码检索一律使用 rg（ripgrep）而非 grep/find。示例：rg -t js \'pattern\'、rg -n "text" src/。',
+  'rg 未安装时先执行：brew install ripgrep。',
+].join('\n');
+
+// §3.3 单一组合器 (P0-4): the personaPrefix line is generated ONLY here —
+// `providerConfig.prompt`（运营者人设，永远在前）→ plan 资产节（skill 索引 /
+// prompt / memory / ripgrep 指引，按绑定序）. materializeConfig (providerConfig
+// path) and materializeAssets (asset path) BOTH rebuild through this one
+// function — 「dsh 改模型丢资产节」cannot happen. Empty plan ⇒ operator prompt
+// alone (byte-identical to the pre-asset era).
+export function combinePersonaPrefix(operatorPrompt, plan = []) {
+  const sections = [];
+  for (const entry of Array.isArray(plan) ? plan : []) {
+    const c = entry?.content ?? {};
+    switch (entry?.type) {
+      case 'skill': {
+        const name = c.name ?? entry.name;
+        sections.push([
+          `【WAO 技能：${name}】`,
+          String(c.description ?? `技能 ${name}`),
+          `技能正文在 .wao/skills/${name}/SKILL.md——需要时先读该文件再执行。`,
+        ].join('\n'));
+        break;
+      }
+      case 'prompt':
+        sections.push([`【WAO 提示词约束：${entry.name}】`, String(c.text ?? '')].join('\n'));
+        break;
+      case 'memory':
+        sections.push([
+          `【WAO 跨会话记忆：${entry.name}】`,
+          ...(Array.isArray(c.notes) && c.notes.length > 0 ? c.notes : ['（暂无条目）']),
+        ].join('\n'));
+        break;
+      case 'tool':
+        if (c.kind === 'ripgrep') {
+          sections.push(['【WAO 工具指引：ripgrep】', RIPGREP_GUIDANCE, ...(c.options?.extraHints ? [String(c.options.extraHints)] : [])].join('\n'));
+        }
+        break; // rtk never reaches (§2.3 bind refusal)
+      default:
+        break; // mcp never reaches (dsh 无 MCP 面, §2.3)
+    }
+  }
+  const operator = String(operatorPrompt ?? '').trim();
+  if (sections.length === 0) return operator;
+  return [operator, sections.join('\n\n')].filter(Boolean).join('\n\n');
+}
 
 export default {
   manifest: {
@@ -78,7 +149,11 @@ export default {
       // dsh profile atomically before the bot's first run. A throw keeps the
       // last-good file and bubbles to the API as a 400 with this message —
       // writeBotProfile errors name the path they worked from.
-      async materializeConfig(bot, { log } = {}) {
+      // §3.3 单一组合器: `assets` is the core-engine effective plan (§3.1
+      // materializeConfig extension) — a providerConfig change rebuilds the
+      // FULL personaPrefix (operator prompt + asset sections), so 「改模型丢
+      // 资产节」cannot happen. Absent/empty plan = operator prompt alone.
+      async materializeConfig(bot, { log, assets } = {}) {
         if (typeof bot?.id !== 'string' || bot.id === '') {
           throw new Error('materializeConfig: bot.id is required');
         }
@@ -87,11 +162,12 @@ export default {
           throw new Error(`materializeConfig: bot ${bot.id} has no providerConfig.cwd`);
         }
         const profile = pc.profile || `wecom-${bot.id}`;
+        const prompt = combinePersonaPrefix(pc.prompt, assets);
         const res = writeBotProfile({
           profile,
           model: pc.model,
           permission: pc.permission,
-          prompt: pc.prompt,
+          prompt,
           writableDirs: pc.writableDirs,
           workspaceRoot: pc.cwd,
           dshBin: pc.dshBin || 'dsh',
@@ -100,6 +176,52 @@ export default {
         });
         log?.info?.(`provider-dsh: materialized profile ${profile} → ${res.path}`);
         return { changed: true, profile, path: res.path };
+      },
+
+      // 资产物化 (DESIGN-ASSETS §3.1/§3.3, W3 T2): PURE PLANNER — returns the
+      // write plan, core-engine's materializer owns every disk mutation (jail
+      // guard, atomicity, manifest). dsh = whole-file profile rewrite (the
+      // personaPrefix is a single config row, YAML 整文件重写纪律 §3.4) +
+      // .wao/skills/ SKILL.md files. plan 是只读引用：一切变形在副本上 (§3.1).
+      async materializeAssets(bot, plan, { log } = {}) {
+        const pc = bot?.providerConfig ?? {};
+        if (typeof bot?.id !== 'string' || bot.id === '') throw new Error('materializeAssets: bot.id is required');
+        if (typeof pc.cwd !== 'string' || pc.cwd === '') throw new Error(`materializeAssets: bot ${bot.id} has no providerConfig.cwd`);
+        for (const entry of plan ?? []) {
+          if (entry?.type === 'mcp') throw new Error('dsh 岗位不支持 MCP 资产（dsh 无 MCP 面，F23）');
+          if (entry?.type === 'tool' && entry?.content?.kind === 'rtk') throw new Error('dsh 岗位不支持 rtk 工具资产（rtk 支持列表不含 dsh，F27）');
+        }
+        const profile = pc.profile || `wecom-${bot.id}`;
+        const writes = [{
+          kind: 'file-create',
+          target: profilePatchPath(profile),
+          // the SAME combiner as materializeConfig — both paths produce the
+          // complete personaPrefix (契约用例「dsh 改模型→资产节逐字节仍在」).
+          content: buildBotPatch({
+            profile,
+            model: pc.model,
+            permission: pc.permission,
+            prompt: combinePersonaPrefix(pc.prompt, plan),
+            writableDirs: pc.writableDirs,
+            workspaceRoot: pc.cwd,
+            sourceProfile: 'headless',
+            compaction: pc.compaction,
+          }),
+        }];
+        const notes = [];
+        for (const entry of plan ?? []) {
+          if (entry.type !== 'skill') continue;
+          const name = entry.content?.name ?? entry.name;
+          writes.push({
+            kind: 'file-create',
+            target: join(pc.cwd, '.wao', 'skills', name, 'SKILL.md'),
+            content: skillMarkdown(entry),
+            for: entry.assetId,
+          });
+          notes.push({ assetId: entry.assetId, detail: `技能 ${name} → .wao/skills/${name}/SKILL.md（WAO 命名空间目录）` });
+        }
+        log?.info?.(`provider-dsh: asset plan for ${bot.id} → ${writes.length} writes（personaPrefix 经单一组合器重建）`);
+        return { writes, notes, entries: [] };
       },
 
       // materializeConfig's counterpart: DELETE /api/bots/:id takes the bot's

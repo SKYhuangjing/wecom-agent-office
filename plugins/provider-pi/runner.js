@@ -35,6 +35,7 @@
 //     missing-credential shape is UNVERIFIED; the mapping is regex + fake
 //     layer, same closure path as codex's unknown lock wording.
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { readHistory } from './history.js';
 import { piAgentDirFor } from './models.js';
 
@@ -67,9 +68,33 @@ const TOOL_LABELS = { bash: 'Bash', read: '读取', edit: '编辑', write: '写�
 export const toolLabel = (name) => TOOL_LABELS[String(name ?? '').toLowerCase()]
   || (String(name ?? 'tool').charAt(0).toUpperCase() + String(name ?? 'tool').slice(1));
 
-export function createRunner({ bot, providerConfig, log, escalationMs = DEFAULT_ESCALATION_MS } = {}) {
+export function createRunner({ bot, providerConfig, assets, log, escalationMs = DEFAULT_ESCALATION_MS } = {}) {
   const pc = providerConfig ?? {};
   const piBin = pc.piBin || 'pi';
+  // Asset faces (DESIGN-ASSETS §3.3, W3 T2): `assets` = effective plan with
+  // file targets (core-engine enrich). F19: --skill and --append-system-prompt
+  // are REPEATABLE — one flag pair per asset, binding order, operator prompt
+  // first (拼接序通则). Memory: the wao-memory.md target file is READ HERE and
+  // its TEXT appended (the design's V3 fallback — no dependence on pi's
+  // file-form flag semantics; a missing/unreadable file degrades to a note).
+  const assetFlags = [];
+  for (const entry of Array.isArray(assets) ? assets : []) {
+    if (entry?.type === 'skill' && typeof entry.target === 'string') {
+      assetFlags.push('--skill', entry.target);
+    } else if (entry?.type === 'prompt') {
+      assetFlags.push('--append-system-prompt', String(entry.content?.text ?? ''));
+    } else if (entry?.type === 'memory' && typeof entry.target === 'string') {
+      let text = null;
+      try { text = readFileSync(entry.target, 'utf8'); } catch { text = null; }
+      if (text != null) assetFlags.push('--append-system-prompt', text);
+    } else if (entry?.type === 'tool' && entry?.content?.kind === 'ripgrep') {
+      assetFlags.push('--append-system-prompt', [
+        '代码检索一律使用 rg（ripgrep）而非 grep/find。示例：rg -t js \'pattern\'、rg -n "text" src/。',
+        'rg 未安装时先执行：brew install ripgrep。',
+        ...(entry.content.options?.extraHints ? [String(entry.content.options.extraHints)] : []),
+      ].join('\n'));
+    }
+  }
   // Credential env (M2 constraint, codex pattern): a model-declared apiKey
   // literal is injected under apiKeyEnv; models.json (materialized per bot)
   // references it as "$<apiKeyEnv>" — the literal never lands on disk or
@@ -106,7 +131,8 @@ export function createRunner({ bot, providerConfig, log, escalationMs = DEFAULT_
       }
 
       // Fresh AND resume legs share one argv shape; the resume leg adds
-      // `--session <id>` (partial uuid accepted, baseline-proven).
+      // `--session <id>` (partial uuid accepted, baseline-proven). Asset
+      // flags ride after the provider's own knobs, binding order.
       const args = ['-p', '--mode', 'json'];
       if (sessionId) args.push('--session', String(sessionId));
       if (pc.thinking && pc.thinking !== 'off') args.push('--thinking', String(pc.thinking));
@@ -115,6 +141,8 @@ export function createRunner({ bot, providerConfig, log, escalationMs = DEFAULT_
       if (Array.isArray(pc.piArgs)) {
         for (const entry of pc.piArgs) args.push(String(entry));
       }
+      if (typeof pc.prompt === 'string' && pc.prompt !== '') args.push('--append-system-prompt', pc.prompt);
+      for (const f of assetFlags) args.push(f);
 
       let child;
       try {

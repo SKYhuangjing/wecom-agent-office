@@ -60,6 +60,21 @@ export default {
         return (typeof providerConfig?.cwd === 'string' && providerConfig?.cwd !== '') ? [] : ['cwd is required'];
       },
       materializeConfig() { return { changed: true }; },
+      // W3 T2: minimal REAL materializeAssets (one file-create per plan entry
+      // under the bot cwd) — the core materializer executes it, receipts
+      // carry real writes instead of T1's skipped:'not-equipped'.
+      async materializeAssets(bot, plan) {
+        const writes = [];
+        for (const e of Array.isArray(plan) ? plan : []) {
+          writes.push({
+            kind: 'file-create',
+            target: bot.providerConfig.cwd + '/.wao-fake/' + e.type + '--' + e.name + '.md',
+            content: e.assetId + ':' + e.name + '\\n',
+            for: e.assetId,
+          });
+        }
+        return { writes, notes: [], entries: [] };
+      },
       removeConfig() { return { removed: true }; },
       createRunner({ bot }) {
         return {
@@ -494,15 +509,14 @@ test('asset tools (W3 T1): grading enforced, danger copy in receipts, masking on
   assert.equal(asset.content.servers.probe.env.TOKEN, '__MASKED__', 'position masking on the MCP tool face');
 
   // bind grading: Agent-made asset × shared → refused; exclusive → ok, with
-  // the consequence copy and the not-equipped materializer note
+  // the consequence copy and a REAL materialization receipt (W3 T2)
   const sharedRefused = await call('bind_asset', { botId: 'am1', assetId: asset.id, mode: 'shared' });
   assert.equal(sharedRefused.isError, true);
   assert.match(sharedRefused.structuredContent.error, /Agent 创建的资产仅可私发（exclusive）绑定/);
   const bound = await call('bind_asset', { botId: 'am1', assetId: asset.id, mode: 'exclusive' });
   assert.equal(bound.isError, undefined);
   assert.match(bound.content[0].text, /将向 bot 磁盘写入技能\/配置文件并重建 runner，下一轮生效/);
-  assert.match(bound.content[0].text, /物化管线未装备/);
-  assert.equal(bound.structuredContent.receipt.skipped, 'not-equipped');
+  assert.ok(bound.structuredContent.receipt.writes.some((w) => /mcp--agent-mcp\.md$/.test(w.path)), 'real pipeline wrote the product file');
 
   // update/delete grading: operator (配发) assets are read-only here — an
   // operator asset enters via the REST face

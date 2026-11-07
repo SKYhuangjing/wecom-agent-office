@@ -63,19 +63,16 @@ function yamlQuote(s) {
   return '|-\n' + lines.map((l) => '      ' + l).join('\n');
 }
 
-export function writeBotProfile({
+export function buildBotPatch({
   profile,
   model,
   permission,
   prompt,
   writableDirs,
   workspaceRoot,
-  dshBin,
-  nodeBin,
   sourceProfile = 'headless',
   compaction,
 }) {
-  ensureProfileExists(profile, { dshBin, nodeBin });
   if (!model || !model.model) model = { provider: 'magpie', model: 'workbuddy/deepseek-v4.1-flash' };
   const perm = PERM.has(permission) ? permission : 'workspace-write';
   // sandbox: workspaceRoot confines writes; workspace-write + additional dirs.
@@ -184,12 +181,42 @@ export function writeBotProfile({
   }
 
   // Last-good + atomicity: everything above built the string in memory; the
-  // only disk mutation is this one tmp+rename (a throw above never touched
+  // caller's only disk mutation is one tmp+rename (a throw above never touched
   // the previous file).
-  const target = profilePatchPath(profile);
-  atomicWrite(target, patch);
-  return { profile, path: target, model: { ...model, provider: effProvider }, permission: perm, prompt: !!prompt, writableDirs: extras, workspaceRoot: wroot, customProvider: !!custom };
+  return patch;
 }
+
+// writeBotProfile = profile bootstrap + pure patch build + one atomic write.
+// The pure builder (buildBotPatch) is also the asset-pipeline's planning core:
+// provider-dsh's materializeAssets composes the FULL personaPrefix (operator
+// prompt + asset sections, §3.3 单一组合器) and rebuilds the whole patch here.
+export function writeBotProfile(opts) {
+  ensureProfileExists(opts.profile, { dshBin: opts.dshBin, nodeBin: opts.nodeBin });
+  const patch = buildBotPatch(opts);
+  const target = profilePatchPath(opts.profile);
+  atomicWrite(target, patch);
+  const model = opts.model && opts.model.model ? opts.model : { provider: 'magpie', model: 'workbuddy/deepseek-v4.1-flash' };
+  const perm = PERM.has(opts.permission) ? opts.permission : 'workspace-write';
+  const extras = Array.isArray(opts.writableDirs) ? opts.writableDirs.filter(Boolean) : [];
+  return {
+    profile: opts.profile,
+    path: target,
+    model: { ...model, provider: effProviderOf(opts) },
+    permission: perm,
+    prompt: !!opts.prompt,
+    writableDirs: extras,
+    workspaceRoot: opts.workspaceRoot || '',
+    customProvider: !!(opts.model && opts.model.baseURL && opts.model.api),
+  };
+}
+
+const effProviderOf = (opts) => {
+  const model = opts.model && opts.model.model ? opts.model : { provider: 'magpie' };
+  if (model && model.baseURL && model.api) {
+    return String(model.provider || `bot-${opts.profile}`).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || `bot-${opts.profile}`;
+  }
+  return model.provider;
+};
 
 // Remove a bot's profile directory (used on delete). 前身 shelled out to
 // `rm -rf`; node's rmSync does the same job without the subprocess.

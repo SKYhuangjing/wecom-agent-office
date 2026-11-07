@@ -19,6 +19,18 @@
 import { spawn } from 'node:child_process';
 import { readHistory } from './history.js';
 
+// ripgrep tool-asset guidance (§7.2) — byte-identical copy of the dsh/codex/pi
+// guidance block (复制即契约: the four providers carry the same lines, the
+// contract suite pins them equal).
+const RIPGREP_GUIDANCE = [
+  '代码检索一律使用 rg（ripgrep）而非 grep/find。示例：rg -t js \'pattern\'、rg -n "text" src/。',
+  'rg 未安装时先执行：brew install ripgrep。',
+].join('\n');
+const ripgrepAssetText = (entry) => [
+  RIPGREP_GUIDANCE,
+  ...(entry?.content?.options?.extraHints ? [String(entry.content.options.extraHints)] : []),
+].join('\n');
+
 // claude's exact session-conflict wording is UNKNOWN until M3 real-CLI
 // validation; the patterns are plausible shapes plus a generic fallback so an
 // unseen-but-obvious lock text still maps. Same incident class as dsh: two
@@ -41,9 +53,19 @@ export function describeToolBrief(input) {
   return String(detail).replace(/\s+/g, ' ').trim().slice(0, 60);
 }
 
-export function createRunner({ bot, providerConfig, log, escalationMs = DEFAULT_ESCALATION_MS } = {}) {
+export function createRunner({ bot, providerConfig, assets, log, escalationMs = DEFAULT_ESCALATION_MS } = {}) {
   const pc = providerConfig ?? {};
   const claudeBin = pc.claudeBin || 'claude';
+  // Asset faces (DESIGN-ASSETS §3.3, W3 T2): `assets` is the effective plan
+  // (§3.1 createRunner extension, enriched with file targets by core-engine).
+  // prompt/ripgrep assets ride --append-system-prompt CONCATENATED after the
+  // operator prompt (拼接序通则：bot prompt 在前、资产按绑定序在后); the mcp
+  // entry's target is the WAO-owned claude-mcp.json → --mcp-config (V7: the
+  // flag overrides same-named user-scope servers).
+  const assetPromptTexts = (Array.isArray(assets) ? assets : [])
+    .filter((e) => e?.type === 'prompt' || (e?.type === 'tool' && e?.content?.kind === 'ripgrep'))
+    .map((e) => (e.type === 'prompt' ? String(e.content?.text ?? '') : ripgrepAssetText(e)));
+  const mcpConfigPath = (Array.isArray(assets) ? assets : []).find((e) => e?.type === 'mcp' && typeof e.target === 'string')?.target ?? null;
   // Gateway env (M2 constraint): a model-declared baseURL/apiKey routes the
   // child at the bot's gateway — ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN
   // (apiKeyEnv overrides the token's env name). Explicit providerConfig.env
@@ -82,7 +104,14 @@ export function createRunner({ bot, providerConfig, log, escalationMs = DEFAULT_
         args.push('--allowedTools', pc.allowedTools.map(String).join(','));
       }
       if (sessionId) args.push('--resume', String(sessionId));
-      if (typeof pc.prompt === 'string' && pc.prompt !== '') args.push('--append-system-prompt', pc.prompt);
+      // ONE flag with the operator prompt + asset texts concatenated (\n\n) —
+      // claude's --append-system-prompt takes a single string (F11).
+      const promptText = [typeof pc.prompt === 'string' ? pc.prompt.trim() : '', ...assetPromptTexts.map((t) => t.trim())]
+        .filter((t) => t !== '').join('\n\n');
+      if (promptText !== '') args.push('--append-system-prompt', promptText);
+      // --mcp-config LAST: the flag is variadic (<configs...>, §9 V7 probe ate
+      // a following positional) — nothing may trail it.
+      if (mcpConfigPath) args.push('--mcp-config', mcpConfigPath);
 
       let child;
       try {

@@ -6,6 +6,17 @@
 
 ### Added
 
+- 资产物化管线执行器（W3 T2，DESIGN-ASSETS rev.2 §3）：新模块 materializer.js 替换 T1 noop——
+  provider 侧 `materializeAssets` 纯计划（file-create/marker-section/hook-entry/argv 四型写计划），
+  本执行器统一持有盘面纪律：§8.3 越狱防护（bot 声明目录+data/ 白名单、`..` 段拒绝）、§3.4 标记节
+  替换与孤儿四态检测（单侧标记/双侧全删留残/节外 wao- 表/他 bot 命名空间拒改）、§3.7 原子写+快照
+  逆序回滚、§3.8 manifest（planFingerprint/writes/entries/lastResult 全字段，失败保留上一好清单）、
+  §3.6 精确卸载（skill x-wao-asset 守卫、标记节剥节保外文、JSON 条目精确匹配删/不匹配告警不删）、
+  §3.5 dryRun 只读回验、启动扫尾（manifest 缺失=T1 skipped 态→一次全量重物化；此后只读回验报
+  doctor 不自动改写）。V 项实证结论（V1/V2/V7/V8/V9，§9）写入代码注释。
+- 端口接线：createRunner 增 `assets` 生效计划（§3.1，manifest 目标富集——mcp/skill 文件路径随行）；
+  materializeConfig 增 `assets` 透传（dsh 单一组合器契约）；「provider 无 materializeAssets→拒绑」
+  落地（§2.3）；跨 bot 同文件冲突按 manifest 判定；bot PATCH 改 providerConfig 后带绑定的 bot 重物化。
 - 资产注册表与双面 API（W3 T1，DESIGN-ASSETS rev.2 §2/§4/§8）：新模块 assets.js——
   `data/assets.json` 注册表（atomicWrite/0600 纪律同 bots.json）、五类资产内容校验
   （slug 统一禁点、控制字符、原型污染键、体积上限、mcp 单 server 恰一形态、sse/ws

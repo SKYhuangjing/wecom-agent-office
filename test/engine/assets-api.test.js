@@ -50,6 +50,22 @@ export default {
         return (typeof providerConfig?.cwd === 'string' && providerConfig?.cwd !== '') ? [] : ['cwd is required'];
       },
       materializeConfig() { return { changed: true }; },
+      // W3 T2: a minimal REAL materializeAssets — one file-create per plan
+      // entry under the bot cwd (jail-safe). The core materializer executes
+      // it (atomic write, manifest, stale cleanup), so the API receipts here
+      // carry real writes instead of T1's skipped:'not-equipped'.
+      async materializeAssets(bot, plan) {
+        const writes = [];
+        for (const e of Array.isArray(plan) ? plan : []) {
+          writes.push({
+            kind: 'file-create',
+            target: bot.providerConfig.cwd + '/.wao-fake/' + e.type + '--' + e.name + '.md',
+            content: e.assetId + ':' + e.name + '\\n',
+            for: e.assetId,
+          });
+        }
+        return { writes, notes: [], entries: [] };
+      },
       removeConfig() { return { removed: true }; },
       createRunner({ bot }) {
         return {
@@ -104,7 +120,7 @@ const MCP = {
 const mkBot = (id) => ({
   id, name: `资产测试-${id}`, enabled: true, channel: 'fakechan',
   account: { endpoint: 'http://fake.local' }, allowedUsers: [],
-  provider: 'fakeprov', providerConfig: { cwd: '/tmp' },
+  provider: 'fakeprov', providerConfig: { cwd: join(dataDir, 'cwds', id) },
 });
 
 before(async () => {
@@ -226,8 +242,11 @@ test('bind/unbind endpoints: receipt shape, bots.json is the binding store, bot 
   assert.equal(receipt.binding.assetId, skillAsset.id);
   assert.deepEqual(receipt.rematerialized, ['ab1']);
   assert.deepEqual(receipt.failed, []);
-  assert.deepEqual(receipt.writes, [], 'noop materializer: no writes');
-  assert.equal(receipt.skipped, 'not-equipped');
+  // T2 real pipeline: the fake provider's materializeAssets yields one
+  // file-create per plan entry, executed by the core materializer.
+  assert.deepEqual(receipt.writes.map((w) => w.action), ['write']);
+  assert.match(receipt.writes[0].path, /\.wao-fake\/skill--wao-company\.md$/);
+  assert.equal(receipt.skipped, undefined);
   // binding stored in the BOT record (§2.1/§2.2)
   const bots = loadBots(join(dataDir, 'bots.json'));
   assert.deepEqual(bots.bots.find((b) => b.id === 'ab1').assets, [{ assetId: skillAsset.id, mode: 'shared' }]);
@@ -263,7 +282,7 @@ test('eager PATCH fan-out: shared-bound bots rematerialize (noop receipts), excl
   const body = await r.json();
   assert.deepEqual(body.rematerialized, ['ab2'], 'only the shared binding fans out');
   assert.deepEqual(body.failed, []);
-  assert.equal(body.skipped, 'not-equipped');
+  assert.ok(body.writes.some((w) => /prompt--fan-out\.md$/.test(w.path)), 'fan-out wrote the shared bot product');
   assert.equal(body.asset.version, 2);
   // exclusive snapshot is frozen at binding-time version (§6)
   const bots = loadBots(join(dataDir, 'bots.json'));
@@ -298,14 +317,14 @@ test('DELETE /api/assets/:id: shared bindings swept + rematerialized, exclusive 
   assert.equal((await u.json()).removed.exclusiveContentLost, true);
 });
 
-test('POST /api/bots/:id/rematerialize-assets: deterministic retry endpoint (noop receipt)', async () => {
+test('POST /api/bots/:id/rematerialize-assets: deterministic retry endpoint (empty plan = cleanup-only)', async () => {
   const r = await post('/api/bots/ab1/rematerialize-assets', {});
   assert.equal(r.status, 200);
   const body = await r.json();
   assert.equal(body.ok, true);
   assert.equal(body.botId, 'ab1');
-  assert.deepEqual(body.writes, []);
-  assert.equal(body.skipped, 'not-equipped');
+  assert.deepEqual(body.writes, [], 'no bindings → nothing to write');
+  assert.equal(body.skipped, undefined);
   assert.equal((await post('/api/bots/nobody/rematerialize-assets', {})).status, 404);
 });
 
@@ -348,7 +367,7 @@ test('dual-source: companyOps enforces the §8.1 MCP write-face grading; REST st
   assert.equal(un.ok, true);
   const rem = await ops.rematerialize('ab1');
   assert.equal(rem.ok, true);
-  assert.equal(rem.skipped, 'not-equipped');
+  assert.equal(rem.skipped, undefined);
   // cleanup the Agent-made asset through the graded delete
   const gone = await ops.deleteAsset(agentAsset.id);
   assert.equal(gone.ok, true);
