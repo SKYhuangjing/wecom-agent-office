@@ -4,6 +4,7 @@
 # 一条命令产出全部页面插件 harness 基线截图到 test/ui-shots/（提交进库）：
 #   - ui-workbench 七页（workbench/bots/assets/session/push/plugins/timeline）× 浅/深
 #     + 资产科装备台第二视图（?view=equip&bot=bot-2，含警示条/私发快照）× 浅/深
+#     + 入职向导两视图（?select=new&step=3 配发装备 / step=5 通信渠道）× 浅/深
 #   - ui-office3d  Magpie iso/2d × 浅/深
 #   - ui-office-studio 白棚 × 浅
 #   - template-page demo × 浅（脚手架示例）
@@ -142,6 +143,12 @@ for theme in light dark; do
   shot "ui-workbench-assets-equip" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=assets&view=equip&bot=bot-2"
 done
 
+echo "· ui-workbench 入职向导（第 3 步配发装备 / 第 5 步通信渠道）× 浅/深"
+for theme in light dark; do
+  shot "ui-workbench-wizard-equip" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=bots&select=new&step=3"
+  shot "ui-workbench-wizard-channel" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=bots&select=new&step=5"
+done
+
 echo "· ui-office3d Magpie iso/2d × 浅/深"
 for theme in light dark; do
   shot "ui-office3d-iso" "$theme" 5500 "api/ui/ui-office3d/harness.html?dim=iso"
@@ -160,7 +167,7 @@ shot "ui-workbench-workbench-error" light 2600 "api/ui/ui-workbench/harness.html
 shot "ui-office3d-iso-empty" light 4000 "api/ui/ui-office3d/harness.html?state=empty"
 shot "ui-office3d-iso-error" light 4000 "api/ui/ui-office3d/harness.html?state=error"
 
-# ---- 校验：26 张基线全部存在且 ≥5KB ----------------------------------------
+# ---- 校验：30 张基线全部存在且 ≥5KB ----------------------------------------
 # 注意：set -u 下 $VAR 紧跟全角字符（如「）」）会被当成变量名一部分，
 # 因此这里一律用 ${VAR} 括起来。
 EXPECTED="
@@ -172,6 +179,10 @@ ui-workbench-assets-light
 ui-workbench-assets-dark
 ui-workbench-assets-equip-light
 ui-workbench-assets-equip-dark
+ui-workbench-wizard-equip-light
+ui-workbench-wizard-equip-dark
+ui-workbench-wizard-channel-light
+ui-workbench-wizard-channel-dark
 ui-workbench-session-light
 ui-workbench-session-dark
 ui-workbench-push-light
@@ -205,4 +216,4 @@ if [ "$fails" -gt 0 ]; then
   echo "✗ $fails 张基线不合格（${OUT_DIR}）" >&2
   exit 1
 fi
-echo "✓ 26 张基线齐备 → $OUT_DIR"
+echo "✓ 30 张基线齐备 → $OUT_DIR"

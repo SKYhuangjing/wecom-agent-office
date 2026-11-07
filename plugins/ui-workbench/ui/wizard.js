@@ -1,10 +1,12 @@
-// 入职向导 (company-metaphor redesign P2; W3 T4 增第 3.5 步): 五步把一位新同事
-// 办进公司——①名片（姓名+化身 roll 骰子）②技能岗位（三部门卡片）③配发装备
-// （可跳过——资产多选，默认配发·跟源更新，与装备台口径一致；W3 T4）④工位与权限
-// （cwd+门禁名单）⑤工牌激活（企微凭证）。「办理入职」→ POST /api/bots →（选了
-// 装备则逐件 POST /api/bots/:id/assets，失败不回滚入职，成功页点名补配）→
-// 成功页（工牌预览 + 去办公室看看）。enabled 概念后置：入职即上岗，调休/返岗
-// 在花名册上随时可办。化身由工牌号（botId）决定——同一张脸跟它一生。
+// 入职向导 (company-metaphor redesign P2; W3 T4 增第 3.5 步; v2 渠道化+装备必选):
+// 五步把一位新同事办进公司——①名片（姓名+化身 roll 骰子）②技能岗位（部门卡片）
+// ③配发装备（必选：推荐装备包按类型一键整包 + 逐件精挑，至少一件；公司还没
+// 登记过资产或所选岗位不支持装备时放行并说明）④工位与权限（cwd+门禁名单）
+// ⑤通信渠道（IM 渠道卡片 → 选中渠道的 accountSchema 凭证动态渲染）。
+// 「办理入职」→ POST /api/bots →（选了装备则逐件 POST /api/bots/:id/assets，
+// 失败不回滚入职，成功页点名补配）→成功页（工牌预览 + 去办公室看看）。
+// enabled 概念后置：入职即上岗，调休/返岗在花名册上随时可办。化身由工牌号
+// （botId）决定——同一张脸跟它一生。
 import { Avatar, PROVIDER_META, providerMeta, rollBadgeId, fmtDate, ensurePageStyle } from './hr.js';
 import { fieldsFromSchema, SchemaFields, serializeSchema } from './form.js';
 import { TYPE_LABEL } from './assets.js';
@@ -12,19 +14,47 @@ import { TYPE_LABEL } from './assets.js';
 const STEPS = [
   { key: 'card', title: '名片', sub: '先认识一下：叫什么、长什么样' },
   { key: 'dept', title: '技能岗位', sub: '它会哪家手艺？' },
-  { key: 'equip', title: '配发装备', sub: '可跳过——现在不配，之后到资产科再配也行' },
+  { key: 'equip', title: '配发装备', sub: '至少配发一件——推荐装备包可一键整包带走' },
   { key: 'desk', title: '工位与权限', sub: '在哪个目录干活、听谁的' },
-  { key: 'badge', title: '工牌激活', sub: '填上企微凭证就能上班' },
+  { key: 'channel', title: '通信渠道', sub: '选择机器人接入哪个 IM 平台' },
 ];
 const NAME_MAX = 30;
 const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 
+// 通信渠道（channel）卡片元数据：/api/ports 的 channels 只有 {id, owner,
+// accountSchema}（没有展示名），公司话标签在这里维护；未登记的渠道退回 id
+// 原文（双层语言：技术词收进副标题，运维不歧义）。
+const CHANNEL_META = {
+  wecom: {
+    label: '企业微信', color: '#0082EF', tech: 'wecom · 企业微信机器人',
+    blurb: '公司群里 @ 它或私聊它都能接单——填上机器人凭证，工牌就激活了。',
+  },
+};
+const channelMeta = (id) => (CHANNEL_META[id] ?? {
+  label: id || '未选渠道', color: 'var(--pv-unknown)', tech: id ?? '—',
+  blurb: '来自外部部门的通信渠道。',
+});
+
+// 推荐装备包（v2）：按资产类型分组一键整包勾选。前三类是主力装备（产品口径）；
+// 其余类型（memory/prompt/…）退回资产科口径 TYPE_LABEL + 通用图标——分组覆盖
+// 全部在册类型，不静默漏掉谁。
+const EQUIP_PACKS = [
+  { type: 'skill', icon: '📘', label: '技能' },
+  { type: 'mcp', icon: '🔌', label: '工具连接' },
+  { type: 'tool', icon: '🛠️', label: '效率装备' },
+];
+const packMeta = (type) => EQUIP_PACKS.find((p) => p.type === type)
+  ?? { type, icon: '📦', label: TYPE_LABEL[type] ?? type };
+
 const errorLines = (message) => String(message ?? '').split('; ').filter((s) => s.trim() !== '');
 
-export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated }) => {
+export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated, initialStep = 0 }) => {
   const { h, useState, useEffect, api } = WAO;
   ensurePageStyle();
-  const [step, setStep] = useState(0);
+  // initialStep：?select=new&step=N 直达第 N 步（截图基线用；越界回第 1 步）
+  const [step, setStep] = useState(() => (
+    Number.isInteger(initialStep) && initialStep >= 0 && initialStep < STEPS.length ? initialStep : 0
+  ));
   const [done, setDone] = useState(null); // created bot record (sanitized echo)
   const [submitting, setSubmitting] = useState(false);
   const [submitErrors, setSubmitErrors] = useState(null);
@@ -52,6 +82,15 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated 
   });
   const channelSchema = ports?.channels?.find((c) => c.id === draft.channel)?.accountSchema ?? [];
   const providerSchema = ports?.providers?.find((p) => p.id === draft.provider)?.configSchema ?? [];
+  // 所选岗位是否支持装备（/api/ports assets:false = provider 无 materializeAssets）
+  const providerSupportsAssets = ports?.providers?.find((p) => p.id === draft.provider)?.assets !== false;
+
+  // 换渠道即换凭证面：account 表单按新渠道的 accountSchema 重建。
+  const pickChannel = (id) => setDraft((d) => ({
+    ...d,
+    channel: id,
+    account: fieldsFromSchema(ports?.channels?.find((c) => c.id === id)?.accountSchema),
+  }));
 
   const pickProvider = (id) => {
     setDraft((d) => ({
@@ -75,12 +114,21 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated 
       else if (existingIds.has(draft.id.trim())) errs.push(`工牌号已被占用：${draft.id.trim()}`);
     }
     if (which === 1 && draft.provider === '') errs.push('请选择一个技能岗位');
+    if (which === 2) {
+      // v2 必选：至少一件。两种「无装备可配」放行——公司一件资产都没登记过
+      // （新部署；资产面故障同样回空清单，不能拦入职），或所选岗位不支持装
+      // 备（整面已禁勾，不能卡死入职）。
+      if (assets != null && assets.length > 0 && providerSupportsAssets && draft.equip.length === 0) {
+        errs.push('请至少配发一件装备——新同事不能什么都不会');
+      }
+    }
     if (which === 3) {
       const required = (providerSchema ?? []).filter((it) => it?.required === true);
       const { errors } = serializeSchema(required, draft.providerConfig);
       errs.push(...errors);
     }
     if (which === 4) {
+      if (draft.channel === '') errs.push('请选择一个通信渠道');
       const { errors } = serializeSchema(channelSchema, draft.account);
       errs.push(...errors);
     }
@@ -152,7 +200,7 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated 
           className: 'wb-btn', onClick: () => { onDone(); },
         }, '回人事部')),
       h('p', { className: 'wb-hint' },
-        '它已经在办公室里了——若企微凭证有误，它会先显示休假并在原因里说明，改好凭证即可返岗。'));
+        '它已经在办公室里了——若渠道凭证有误，它会先显示休假并在原因里说明，改好凭证即可返岗。'));
   }
 
   const errs = stepErrors();
@@ -203,54 +251,76 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated 
         : h('div', { className: 'wb-notice' }, '没有可用的技能岗位（provider 插件）——请先到后勤部门启用至少一个岗位部门。')),
       h('p', { className: 'wb-hint' }, '岗位=provider：决定它用什么工具干活。入职后可转岗（历史对话仅文本问答对迁移）。'));
   } else if (step === 2) {
-    // 第 3.5 步（W3 T4）：可选装备。资产多选（默认配发·跟源更新，与装备台
-    // 口径一致）+ 跳过——直接点下一步不选任何资产即空手入职，之后随时到资产
-    // 科装备台补配。所选岗位不支持装备（provider 无 materializeAssets）时整
-    // 面禁勾（/api/ports assets:false——判定源同绑定校验面 checkBind）。
-    const providerSupportsAssets = ports?.providers?.find((p) => p.id === draft.provider)?.assets !== false;
+    // 第 3 步（v2 必选）：配发装备。推荐装备包按类型分组一键整包勾选，逐件
+    // 清单仍可精挑（默认配发·跟源更新，与装备台口径一致）。至少一件才能下一
+    // 步——例外见 stepErrors。所选岗位不支持装备（provider 无 materializeAssets）
+    // 时整面禁勾（/api/ports assets:false——判定源同绑定校验面 checkBind）。
     const toggleEquip = (id, on) => setDraft((d) => ({
       ...d,
       equip: on ? [...d.equip, id] : d.equip.filter((x) => x !== id),
     }));
+    // 整包开关：全在→整包收起，否则整包勾选（并保留已勾的其他类型）。
+    const togglePack = (type) => setDraft((d) => {
+      const ids = (assets ?? []).filter((a) => a.type === type).map((a) => a.id);
+      const allOn = ids.length > 0 && ids.every((id) => d.equip.includes(id));
+      return { ...d, equip: allOn ? d.equip.filter((id) => !ids.includes(id)) : [...new Set([...d.equip, ...ids])] };
+    });
+    const packOrder = EQUIP_PACKS.map((p) => p.type);
+    for (const a of assets ?? []) if (!packOrder.includes(a.type)) packOrder.push(a.type);
+    const packGroups = packOrder
+      .map((type) => ({ ...packMeta(type), list: (assets ?? []).filter((a) => a.type === type) }))
+      .filter((g) => g.list.length > 0);
     const mcpOnly = (a) => a.origin === 'mcp'; // Agent 自建资产仅可私发
     body = h('div', { className: 'wb-form', style: { maxWidth: 620 } },
       assets == null
         ? h('p', { className: 'muted' }, '盘点资产清单中…')
         : assets.length === 0
           ? h('div', { className: 'wb-notice' },
-              '资产清单还是空的——可以空手入职，之后到资产科（登记资产 → 装备台配发）随时补配。')
-          : h('div', { className: 'wb-group open' },
-              h('div', { className: 'wb-group-body' },
-                !providerSupportsAssets ? h('div', { className: 'wb-notice', style: { marginBottom: 8 } },
-                  `该岗位暂不支持装备（${draft.provider} 未实现资产物化）——先跳过这步，入职后转岗或到资产科处理。`) : null,
-                assets.map((a) => {
-                  const disabled = !providerSupportsAssets;
-                  return h('label', {
-                    key: a.id, className: 'wb-check', style: { alignItems: 'flex-start', ...(disabled ? { opacity: 0.55 } : {}) },
-                    title: disabled ? '该岗位暂不支持装备'
-                      : `${a.type} · ${a.name}${a.description ? ` · ${a.description}` : ''}`,
+              '平台暂无可配装备，可直接入职，之后到资产科登记')
+          : h('div', null,
+              !providerSupportsAssets ? h('div', { className: 'wb-notice', style: { marginBottom: 8 } },
+                `该岗位暂不支持装备（${draft.provider} 未实现资产物化）——这步先过，入职后转岗或到资产科处理。`) : null,
+              providerSupportsAssets ? h('div', { className: 'wb-field' },
+                h('label', null, '推荐装备包', h('span', { className: 'wb-hint', style: { marginLeft: 8 } }, '按类型一键整包勾选 / 收起')),
+                h('div', { className: 'wb-toolbar', style: { flexWrap: 'wrap' } },
+                  packGroups.map((g) => {
+                    const allOn = g.list.every((a) => draft.equip.includes(a.id));
+                    return h('button', {
+                      key: g.type, className: 'wb-btn',
+                      onClick: () => togglePack(g.type),
+                      title: allOn ? `取消整包：${g.label}（${g.list.length} 件）` : `一键勾选全部${g.label}（${g.list.length} 件）`,
+                    }, `${allOn ? '✓ ' : ''}${g.icon} ${g.label} · ${g.list.length} 件`);
+                  }))) : null,
+              h('div', { className: 'wb-group open' },
+                h('div', { className: 'wb-group-body' },
+                  assets.map((a) => {
+                    const disabled = !providerSupportsAssets;
+                    return h('label', {
+                      key: a.id, className: 'wb-check', style: { alignItems: 'flex-start', ...(disabled ? { opacity: 0.55 } : {}) },
+                      title: disabled ? '该岗位暂不支持装备'
+                        : `${a.type} · ${a.name}${a.description ? ` · ${a.description}` : ''}`,
+                    },
+                      h('input', {
+                        type: 'checkbox', checked: draft.equip.includes(a.id), disabled,
+                        onChange: (e) => toggleEquip(a.id, e.target.checked),
+                      }),
+                      h('span', null,
+                        h('span', { className: `badge wb-atype-${a.type}` }, TYPE_LABEL[a.type] ?? a.type), ' ',
+                        h('span', { className: 'wb-mono' }, a.name),
+                        disabled ? h('span', { className: 'wb-hint' }, '（该岗位暂不支持装备）')
+                          : mcpOnly(a) ? h('span', { className: 'wb-hint' }, '（Agent 自建·仅可私发）') : null,
+                        a.description ? h('div', { className: 'wb-hint' }, a.description) : null));
+                  })),
+                h('div', { className: 'wb-field', style: { maxWidth: 360 } },
+                  h('label', null, '配发方式', h('span', { className: 'wb-hint', style: { marginLeft: 8 } }, '对上面勾选的每件资产生效（Agent 自建资产固定私发）')),
+                  h('select', {
+                    className: 'wb-select', value: draft.equipMode,
+                    onChange: (e) => setDraft((d) => ({ ...d, equipMode: e.target.value })),
                   },
-                    h('input', {
-                      type: 'checkbox', checked: draft.equip.includes(a.id), disabled,
-                      onChange: (e) => toggleEquip(a.id, e.target.checked),
-                    }),
-                    h('span', null,
-                      h('span', { className: `badge wb-atype-${a.type}` }, TYPE_LABEL[a.type] ?? a.type), ' ',
-                      h('span', { className: 'wb-mono' }, a.name),
-                      disabled ? h('span', { className: 'wb-hint' }, '（该岗位暂不支持装备）')
-                        : mcpOnly(a) ? h('span', { className: 'wb-hint' }, '（Agent 自建·仅可私发）') : null,
-                      a.description ? h('div', { className: 'wb-hint' }, a.description) : null));
-                })),
-              h('div', { className: 'wb-field', style: { maxWidth: 360 } },
-                h('label', null, '配发方式', h('span', { className: 'wb-hint', style: { marginLeft: 8 } }, '对上面勾选的每件资产生效（Agent 自建资产固定私发）')),
-                h('select', {
-                  className: 'wb-select', value: draft.equipMode,
-                  onChange: (e) => setDraft((d) => ({ ...d, equipMode: e.target.value })),
-                },
-                  h('option', { value: 'shared' }, '配发（默认·跟源更新）'),
-                  h('option', { value: 'exclusive' }, '私发（快照独立，不随源改动漂移）')))),
-      h('p', { className: 'wb-hint' },
-        '装备会写进它的工位（技能文件/配置/钩子），下一轮接单即可用；这步可以整页跳过——直接点「下一步」。'));
+                    h('option', { value: 'shared' }, '配发（默认·跟源更新）'),
+                    h('option', { value: 'exclusive' }, '私发（快照独立，不随源改动漂移）')))),
+              h('p', { className: 'wb-hint' },
+                '装备会写进它的工位（技能文件/配置/钩子），下一轮接单即可用；至少配发一件——整包配发后仍可逐件微调。')));
   } else if (step === 3) {
     const required = (providerSchema ?? []).filter((it) => it?.required === true);
     body = h('div', { className: 'wb-form', style: { maxWidth: 560 } },
@@ -267,12 +337,35 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated 
         })),
       h('p', { className: 'wb-hint' }, '其余岗位参数按默认值入职，之后可在员工档案里细调。'));
   } else {
-    body = h('div', { className: 'wb-form', style: { maxWidth: 520 } },
-      h('p', { className: 'wb-hint' }, '企微机器人凭证（channel-wecom 账号）——这是它的工牌，刷开企微的门。'),
-      h(SchemaFields, {
+    // 第 5 步（v2 渠道化）：先选 IM 渠道（卡片，同技能岗位样式），选中后在其
+    // 下方按该渠道 accountSchema 动态渲染凭证字段（/api/ports channels——目前
+    // 只有企微一家）。仅一个渠道时默认已选（draft 初始化取 channels[0]）。
+    const channels = ports?.channels ?? [];
+    const channelCards = channels.map((c) => {
+      const meta = channelMeta(c.id);
+      const active = draft.channel === c.id;
+      return h('button', {
+        key: c.id,
+        className: `wb-dept-card${active ? ' active' : ''}`,
+        style: { '--pv': meta.color },
+        onClick: () => pickChannel(c.id),
+      },
+        h('span', { className: 'wb-dept-bar' }),
+        h('span', { className: 'wb-dept-name' }, meta.label),
+        h('span', { className: 'wb-dept-blurb' }, meta.blurb),
+        h('span', { className: 'wb-dept-tech' }, meta.tech));
+    });
+    const chosen = channelMeta(draft.channel);
+    body = h('div', { className: 'wb-form', style: { maxWidth: 560 } },
+      h('div', { className: 'wb-dept-grid' }, channelCards.length > 0 ? channelCards
+        : h('div', { className: 'wb-notice' }, '没有可用的通信渠道（channel 插件）——请先到后勤部门启用至少一个渠道。')),
+      channels.length > 1 ? h('p', { className: 'wb-hint' }, '换渠道会按新渠道的凭证表单重新填写。') : null,
+      draft.channel !== '' ? h('p', { className: 'wb-hint' },
+        `${chosen.label}机器人凭证（channel-${draft.channel} 账号）——这是它的工牌，刷开${chosen.label}的门。`) : null,
+      draft.channel !== '' ? h(SchemaFields, {
         WAO, schema: channelSchema, state: draft.account, editingExisting: false,
         onChange: (account) => setDraft({ ...draft, account }),
-      }),
+      }) : null,
       submitErrors != null ? h('div', { className: 'wb-error-box' },
         h('div', null, '办理入职未通过：'),
         h('ul', null, submitErrors.map((e, i) => h('li', { key: i }, e)))) : null);
@@ -295,7 +388,8 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated 
       h('button', { className: 'wb-btn', disabled: step === 0, onClick: () => setStep(step - 1) }, '上一步'),
       step < STEPS.length - 1
         ? h('button', {
-          className: 'wb-btn wb-btn-primary', disabled: !canNext || (ports?.providers?.length ?? 0) === 0,
+          className: 'wb-btn wb-btn-primary',
+          disabled: !canNext || (ports?.providers?.length ?? 0) === 0 || (ports?.channels?.length ?? 0) === 0,
           onClick: () => setStep(step + 1),
         }, '下一步')
         : h('button', {

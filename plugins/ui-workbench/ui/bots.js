@@ -207,9 +207,14 @@ export default {
     };
 
     let editor = null;
+    // ?select=new&step=N 直达入职向导第 N 步（1-5，截图基线用；越界回第 1 步）
+    const initialStep = (() => {
+      const n = Number(new URLSearchParams(location.search).get('step'));
+      return Number.isInteger(n) && n >= 1 && n <= 5 ? n - 1 : 0;
+    })();
     if (selected === 'new') {
       editor = h(Wizard, {
-        WAO, ports, existingIds: roster,
+        WAO, ports, existingIds: roster, initialStep,
         onDone: () => { setSelected(null); void reload(); },
         onCreated: () => { void reload(); }, // roster refreshes behind the success page
         onOpenFile: (id) => { void reload().then(() => setSelected(id)); },

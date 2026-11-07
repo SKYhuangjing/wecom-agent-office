@@ -1,8 +1,10 @@
 <!doctype html>
-<!-- ui-workbench harness (M3 T2/T3 截图工作流, W3 T4 增资产科, kernel-hosted same-origin):
-     ?page=workbench (default) renders 工作台; also bots / assets / session /
-     push / plugins / timeline. assets 页 ?view=equip 直达装备台（&bot=<id>
-     选同事）。?state=empty (no bots) / ?state=error (服务断联的 fetch 失败文案)
+<!-- ui-workbench harness (M3 T2/T3 截图工作流, W3 T4 增资产科, v2 增向导步直达,
+     kernel-hosted same-origin): ?page=workbench (default) renders 工作台; also
+     bots / assets / session / push / plugins / timeline. assets 页 ?view=equip
+     直达装备台（&bot=<id> 选同事）。bots 页 ?select=new 打开入职向导，&step=N
+     (1-5) 直达第 N 步——第 3 步配发装备/第 5 步通信渠道的基线用。
+     ?state=empty (no bots) / ?state=error (服务断联的 fetch 失败文案)
      swap the fake data for those boundary states — test/ui-shot.sh 截空态/错误态
      基线用. Swap fake-data.js entries for the state you want to screenshot
      (empty ledger, offline bot, failed plugin, push error...), then:
