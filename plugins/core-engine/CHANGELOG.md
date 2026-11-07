@@ -71,6 +71,18 @@
 
 ### Fixed
 
+- v2 终审修复（1 Important + 2 Minor，2026-11-07）：
+  **Important（共享资产 PATCH 结构键不可变）** PATCH /api/assets/:id 对存在任一 shared 绑定的资产，
+  改 skill `content.name` 或 mcp serverId 集合（改名/增删均算）→ 400「该资产有配发绑定，改名需先解绑
+  （避免跨员工文件冲突）」——此前 eager 扇出的 file-create 会静默覆盖共享根目录里其他 bot 已物化的同名
+  文件（§2.3 绑定时冲突矩阵不会在 PATCH 上重跑）。同结构键的内容编辑仍走原扇出；exclusive-only 资产
+  可改名（快照语义本就不扇出，§6）。
+  **Minor（无 manifest 共根 bot 漏比对）** 新物化器钩子 `detectUnverifiedSharedRoots(bot, plan, allBots)`
+  （noop 答空）：跨 bot 同文件冲突检测以 manifest 为唯一数据源，共根但无清单的绑定 bot 此前被静默跳过
+  ——现于 bind 回执 warnings 提示「先对其 POST rematerialize-assets（或人工核查其目录）」，重物化后
+  真实 manifest 比对接管；data/（引擎内部域）不计入共享面根。
+  **Minor（TUI 员工卡资产徽章）** `wao tui` 仪表盘员工行消费 /api/agents 的 `assetWarnings`
+  （⚠ + 首条 title，黄）与 `assetTools`（🛠 计数，灰），长警示按 80 列预算 … 截断。
 - 资产物化评审修复（W3 T2 review，3 Critical + Minor 1/4/5）：
   **Critical 1** pi 默认 agent 目录（`~/.pi/agent-wao-<botId>`，piAgentDirFor 公式内联，同 DSH_HOME 先例）
   补入 §8.3 越狱防护白名单——默认目录 pi bot 的绑定此前落库后物化必败；
@@ -90,6 +102,9 @@
 
 ### Notes
 
+- v2 终审备案：doctor 资产漂移行（`!` 标记 + rematerialize 修复指引）**不翻退出码**（仅 `✗` 计数
+  bad）——裁定维持：漂移是「可修复的降级态」而非「装配/连通性失败」，退出码保留给后者；修复路径是
+  POST /api/bots/:id/rematerialize-assets，不改。
 - 评审 Minor 2（atomicWrite 落盘 0600 权限归零）**不改**：0600 是设计背书的原语（data/ 纪律、
   密钥红线），宿主侧文件本就不该由 atomicWrite 承载组/其他权限。
 - 评审 Minor 3（cleanupEmptyParents 至多 6 层空目录攀爬）**不改**：极低频路径，且攀爬以

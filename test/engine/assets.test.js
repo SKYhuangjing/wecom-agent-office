@@ -534,6 +534,13 @@ test('bindAsset: materializer hooks (provider support / foreign guard / cross-bo
   const r3 = await bindAsset(state, 'b1', { assetId: 'ast-s1', mode: 'shared' }).catch((e) => e);
   assert.equal(r3.status, 400);
   assert.match(r3.message, /与 bot other 的资产目标文件冲突：\/tmp\/shared\/SKILL.md/);
+  // v2 终审 Minor: same-root bots without manifests are an advisory (bind
+  // succeeds), not a refusal — the receipt tells the operator to
+  // rematerialize them so the real manifest-diff scan can run on re-bind.
+  state.materializer = { ...base, detectUnverifiedSharedRoots: () => ['b2'] };
+  const r4 = await bindAsset(state, 'b1', { assetId: 'ast-s1', mode: 'shared' });
+  assert.equal(r4.ok, true);
+  assert.ok(r4.warnings.some((w) => /跨 bot 文件冲突未核查：bot b2 与本 bot 共享物化根目录但无物化清单——先对其 POST \/api\/bots\/b2\/rematerialize-assets/.test(w)), JSON.stringify(r4.warnings));
 });
 
 test('bindAsset: per-bot isolation — a materialize throw lands in failed[], binding persists, status 200', async () => {

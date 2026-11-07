@@ -77,6 +77,42 @@ test('computeFrame: 待命绿色 / 休假灰色带原因 / 停用=调休', () =>
   assert.ok(frame[4].includes('\x1b[90m'), '调休 carries gray');
 });
 
+// v2 终审 Minor: 员工卡消费 /api/agents 的 assetWarnings（⚠ + 首条 title，黄）
+// 与 assetTools（🛠 计数，灰）；无资产面数据时卡片行与既有形状一致。
+test('computeFrame: 员工卡资产徽章 — ⚠ 首条警示（黄）+ 🛠 装备工具数（灰）；无数据不渲染', () => {
+  const frame = computeFrame({
+    agents: [agent({
+      assetWarnings: ['rtk 未安装', 'rg 未安装'],
+      assetTools: [{ assetId: 'ast-1', kind: 'rtk', state: 'armed' }],
+    })],
+    now: NOW, connected: true, selectedIdx: 0, logTail: [],
+  });
+  const card = strip(frame[2]);
+  assert.equal(card, '▸ 主号机器人  [待命] dsh·wecom  今日0轮  ⚠ rtk 未安装  🛠1');
+  assert.ok(!card.includes('rg 未安装'), 'only the FIRST warning title shows');
+  // 选中行反色合成（33;7）— 断言颜色前缀而非完整 SGR 串（同「工作中员工卡」先例）
+  assert.ok(frame[2].includes('\x1b[33'), 'warning badge carries yellow');
+  assert.ok(frame[2].includes('\x1b[90'), 'tool badge carries gray');
+  // 无警示无工具 → 徽章缺席，卡片回到既有形状
+  const bare = computeFrame({ agents: [agent()], now: NOW, connected: true, selectedIdx: 0, logTail: [] });
+  assert.equal(strip(bare[2]), '▸ 主号机器人  [待命] dsh·wecom  今日0轮');
+});
+
+test('computeFrame: 长警示按 80 列 … 截断（徽章不破行宽不变行）', () => {
+  const longWarn = 'memory 共享 cwd：跨会话记忆可能被同目录其他会话互见，建议配专属 config 目录';
+  const frame = computeFrame({
+    agents: [agent({
+      assetWarnings: [longWarn],
+      assetTools: [{ assetId: 'a', kind: 'ripgrep', state: 'available' }, { assetId: 'b', kind: 'rtk', state: 'armed' }],
+    })],
+    now: NOW, connected: true, selectedIdx: 0, logTail: [],
+  });
+  const card = strip(frame[2]);
+  assert.ok(card.includes('⚠ memory'), 'badge icon + head of the title survive');
+  assert.ok(card.endsWith('…'), 'long warning elided under the width budget');
+  assert.ok(dispW(frame[2]) <= 80, `line too wide: ${dispW(frame[2])}`);
+});
+
 test('computeFrame: 断连时顶栏整条红 + 自动重试文案', () => {
   const frame = computeFrame({
     agents: [agent()], now: NOW, connected: false, logTail: [],

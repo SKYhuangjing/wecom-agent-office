@@ -288,6 +288,15 @@ const dashboardPane = (width, budget, { agents, selectedIdx, now, logTail, logZo
         });
       }
       segs.push({ t: '  ', c: [] }, { t: `今日${a?.todayTurns ?? 0}轮`, c: [CODE.dim] });
+      // 资产面徽章（v2 终审 Minor）：⚠ + 首条警示（黄）/ 🛠 + 装备工具数
+      // （灰）——数据来自 /api/agents botRow 的 assetWarnings/assetTools 回显
+      // （§8.1），警示长文由 composeLine 按 80 列预算 … 截断。
+      const warnTitle = Array.isArray(a?.assetWarnings) && a.assetWarnings.length > 0
+        ? String(a.assetWarnings[0] ?? '')
+        : '';
+      if (warnTitle !== '') segs.push({ t: '  ', c: [] }, { t: `⚠ ${warnTitle}`, c: [CODE.yellow] });
+      const toolCount = Array.isArray(a?.assetTools) ? a.assetTools.length : 0;
+      if (toolCount > 0) segs.push({ t: '  ', c: [] }, { t: `🛠${toolCount}`, c: [CODE.gray] });
       if (a?.providerMissing) segs.push({ t: ' 部门缺席', c: [CODE.dim] });
       out.push(composeLine(width, segs, extra));
     });

@@ -330,6 +330,30 @@ test('checkBind/detect*: provider without materializeAssets refuses; foreign ski
   assert.deepEqual(conflicts, [{ botId: 'botA', path: join(cwd, 'skills', 'wao-company', 'SKILL.md') }]);
 });
 
+// v2 终审 Minor: detectFileConflicts is manifest-blind — a BOUND same-root bot
+// without a manifest is an unchecked overlap. detectUnverifiedSharedRoots
+// names exactly those bots (bind receipt warns 「rematerialize first」);
+// manifest-bearing / unbound / other-root bots never appear.
+test('detectUnverifiedSharedRoots: bound same-root no-manifest bot named; manifest / unbound / other-root / empty-plan do not', async () => {
+  const dataDir = botDir('d-unv');
+  const cwd = botDir('b-unv-cwd');
+  const mat = mkMat(stubPort('p1'), dataDir);
+  const me = { id: 'ub', provider: 'stub', providerConfig: { cwd } };
+  const boundNoManifest = { id: 'uc', provider: 'stub', providerConfig: { cwd }, assets: [{ assetId: 'ast-s1', mode: 'shared' }] };
+  const unbound = { id: 'ud', provider: 'stub', providerConfig: { cwd } };
+  const elsewhere = { id: 'uf', provider: 'stub', providerConfig: { cwd: botDir('b-unv-other') }, assets: [{ assetId: 'ast-s1', mode: 'shared' }] };
+  const all = [me, boundNoManifest, unbound, elsewhere];
+  assert.deepEqual(await mat.detectUnverifiedSharedRoots(me, [SKILL_ENTRY], all), ['uc'], 'only the bound no-manifest same-root bot');
+  assert.deepEqual(await mat.detectUnverifiedSharedRoots(me, [], all), [], 'empty plan → no targets → no overlap');
+  // once the no-manifest bot rematerializes it drops out of the advisory —
+  // and the REAL manifest-diff conflict scan takes over (same SKILL.md path)
+  await mat.materialize(boundNoManifest, [SKILL_ENTRY]);
+  assert.deepEqual(await mat.detectUnverifiedSharedRoots(me, [SKILL_ENTRY], all), []);
+  assert.deepEqual(await mat.detectFileConflicts(me, [SKILL_ENTRY], all), [
+    { botId: 'uc', path: join(cwd, 'skills', 'wao-company', 'SKILL.md') },
+  ]);
+});
+
 test('targetsFor: enriches plan copies with manifest targets, never mutates entries', async () => {
   const dataDir = botDir('d-tgt');
   const cwd = botDir('b-tgt-cwd');

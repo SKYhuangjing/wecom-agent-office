@@ -503,6 +503,9 @@ export function checkBindConflicts(assets, bindings) {
 //     reads the target files; noop answers none)
 //   detectFileConflicts(bot, plan, allBots) → [{botId, path}] (跨 bot 同文件
 //     拒绑, §2.3 last row — T2 diffs materialization manifests, §3.8)
+//   detectUnverifiedSharedRoots(bot, plan, allBots) → [botId] (v2 终审
+//     Minor: 共根但无 manifest 的绑定 bot——冲突扫描看不见它们，bind 回执
+//     以 warning 提示先 rematerialize；noop 答空)
 //   memoryWarning(bot) → string|null (§7.3 shared-cwd visibility warning)
 //   materialize(bot, plan) → {writes, notes?} | {writes: [], skipped} — a
 //     throw becomes the per-bot failed[] entry (§3.2 isolation)
@@ -532,6 +535,7 @@ export function noopMaterializer() {
     },
     detectForeignTargets() { return []; },
     detectFileConflicts() { return []; },
+    detectUnverifiedSharedRoots() { return []; },
     toolWarnings() { return []; },
     getManifest() { return null; },
     memoryWarning(bot) {
@@ -652,6 +656,12 @@ export async function bindAsset(state, botId, { assetId, mode } = {}) {
   if (asset.type === 'memory') {
     const w = state.materializer.memoryWarning?.(bot);
     if (w) warnings.push(w);
+  }
+  // v2 终审 [Minor]: same-root bots without manifests are invisible to
+  // detectFileConflicts — surface them as an advisory (not a refusal):
+  // rematerialize them first, then the real manifest diff runs on re-bind.
+  for (const unverified of await state.materializer.detectUnverifiedSharedRoots?.(bot, plan, state.doc.bots) ?? []) {
+    warnings.push(`跨 bot 文件冲突未核查：bot ${unverified} 与本 bot 共享物化根目录但无物化清单——先对其 POST /api/bots/${unverified}/rematerialize-assets（或人工核查其目录）`);
   }
   const { suppressed } = buildPlan(state.assetsDoc.assets, bot);
   return {

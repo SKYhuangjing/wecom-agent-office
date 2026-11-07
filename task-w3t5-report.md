@@ -25,3 +25,25 @@
 - 文档口径核对：`wao-company.md` 与 README §3.2 速查表均为 19 行工具、6 个资产工具危险标记与 plugins/mcp-gateway/README.md（既有 19 工具表）一致。
 - 触碰面：`README.md`、`docs/skills/wao-company.md`、`plugins/core-engine/{api,assets,materializer}.js`、`plugins/mcp-gateway/tools.js`、`plugins/ui-workbench/ui/{assets,wizard,fake-data}.js`、`test/engine/{materializer,assets-api,plugin}.test.js`、`test/mcp/tools.test.js`、`test/contract/rtk-round.test.js`、4 张资产科截图。并行 WIP 文件零触碰零提交。
 - 未验证项：真控制台页（非 harness）的装备态列未实测——同构渲染路径且 /api/agents 字段有 REST 测试断言；向导「换岗清空已勾选」逻辑经代码路径覆盖（pickProvider 分支），未单独 CDP 断言。
+
+# v2 终审修复（SHIP with 1 Important + minors，2026-11-07）
+
+## 结论
+
+- Status: done — 1 Important + 2 Minor 全修，1 项[备案不改]（doctor）记 CHANGELOG Notes；并行 WIP（白棚重设计等）零触碰零提交。
+- Commit: `fix(assets): immutability guard for shared renames, conflict-scan fallback, tui asset badges`
+- Tests: `npm test` 全绿 — 549 pass / 0 fail / 0 skipped（基线 545，新增 4 个测试）。
+
+## 修复清单
+
+1. **[Important] 资产 PATCH 扇出不复查跨 bot 冲突** → `plugins/core-engine/api.js` updateAssetOp 增 `structuralKeysOf`（skill=content.name；mcp=serverId 集合）：存在任一 shared 绑定的资产，PATCH 使结构键集合变化（改名/增删 server 均算）→ 400「该资产有配发绑定，改名需先解绑（避免跨员工文件冲突）」——裁定=不可变方案，扇出 file-create 不再可能静默覆盖共享根目录他 bot 已物化文件（§2.3 冲突矩阵不会在 PATCH 上重跑）。同结构键内容编辑仍走原 eager 扇出；exclusive-only 资产可改（快照不扇出，§6）。测试：assets-api「shared skill 改名 400 + 注册表键未变 + 同键 body 编辑仍扇出 + 解绑后可改名 / shared mcp serverId 改名 400、同 serverId 改 args 200 / exclusive 改名 200 且快照冻结」。
+2. **[Minor] detectFileConflicts 对方无 manifest 漏比对** → 取裁定的最小实现：新物化器钩子 `detectUnverifiedSharedRoots(bot, plan, allBots)`（materializer.js 真实现 + assets.js noop 答空 + 接缝契约注释）：共根（face roots 交集，data/ 引擎内部域除外）且有绑定但无 manifest 的他 bot → bind 回执 warnings 提示「先对其 POST rematerialize-assets（或人工核查其目录）」——warning 不翻 400；重物化后真实 manifest 比对接管。无绑定 bot 不告警（未物化过，避免噪音）。测试：materializer 单测（bound 无 manifest 命名 / 有 manifest、未绑定、异根、空 plan 不命名 / 补物化后退出 advisory 且 detectFileConflicts 接管）+ assets 单测（bindAsset 回执 wiring）。
+3. **[Minor] TUI 员工卡消费资产数据源** → `src/tui/render.js` dashboardPane 员工行消费 /api/agents botRow 的 `assetWarnings`（⚠ + 首条 title，黄）与 `assetTools`（🛠 计数，灰），置于「今日N轮」注记区；长警示由 composeLine 按 80 列预算 … 截断（行宽不破）。computeFrame 快照测试两例：徽章齐全+首条 only+双色 / 长警示截断 + 无数据行形状不变。
+4. **[备案不改] doctor 漂移 `!` 不翻退出码** → 终审裁定维持（漂移=可修复降级态，退出码留给装配/连通性失败）；CHANGELOG Notes 记一行（plugins/core-engine/CHANGELOG.md）。
+
+## 验证
+
+- `npm test`：549 pass / 0 fail（改动后全量）。首轮 3 处测试断言写错（错误体 shape=`{error}` 非 `{message}`；选中行 SGR 合成 33;7 断颜色前缀）修正后全绿——实现代码零返工。
+- 原路径复测：三条发现路径均以真表面重走——Important 走真 kernel HTTP PATCH（fake-kernel boot）；Minor-2 走真物化器钩子 + bindAsset 回执；Minor-3 走 computeFrame 纯函数快照（数据形状=botRow，与 /api/agents REST 测试同源锁定）。
+- 触碰面：`plugins/core-engine/{api,assets,materializer}.js`、`plugins/core-engine/CHANGELOG.md`、`src/tui/render.js`、`test/engine/{assets-api,assets,materializer}.test.js`、`test/tui/render.test.js`、`task-w3t5-report.md`。并行 WIP 文件零触碰零提交。
+- 未验证项：真终端里的 `wao tui` 目测未跑（computeFrame 纯函数快照 + 80 列行宽断言覆盖视觉契约，ANSI 配色码前缀已断言）；Minor-2 的 CDP/UI 面未重截（回执 warnings 为 API 面字段，无 UI 变更）。

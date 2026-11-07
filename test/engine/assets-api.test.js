@@ -317,6 +317,52 @@ test('DELETE /api/assets/:id: shared bindings swept + rematerialized, exclusive 
   assert.equal((await u.json()).removed.exclusiveContentLost, true);
 });
 
+test('PATCH immutability guard (v2 终审 Important): shared-bound structural keys (skill content.name / mcp serverIds) refuse 400; exclusive-only assets may rename', async () => {
+  // shared skill: content.name is the materialization path — renaming would
+  // fan out file-creates that overwrite same-root files of other bots
+  const { asset: sk } = await (await post('/api/assets', {
+    type: 'skill', name: 'guard-skill', content: { name: 'guard-skill', description: 'd', body: 'B' },
+  })).json();
+  assert.equal((await post('/api/bots/ab1/assets', { assetId: sk.id, mode: 'shared' })).status, 200);
+  const rename = await patch(`/api/assets/${sk.id}`, { content: { name: 'guard-skill-2', description: 'd', body: 'B' } });
+  assert.equal(rename.status, 400);
+  assert.match((await rename.json()).error, /该资产有配发绑定，改名需先解绑（避免跨员工文件冲突）/);
+  assert.equal(loadAssets(join(dataDir, 'assets.json')).assets.find((a) => a.id === sk.id).content.name, 'guard-skill', 'registry keeps the structural key');
+  // same structural key, body edit → still the eager fan-out path (200)
+  const bodyEdit = await patch(`/api/assets/${sk.id}`, { content: { name: 'guard-skill', description: 'd', body: 'B2' } });
+  assert.equal(bodyEdit.status, 200);
+  assert.deepEqual((await bodyEdit.json()).rematerialized, ['ab1']);
+  // unbind frees the structural key again
+  await del(`/api/bots/ab1/assets/${sk.id}`);
+  assert.equal((await patch(`/api/assets/${sk.id}`, { content: { name: 'guard-skill-2', description: 'd', body: 'B2' } })).status, 200);
+  await req(`/api/assets/${sk.id}`, 'DELETE');
+
+  // shared mcp: the serverId SET is the structural key — rename AND removal both refuse
+  const { asset: mc } = await (await post('/api/assets', {
+    type: 'mcp', name: 'guard-mcp', content: { servers: { alpha: { command: 'node' } } },
+  })).json();
+  await post('/api/bots/ab1/assets', { assetId: mc.id, mode: 'shared' });
+  const serverRename = await patch(`/api/assets/${mc.id}`, { content: { servers: { beta: { command: 'node' } } } });
+  assert.equal(serverRename.status, 400);
+  assert.match((await serverRename.json()).error, /该资产有配发绑定，改名需先解绑/);
+  // same serverId, edited args → allowed (no structural change)
+  assert.equal((await patch(`/api/assets/${mc.id}`, { content: { servers: { alpha: { command: 'node', args: ['x'] } } } })).status, 200);
+  await del(`/api/bots/ab1/assets/${mc.id}`);
+  await req(`/api/assets/${mc.id}`, 'DELETE');
+
+  // exclusive-only asset: snapshots never fan out (§6) → rename is safe
+  const { asset: ex } = await (await post('/api/assets', {
+    type: 'skill', name: 'ex-skill', content: { name: 'ex-skill', description: 'd', body: 'E1' },
+  })).json();
+  await post('/api/bots/ab1/assets', { assetId: ex.id, mode: 'exclusive' });
+  const exRename = await patch(`/api/assets/${ex.id}`, { content: { name: 'ex-skill-2', description: 'd', body: 'E1' } });
+  assert.equal(exRename.status, 200);
+  assert.equal((await exRename.json()).asset.content.name, 'ex-skill-2');
+  assert.equal(loadBots(join(dataDir, 'bots.json')).bots.find((b) => b.id === 'ab1').assets[0].snapshot.name, 'ex-skill', 'exclusive snapshot stays frozen through the rename');
+  await del(`/api/bots/ab1/assets/${ex.id}`);
+  await req(`/api/assets/${ex.id}`, 'DELETE');
+});
+
 test('POST /api/bots/:id/rematerialize-assets: deterministic retry endpoint (empty plan = cleanup-only)', async () => {
   const r = await post('/api/bots/ab1/rematerialize-assets', {});
   assert.equal(r.status, 200);

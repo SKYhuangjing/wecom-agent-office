@@ -766,6 +766,19 @@ async function createAssetOp(state, body, { origin = 'operator' } = {}) {
   return { asset: publicAsset(state, asset) };
 }
 
+// v2 终审 [Important]: the on-disk identity keys an asset materializes under
+// — skill content.name (the SKILL.md directory) and mcp serverIds (the
+// wao-<serverId> config keys, §3.3). A shared-bound PATCH renaming these fans
+// out file-creates that silently overwrite same-root files materialized for
+// OTHER bots (the §2.3 bind-time conflict matrix never re-runs on PATCH), so
+// they are immutable while any shared binding exists. Exclusive-only assets
+// stay patchable — snapshots never fan out (§6).
+const structuralKeysOf = (type, content) => {
+  if (type === 'skill') return typeof content?.name === 'string' ? [`skill:${content.name}`] : [];
+  if (type === 'mcp' && isObject(content?.servers)) return Object.keys(content.servers).sort().map((s) => `mcp:${s}`);
+  return [];
+};
+
 async function updateAssetOp(state, id, patchBody, { mcpFace = false } = {}) {
   const asset = findAsset(state, id);
   if (asset == null) throw httpError(404, 'asset not found');
@@ -794,6 +807,13 @@ async function updateAssetOp(state, id, patchBody, { mcpFace = false } = {}) {
       ? { content: restoreMaskedContent(patchBody.content, asset.content, asset.type) }
       : {}),
   };
+  // Shared-bound structural keys are immutable (see structuralKeysOf): the
+  // eager fan-out would write the renamed product without the bind-time
+  // cross-bot conflict matrix ever seeing it. Unbind shared first.
+  if (botsBoundTo(state, id, 'shared').length > 0
+    && structuralKeysOf(asset.type, asset.content).join('\u0000') !== structuralKeysOf(merged.type, merged.content).join('\u0000')) {
+    throw httpError(400, '该资产有配发绑定，改名需先解绑（避免跨员工文件冲突）');
+  }
   const errors = validateAsset(merged, { others: state.assetsDoc.assets.filter((a) => a !== asset) });
   if (errors.length > 0) {
     const err = httpError(400, errors.join('; '));

@@ -583,6 +583,35 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
       return conflicts;
     },
 
+    // v2 终审 [Minor]: detectFileConflicts is manifest-blind — a same-root bot
+    // WITHOUT a manifest (bound but never materialized here, or its manifest
+    // was wiped) is an unchecked overlap the conflict scan silently skips.
+    // Minimal adjudicated fallback: name those bots so the bind receipt can
+    // warn 「rematerialize first」 instead of silence. Face roots only — the
+    // WAO dataDir is in every bot's jail root set but is never a shared
+    // materialization face.
+    async detectUnverifiedSharedRoots(bot, plan = [], allBots = []) {
+      const mine = await planWrites(bot, plan, { dryRun: true }).catch(() => null);
+      const targets = (mine?.writes ?? [])
+        .map((w) => w?.target)
+        .filter((t) => typeof t === 'string')
+        .map((t) => resolve(t));
+      if (targets.length === 0) return [];
+      const dataRoot = resolve(dataDir);
+      const faceRootsOf = (b) => allowedRootsOf(b).filter((r) => r !== dataRoot);
+      const out = [];
+      for (const other of allBots) {
+        if (!isObject(other) || other.id === bot.id) continue;
+        if (readManifest(other.id) != null) continue; // covered by the real scan
+        // a bot with no bindings never materialized anything — nothing to collide
+        if (!Array.isArray(other.assets) || other.assets.length === 0) continue;
+        const overlap = faceRootsOf(other)
+          .some((r) => targets.some((t) => t === r || t.startsWith(r + sep)));
+        if (overlap) out.push(other.id);
+      }
+      return out;
+    },
+
     memoryWarning(bot) {
       if (bot?.provider === 'dsh') return null; // memory rides personaPrefix, not cwd files (§3.3)
       if (dedicatedDirOf(bot) !== undefined) return null;
