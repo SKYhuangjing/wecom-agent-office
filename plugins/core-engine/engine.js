@@ -82,6 +82,54 @@ const HANDOFF_HEADER = '以下是本对话此前的记录（供上下文参考�
 // timeline row here: the closing 'turn' row already carries the outcome.
 const EV_TO_KIND = { step: 'step', tool: 'tool', thinking: 'thinking', text: 'turn' };
 
+// —— per-run token usage accumulator (cost-tracker & co) ————————————————————
+// Providers report usage in three dialects on their events:
+//   dsh     status{phase:'step_end', usage:{inputTokens, outputTokens,
+//           totalTokens, cacheReadTokens}}                     (camelCase)
+//   claude  result {usage:{input_tokens, output_tokens, cache_read_input_tokens}}
+//   codex   turn.completed {usage:{input_tokens, cached_input_tokens,
+//           output_tokens}} — the codex runner also hands a normalized copy
+//           back on result.reason.usage
+// (probe-baselines/*.ndjson are the pinned sources). Everything normalizes to
+// one camelCase shape. Counts are RUNNING TOTALS of the same run — dsh
+// step_end re-reports the turn-so-far — so each field keeps the MAX seen,
+// never a sum: a cumulative reporter would double-count.
+const num = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+const maxKeep = (cur, v) => (v != null && v > cur ? v : cur);
+
+export function createUsageAccumulator() {
+  const max = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, totalTokens: 0 };
+  const observe = (usage) => {
+    if (usage == null || typeof usage !== 'object') return;
+    max.inputTokens = maxKeep(max.inputTokens, num(usage.inputTokens ?? usage.input_tokens));
+    max.outputTokens = maxKeep(max.outputTokens, num(usage.outputTokens ?? usage.output_tokens));
+    // claude says cache_read_input_tokens, codex says cached_input_tokens —
+    // both are the prompt-cache-read bucket.
+    max.cacheReadTokens = maxKeep(max.cacheReadTokens, num(usage.cacheReadTokens
+      ?? usage.cache_read_input_tokens ?? usage.cached_input_tokens ?? usage.cache_read_tokens));
+    max.totalTokens = maxKeep(max.totalTokens, num(usage.totalTokens ?? usage.total_tokens));
+  };
+  return {
+    // Any unified event may carry usage (runners forward what their CLI
+    // reported); events without usage are ignored.
+    observe: (ev) => observe(ev?.usage),
+    // The settled run result is the last usage source: codex's runner returns
+    // reason.usage (normalized), a runner forwarding the CLI result verbatim
+    // may put usage at the top level instead.
+    observeResult: (result) => {
+      observe(result?.reason?.usage);
+      observe(result?.usage);
+    },
+    summary: () => ({
+      inputTokens: max.inputTokens,
+      outputTokens: max.outputTokens,
+      cacheReadTokens: max.cacheReadTokens,
+      // Providers that report no total (claude/codex) still get a sane one.
+      totalTokens: Math.max(max.totalTokens, max.inputTokens + max.outputTokens),
+    }),
+  };
+}
+
 export async function defaultRunTurn(bot, msg, ac) {
   const engine = this;
   // A bare engine (kernel boot) has no wiring: skip loudly instead of crashing
@@ -107,8 +155,14 @@ export async function defaultRunTurn(bot, msg, ac) {
   const hardTimeoutMs = L.hardTimeoutMs;
   const budgetPerMin = L.outboundBudgetPerMin;
   // Masking is ALWAYS on: an injected middleware may replace the pattern, but
-  // a missing one must not silently become a passthrough.
-  const maskFn = engine.middleware?.maskOutbound ?? maskOutbound;
+  // a missing one must not silently become a passthrough. `middleware` may be
+  // a single impl, a LIST of impls (PLUGIN-DEV §5.5 chain port) or null.
+  const middlewareImpls = engine.middleware == null ? []
+    : Array.isArray(engine.middleware) ? engine.middleware : [engine.middleware];
+  const maskImpls = middlewareImpls.filter((mw) => typeof mw?.maskOutbound === 'function');
+  const maskFn = maskImpls.length > 0
+    ? (text) => maskImpls.reduce((t, mw) => mw.maskOutbound(t), text)
+    : maskOutbound;
   const describeError = runner.describeError ?? bot.describeError
     ?? ((r) => `任务失败（${r?.code ?? 'error'}）`);
 
@@ -258,8 +312,32 @@ export async function defaultRunTurn(bot, msg, ac) {
   });
 
   let answer = '';
+  // Per-run usage (cost-tracker ctx): zeros at run start, fed by every usage
+  // event onEvent sees. Local to THIS turn on purpose — the same bot may run
+  // turns in several chats concurrently (cross-chatKey parallelism), so a
+  // bot-keyed accumulator would blend runs.
+  const usageAcc = createUsageAccumulator();
+  // onOutbound (PLUGIN-DEV §5.5): the outbound middleware that may TRANSFORM
+  // the final reply text (cost-tracker's token footer & co). Only the
+  // completed branch's final frame passes here — progress/heartbeat frames
+  // and aborted/timeout maintenance banners never do. A throwing middleware
+  // is isolated: a broken plugin must never eat a live reply.
+  const runOnOutbound = async (text, ctx) => {
+    let out = text;
+    for (const mw of middlewareImpls) {
+      if (typeof mw?.onOutbound !== 'function') continue;
+      try {
+        const next = await mw.onOutbound(out, ctx);
+        if (typeof next === 'string') out = next;
+      } catch (e) {
+        engine.log.warn?.(`engine: onOutbound middleware failed: ${e?.message ?? e}`);
+      }
+    }
+    return out;
+  };
   const onEvent = (ev) => {
     try {
+      usageAcc.observe(ev);
       if (ev?.type === 'text' && typeof ev.text === 'string') answer = ev.text; // cumulative
       if (politeStyle && ev?.type === 'step' && Number.isFinite(ev.n)) politeStep = ev.n;
       let line = null;
@@ -449,16 +527,27 @@ export async function defaultRunTurn(bot, msg, ac) {
       }
     }
     if (result == null) result = synthError(new Error('runner resolved without a result'));
+    usageAcc.observeResult(result); // last usage source (codex reason.usage & co)
     runSettled = true; // runner promise settled: the warn/hard windows are closed from here on
     const effCode = result.code === 'aborted' && hardTimedOut ? 'timeout' : result.code;
     switch (effCode) {
       case 'completed': {
         // Push carries the FULL text (the adapter chunks it, §6.7); a stream
         // final is capped at maxContentChars with the 会话页 pointer.
-        const full = maskFn(result.finalText || EMPTY_DONE_TEXT);
-        if (backgroundMode && pushable) await sendPush(full);
-        else if (streaming) await sendProgress(truncateTo(full, TRUNC_FINAL), true);
-        else await sendReply(truncateTo(full, TRUNC_FINAL));
+        // onOutbound runs on the final reply ONLY, after mask+truncate so an
+        // appended footer survives the 会话页 cut; the product is masked
+        // again — masking is ALWAYS on, even for middleware-injected text.
+        const outCtx = {
+          bot,
+          usage: usageAcc.summary(),
+          model: bot.providerConfig?.model?.model || 'unknown',
+          durationMs: Date.now() - startedAt,
+        };
+        const base = maskFn(result.finalText || EMPTY_DONE_TEXT);
+        const finalize = async (text) => maskFn(await runOnOutbound(text, outCtx));
+        if (backgroundMode && pushable) await sendPush(await finalize(base));
+        else if (streaming) await sendProgress(await finalize(truncateTo(base, TRUNC_FINAL)), true);
+        else await sendReply(await finalize(truncateTo(base, TRUNC_FINAL)));
         break;
       }
       case 'aborted': {

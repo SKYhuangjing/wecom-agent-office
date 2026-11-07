@@ -253,6 +253,22 @@ node src/index.js start --port 8792 &   # 或任一实例
 ctx.registerMiddleware({ onInbound, onOutbound }); // 链式：入站消息过滤/出站掩码等
 ```
 
+`maskOutbound(text)`：每个出站帧（进度/心跳/最终回复）都会过——注册表里所有具名实现依序组合，
+一个都没有时用内核内置掩码（掩码永远在，不因缺实现而放行）。
+
+`onOutbound(text, ctx)`：**只挂在最终回复**（completed 分支；进度帧与超时/打断维护文案不经过），
+可改写文本（返回新字符串；返回非字符串视为未改写；抛错被隔离并记 warn——坏插件吃不掉线上回复）。
+`ctx` 携带本轮运行元数据：
+
+| 字段 | 形状 | 说明 |
+| --- | --- | --- |
+| `ctx.bot` | bot 记录 | 含 `assets` 绑定（按 bot 过滤的中间件在此做开关，如 cost-tracker） |
+| `ctx.usage` | `{inputTokens, outputTokens, cacheReadTokens, totalTokens}` | 本轮累计（dsh/claude/codex 三种上报方言归一，`createUsageAccumulator`） |
+| `ctx.model` | `string` | `providerConfig.model.model`，缺省 `'unknown'` |
+| `ctx.durationMs` | `number` | 本轮耗时 |
+
+实现样例：`plugins/cost-tracker/`（按 bot 资产绑定开关的 Token 用量尾行）。
+
 ### 5.6 `progressor`
 
 ```js

@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- onOutbound 最终回复中间件面（PLUGIN-DEV §5.5 落地，cost-tracker 首个消费方）：completed
+  分支的最终回复经 `middleware.onOutbound(text, ctx)`，ctx 携带 `{bot, usage, model,
+  durationMs}`；进度帧/心跳/打断超时文案不经过；中间件抛错被隔离（warn + 原文照发），
+  其产物仍过 maskOutbound。`createUsageAccumulator()`（engine.js 导出）按轮归一
+  dsh/claude/codex 三种 usage 上报方言（运行总量取 max）。plugin.js 的 engine.middleware
+  换成注册表实时链视图（lifecycle 原地拼接，掩码语义不变）。
+
 ### Changed
 
 - checkBind 解除 dsh×mcp 全量拒绑（W3 T6，provider-dsh 补 MCP 资产面）：dsh bot 现可绑

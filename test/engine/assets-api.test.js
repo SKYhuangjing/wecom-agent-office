@@ -150,8 +150,12 @@ test('POST /api/assets: creates with origin:operator, server-set fields refused,
   assert.equal(asset.origin, 'operator');
   assert.ok(Number.isFinite(asset.createdAt));
   const onDisk = loadAssets(join(dataDir, 'assets.json'));
-  assert.equal(onDisk.assets.length, 1);
-  assert.equal(onDisk.assets[0].name, 'wao-company');
+  // cost-tracker (active in every boot with the real plugins dir) auto-
+  // registers its tool asset, so the registry is no longer born empty —
+  // count only what THIS operator face created.
+  const mine = onDisk.assets.filter((a) => a.origin === 'operator');
+  assert.equal(mine.length, 1);
+  assert.equal(mine[0].name, 'wao-company');
   // 0600 pin (§8.4): the registry lands owner-only, like bots.json
   assert.equal(statSync(join(dataDir, 'assets.json')).mode & 0o777, 0o600);
 

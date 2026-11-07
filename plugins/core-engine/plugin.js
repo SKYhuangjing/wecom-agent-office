@@ -57,6 +57,33 @@ export default {
     ctx.registerProgressor(progressor);
     ctx.registerMiddleware({ maskOutbound });
 
+    // Live middleware chain over the port registry (PLUGIN-DEV §5.5): the
+    // lifecycle splices the registry list IN PLACE, so both views below walk
+    // it at CALL time — a middleware plugin (cost-tracker & co) that
+    // activates after core-engine is still seen, and its teardown drops it
+    // again. The builtin maskOutbound rides the same list (registered above),
+    // so masking semantics are unchanged; onOutbound runs only on the final
+    // reply (engine.js) with per-impl error isolation so one broken plugin
+    // can never eat a live reply. Bare-lifecycle tests (no ports service)
+    // keep the plain builtin object, exactly the pre-chain shape.
+    const middleware = ports != null ? {
+      maskOutbound: (text) => ports.middleware.reduce(
+        (t, { impl }) => (typeof impl?.maskOutbound === 'function' ? impl.maskOutbound(t) : t), text),
+      onOutbound: async (text, outCtx) => {
+        let out = text;
+        for (const { impl } of ports.middleware) {
+          if (typeof impl?.onOutbound !== 'function') continue;
+          try {
+            const next = await impl.onOutbound(out, outCtx);
+            if (typeof next === 'string') out = next;
+          } catch (e) {
+            log.warn?.(`core-engine: onOutbound middleware failed: ${e?.message ?? e}`);
+          }
+        }
+        return out;
+      },
+    } : { maskOutbound };
+
     // Per-bot runtime resolution: the engine's getRunner/getAdapter read
     // these maps, so a bot's runtime is created at attach and dies at detach.
     const adapters = new Map();       // botId → channel adapter
@@ -112,7 +139,7 @@ export default {
       ledgerFactory: ledgerFor,
       timeline,
       progressor,
-      middleware: { maskOutbound },
+      middleware,
     });
 
     // The service channels call for inbound (T17: engine.onMessage(bot, msg)).
