@@ -65,6 +65,38 @@ body {
   .sidebar { position: sticky; top: 0; height: 100vh; overflow-y: auto; }
 }
 
+/* —— 侧栏 aside 挂载点 + AI 接入小卡（插件经 registerAside 注册）——————— */
+.aside-slot {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.side-ai { display: flex; flex-direction: column; gap: 7px; }
+.side-ai-head {
+  display: flex; align-items: center; gap: 6px;
+  color: var(--ink); font-weight: 600; font-size: 12.5px;
+}
+.side-ai-head svg { color: var(--accent); flex: none; }
+.side-ai-status {
+  display: flex; align-items: center; gap: 6px;
+  color: var(--muted); font-size: 11.5px; line-height: 1.4;
+}
+.side-ai-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+.side-ai-on .side-ai-dot { background: var(--ok); }
+.side-ai-idle .side-ai-dot { background: var(--accent); }
+.side-ai-off .side-ai-dot { background: var(--warn); }
+.side-ai-actions { display: flex; gap: 6px; }
+.side-ai-btn {
+  flex: 1; padding: 4px 6px; font-size: 11.5px; cursor: pointer;
+  border: 1px solid var(--line); border-radius: var(--r-ctl);
+  background: var(--panel); color: var(--ink);
+  transition: all 0.15s ease; white-space: nowrap;
+}
+.side-ai-btn:hover { background: var(--panel-2); border-color: var(--accent); }
+
 .brand {
   display: flex;
   align-items: center;
@@ -328,6 +360,8 @@ body {
   .brand { padding: 0 12px 0 0; margin-bottom: 0; border-bottom: none; }
   .nav-item { flex: none; padding: 6px 10px; }
   .main { padding: 14px 16px 24px; }
+  /* 横栏形态放不下小卡：AI 接入入口仍在 设置 → AI 操作 */
+  .aside-slot { display: none; }
 }
 
 /* 手机宽度（走查 L10/L11）：顶栏三个入口要挤进一屏、时钟胶囊去标签 */

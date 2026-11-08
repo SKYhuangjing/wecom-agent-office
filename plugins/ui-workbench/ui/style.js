@@ -383,25 +383,8 @@ const CSS = `
 }
 .ov-act-row:hover { border-color: #CBD5E1; }
 
-/* —— v2 AI 操作引导：总览引导卡 + 设置 AI section + 机器人详情提示行 ———— */
-/* 引导卡：细条 + accent 左边框——低调但可见，不抢 3D 主视觉焦点 */
-.ov-ai-card {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px;
-  background: color-mix(in srgb, var(--accent) 5%, var(--panel));
-  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
-  border-left: 3px solid var(--accent);
-  border-radius: 12px; padding: 10px 14px; margin-top: 14px;
-  box-shadow: var(--shadow-sm);
-}
-.ov-ai-icon { flex: none; color: var(--accent); display: inline-flex; }
-.ov-ai-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 300px; }
-.ov-ai-title { font-weight: 700; font-size: 13.5px; color: var(--ink); }
-.ov-ai-copy { font-size: 12.5px; color: var(--muted); }
-.ov-ai-actions { display: flex; gap: 8px; flex: none; }
-.ov-ai-status { flex: 1 1 100%; font-size: 12px; }
-.ov-ai-on { color: var(--ok); }
-.ov-ai-idle { color: var(--muted); }
-.ov-ai-off { color: var(--warn); }
+/* —— v2 AI 操作引导：设置 AI section + 机器人详情提示行（总览大卡已收敛为
+   shell 侧栏小卡，样式随 shell styles.css 的 .side-ai，见走查后迭代）————— */
 
 /* 小号按钮（配置块/工具行内联动作） */
 .wb-btn-sm { padding: 3px 10px; font-size: 12px; }

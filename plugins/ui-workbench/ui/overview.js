@@ -11,7 +11,7 @@ import { IconEl } from './icons.js';
 import { bannerText } from './_legacy/list.js';
 import { goRobots } from './robots.js';
 import { KIND_LABEL, KIND_ICON, fmtClock } from './_legacy/timeline.js';
-import { claudeMcpJson, copyText, goSettingsAi, mcpUrl, useMcpStatus } from './ai-access.js';
+import { claudeMcpJson, copyText, goSettingsAi, mcpUrl, useMcpStatus, apiErrText } from './ai-access.js';
 
 // 办公室 3D 页面模块（方案 A 内嵌）：先查注册表（shell 会 import 全部 ui 插件
 // entry，office3d hidden 注册在表里），查不到再拉同源模块——import 模块缓存
@@ -53,11 +53,11 @@ const OfficeEmbed = ({ WAO }) => {
   return h('div', { className: 'ov-embed' }, h(page.component, { WAO }));
 };
 
-// AI 操作引导卡：Web 是看的，MCP/Skill 是操作的——落地页主动铺路。数据来自
-// mcp-gateway 的 /api/mcp（5 秒轮询）：有活跃会话报「✓ N 个 AI 会话活跃」，
-// 网关在但没有连接推「把配置贴进你的 CLI」，插件停用/断联则给未检测到文案。
-// 低调但可见：细条 + accent 左边框，不抢 3D 主视觉的焦点。
-const AiGuideCard = ({ WAO }) => {
+// AI 操作侧栏小卡（用户反馈：总览页整宽引导卡占位太大→挪到左侧菜单下方）：
+// 复用 /api/mcp 数据面（useMcpStatus 5 秒轮询），一行状态 + 复制配置 + 接入
+// 指南两个小按钮；完整版仍在 设置 → AI 操作。经 index.js registerAside 挂到
+// shell 侧栏，随插件启停。
+export const AiGuideAside = ({ WAO }) => {
   const { h, useState } = WAO;
   const { status, error } = useMcpStatus(WAO);
   const [copied, setCopied] = useState(null); // 'ok' | 'fail' | null
@@ -68,35 +68,31 @@ const AiGuideCard = ({ WAO }) => {
     setTimeout(() => setCopied(null), 1800);
   };
 
-  const statusLine = status != null
-    ? (status.sessions > 0
-      ? { cls: 'ov-ai-on', text: `✓ ${status.sessions} 个 AI 会话活跃（MCP 网关在线，共 ${status.tools.length} 个工具）` }
-      : { cls: 'ov-ai-idle', text: 'MCP 网关在线，还没有 AI 连接——把配置贴进你的 CLI 即可' })
-    : { cls: 'ov-ai-off', text: '状态：未检测到 AI 连接（MCP 网关未启用或不可达——接入方法见「去设置页查看」）' };
+  const dot = status != null ? (status.sessions > 0 ? 'on' : 'idle') : 'off';
+  const line = status != null
+    ? (status.sessions > 0 ? `${status.sessions} 个 AI 会话活跃` : '网关在线，等待 AI 连接')
+    : '网关不可达';
 
-  return h('section', {
-    className: 'ov-ai-card',
-    'aria-label': '用 AI 操作 WAO',
-  },
-  h('span', { className: 'ov-ai-icon' }, h(IconEl, { h, name: 'plug', size: 16 })),
-  h('div', { className: 'ov-ai-main' },
-    h('span', { className: 'ov-ai-title' }, '用 AI 操作 WAO'),
-    h('span', { className: 'ov-ai-copy' },
-      '连接你的 Claude / Codex / ZCode 到 WAO，直接对话式管理机器人、查日志、配工具。')),
-  h('div', { className: 'ov-ai-actions' },
-    h('button', {
-      className: 'wb-btn', title: `复制 MCP 配置 JSON（${mcpUrl()}）`,
-      onClick: () => void onCopy(),
-    }, copied === 'ok' ? '✓ 已复制' : copied === 'fail' ? '复制失败，去设置页复制' : '复制 MCP 配置'),
-    h('button', {
-      className: 'wb-btn', title: '跳到设置页的 AI 操作指南（三家 CLI 的接入配置都在那里）',
-      onClick: () => goSettingsAi(),
-    }, '去设置页查看')),
-  h('span', {
-    className: `ov-ai-status ${statusLine.cls}`,
-    title: `${mcpUrl()}${error != null ? `\n探测原因：${error}` : ''}`,
-  }, statusLine.text));
+  return h('div', { className: 'side-ai' },
+    h('div', { className: 'side-ai-head' },
+      h(IconEl, { h, name: 'plug', size: 13 }),
+      h('span', null, '用 AI 操作')),
+    h('div', {
+      className: `side-ai-status side-ai-${dot}`,
+      title: `${mcpUrl()}${error != null ? `\n探测原因：${apiErrText(error)}` : ''}`,
+    }, h('span', { className: 'side-ai-dot' }), line),
+    h('div', { className: 'side-ai-actions' },
+      h('button', {
+        className: 'side-ai-btn', title: `复制 MCP 配置 JSON（${mcpUrl()}）`,
+        onClick: () => void onCopy(),
+      }, copied === 'ok' ? '✓ 已复制' : copied === 'fail' ? '复制失败' : '复制配置'),
+      h('button', {
+        className: 'side-ai-btn', title: '设置 → AI 操作：三家 CLI 的完整接入配置',
+        onClick: () => goSettingsAi(),
+      }, '接入指南')));
 };
+
+export const aiAside = { id: 'ai-guide', component: AiGuideAside };
 
 // 状态卡片叠加视图：_legacy/list.js 的精简版——名称/状态/进度行/暂停启用开关
 // + 详情/测试运行两个快捷按钮；标题点击进机器人详情。
@@ -243,7 +239,6 @@ export default {
         }, '＋ 创建机器人')),
       error != null ? h('div', { className: 'error', style: { marginTop: 12 } },
         bannerText('加载机器人列表失败：', error)) : null,
-      h(AiGuideCard, { WAO }),
       view === 'office' && error == null ? h(OfficeEmbed, { WAO }) : null,
       view === 'office' && error == null ? null : h('div', { style: { marginTop: 14 } },
         h(BotCards, { WAO, agents, busyId, onToggle: toggle, actionError })),

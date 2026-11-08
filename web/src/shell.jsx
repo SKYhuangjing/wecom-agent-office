@@ -24,6 +24,19 @@ const registerPage = (desc) => {
 };
 const getPage = (id) => pages.get(id) ?? null;
 
+// Sidebar aside registry（走查后迭代）: a compact extension surface below the
+// nav — e.g. the AI-接入小卡. Same simple contract as registerPage (mount at
+// registration, no unmount lifecycle); components follow the WAO contract and
+// render through the same guarded PageView.
+const asides = new Map(); // id → {id, component}
+let pushAside = null; // set by <Shell/> once state exists
+const registerAside = (desc) => {
+  if (desc == null || typeof desc.id !== 'string' || desc.id === '') return;
+  if (typeof desc.component !== 'function') return;
+  asides.set(desc.id, desc);
+  pushAside?.(desc);
+};
+
 // 旧路由迁移（9→3 页重构）：#/bots 等旧地址映射到新页；未知 hash 此前会
 // 静默渲染首页——URL 与内容/导航高亮错位，旧书签用户会迷路（走查 L9）。
 const LEGACY_ROUTES = {
@@ -41,6 +54,7 @@ const WAO = {
   api, useAgents, useTimeline, useSSE,
   avatar, avatarUrl,
   registerPage, getPage,
+  registerAside,
 };
 globalThis.WAO = WAO;
 window.WAO = WAO;
@@ -113,6 +127,11 @@ const Shell = () => {
   const [loadErrors, setLoadErrors] = useState(() => new Map());
   const [sources, setSources] = useState([]);
   const [active, setActive] = useState(() => location.hash.slice(2) || null);
+  const [asideList, setAsideList] = useState(() => [...asides.values()]);
+
+  pushAside = useCallback((desc) => {
+    setAsideList((prev) => (prev.some((a) => a.id === desc.id) ? prev : [...prev, desc]));
+  }, []);
 
   pushPage = useCallback((desc) => {
     setList((prev) => (prev.some((p) => p.id === desc.id) ? prev : [...prev, desc]));
@@ -201,6 +220,10 @@ const Shell = () => {
         ),
       ),
       sorted.length > 0 ? navItems.map(nav) : h('div', { className: 'nav-item muted' }, '（加载中…）'),
+      // 插件注册的侧栏小卡（菜单下方）：渲染走 PageView——aside 崩了变归因
+      // 卡片，导航与页面不受牵连
+      asideList.length > 0 ? h('div', { className: 'aside-slot' },
+        asideList.map((a) => h(PageView, { key: a.id, mod: a }))) : null,
     ),
     h('main', { className: 'main' },
       h(PunchClock),
