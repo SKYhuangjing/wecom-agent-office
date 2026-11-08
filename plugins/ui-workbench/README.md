@@ -10,14 +10,14 @@
 
 | 页 id | 标题 | 内容 |
 | --- | --- | --- |
-| `overview` | 总览（落地页） | 办公室 3D 为主视觉（`WAO.getPage('office3d')` 内嵌渲染 ui-office3d 插件页面，未注册时同源兜底 import；该插件 `hidden: true` 不占导航）+ 状态卡片视图（`_legacy/list.js` 精简版：化身/状态徽标/进度行/调休返岗开关/机器人配置·测试运行快捷键）+ 最近活动摘要（最近 5 条，点击行跳机器人详情日志 tab） |
-| `robots` | 机器人 | 花名册（化身+状态徽标）+ 入职向导五步（`_legacy/wizard.js`，第 3.5 步配发装备可跳过）+ 离职面谈；详情四 tab：**会话**（`_legacy/session.js` 按 bot 固定：台账 chatKey 归档 + 引擎会话钻取 + 导出）、**日志**（`_legacy/timeline.js` 按 bot 固定：5/15/30 分钟窗事件流）、**工具**（`_legacy/assets.js` 装备台精简为 per-bot：绑定表/配置/卸下/重物化 + 回执）、**设置**（`_legacy/bots.js` 编辑表单：分组折叠 + schema 动态渲染 + sticky 保存栏 + 岗前测试）+ 「发送消息」按钮（`_legacy/push.js` 精简为 dialog：选会话→填内容→`POST /api/send`） |
-| `settings` | 设置 | **工具库**（`_legacy/assets.js` 整页内嵌：清单 CRUD + 装备台双视图，深链不变）、**插件**（`_legacy/plugins.js` 整页内嵌：启停/四阶段重载）、**系统信息**（/healthz 版本 + /api/state 运行时间·PID·数据目录·插件与页面清单；数据目录字段随 v2 一并入 /api/state） |
+| `overview` | 总览（落地页） | **AI 操作引导卡**（v2 新增：Web 是看的，MCP/Skill 是操作的——复制 MCP 配置 / 跳完整指南；`/api/mcp` 5 秒轮询报「✓ N 个 AI 会话活跃」，网关未启用给引导文案）+ 办公室 3D 为主视觉（`WAO.getPage('office3d')` 内嵌渲染 ui-office3d 插件页面，未注册时兜底同源 import；该插件 `hidden: true` 不占导航）+ 状态卡片视图（`_legacy/list.js` 精简版：化身/状态徽标/进度行/调休返岗开关/机器人配置·测试运行快捷键）+ 最近活动摘要（最近 5 条，点击跳机器人详情日志 tab） |
+| `robots` | 机器人 | 花名册（化身+状态徽标）+ 入职向导五步（`_legacy/wizard.js`，第 3.5 步配发装备可跳过）+ 离职面谈；详情页头部有 **AI 操作提示行**（v2 新增：「帮我暂停 ××」→ set_duty、推送 → broadcast，一键跳设置 → AI 操作）+ 四 tab：**会话**（`_legacy/session.js` 按 bot 固定：台账 chatKey 归档 + 引擎会话钻取 + 导出）、**日志**（`_legacy/timeline.js` 按 bot 固定：5/15/30 分钟窗事件流）、**工具**（`_legacy/assets.js` 装备台精简为 per-bot：绑定表/配置/卸下/重物化 + 回执）、**设置**（`_legacy/bots.js` 编辑表单：分组折叠 + schema 动态渲染 + sticky 保存栏 + 岗前测试）+ 「发送消息」按钮（`_legacy/push.js` 精简为 dialog：选会话→填内容→`POST /api/send`） |
+| `settings` | 设置 | **AI 操作**（v2 新增、第一 section：MCP 端点 + Claude/Codex/ZCode 三家配置——复制/下载，检测到本机已存令牌时自动附 `X-WAO-Token` 头 + 19 工具清单（高危标记，`?ai-tools=1` 深链展开）+ skill 文件下载/复制（`/api/mcp/skill` 按需拉取）+ MCP 连通性测试（无会话探测，应答 -32002 即活，不占会话名额）；共享逻辑在 `ui/ai-access.js`）、**工具库**（`_legacy/assets.js` 整页内嵌：清单 CRUD + 装备台双视图，深链不变）、**插件**（`_legacy/plugins.js` 整页内嵌：启停/四阶段重载）、**系统信息**（/healthz 版本 + /api/state 运行时间·PID·数据目录·插件与页面清单） |
 
 跨页交接：总览（卡片/活动行/快捷键）经 sessionStorage handoff
 （`wao-robots-handoff`：`{id, tab, test}`）跳进机器人详情；顶栏状态条的链接全部指向
 新三页。深链：`#/overview`、`#/robots?select=new&step=N`（向导第 N 步）、
-`#/robots?select=<botId>&tab=session|logs|tools|settings`、`#/settings?section=system`、
+`#/robots?select=<botId>&tab=session|logs|tools|settings`、`#/settings?section=ai[&ai-tools=1]`（AI 操作/工具清单展开）、`#/settings?section=system`、
 `#/settings&view=equip&bot=<id>`（内嵌装备台）；hidden 页 `#/office3d` 仍可路由。
 旧页 id（workbench/bots/assets/session/push/plugins/timeline）不再存在——书签请换新锚点。
 
@@ -41,14 +41,17 @@ UI 主层公司话（入职/离职/调休/工位/工单…），技术词（prov
 资产面 `GET/POST /api/assets`、`GET/PATCH/DELETE /api/assets/:id`（mcp 位置掩码
 `__MASKED__` 回写=不改）、`POST /api/bots/:id/assets`、`DELETE
 /api/bots/:id/assets/:assetId`、`POST /api/bots/:id/rematerialize-assets`（回执
-rematerialized/failed/writes/notes）。v2 起 `/api/state` 追加只读 `dataDir`。
+rematerialized/failed/writes/notes）。v2 起 `/api/state` 追加只读 `dataDir`；AI 操作面 `GET /api/mcp`
+（会话数 + 工具清单，mcp-gateway 提供）与 `GET /api/mcp/skill`（Agent 技能文件全文）。
+复制/下载/探测的共享实现在 `ui/ai-access.js`（clipboard API 优先、textarea+execCommand 兜底；
+Blob+objectURL 下载；探测向 /mcp 发无会话 tools/list，5 秒判超时）。
 
 SSE：`agent/progress`/`agent/status`/`run/start`/`run/end`/`ledger/turn`（engine 在 run 进入
 working、recordTurn 后与退出 working 时 emit；SDK `useTimeline`/`useAgents` 据此刷新）。
 
 ## 截图验证（改 UI 红线）
 
-统一走仓库脚本（CDP 精确控深浅色，30 张基线入库）：
+统一走仓库脚本（CDP 精确控深浅色，33 张基线入库）：
 
 ```sh
 bash test/ui-shot.sh
@@ -58,8 +61,9 @@ bash test/ui-shot.sh
 assetWarnings/assetTools、一停用带 providerMissing 橙点；wecom 渠道 + dsh/claude/codex 三
 provider 的真实 schema 形态；台账四轮含被打断/超时；原生会话带截断标记；八插件含
 disabled 与 failed；时间线六种 kind 全覆盖；四资产 + 绑定摘要（含私发落后 1 版与源已删
-快照）+ `/healthz` 与 `/api/state` 假条目供系统信息 section）。要截空态/错误态，用
+快照）+ `/healthz` 与 `/api/state` 假条目供系统信息 section + `/api/mcp`·`/api/mcp/skill`
+假条目供 AI 操作 section（19 工具名与高危标记照抄 mcp-gateway；sessions:2 展示已连接形态））。要截空态/错误态，用
 `?state=empty|error` 或改假数据再截。
 深链：`?view=cards`（总览卡片视图）；`?select=new&step=N`（向导第 N 步）；
-`?select=<botId>&tab=…`（详情 tab）；`?section=system`（系统信息）；
+`?select=<botId>&tab=…`（详情 tab）；`?section=ai`（AI 操作，`&ai-tools=1` 展开工具清单）；`?section=system`（系统信息）；
 `?view=equip&bot=<botId>`（内嵌装备台）、`&new=1`/`&edit=<assetId>`（资产编辑器）。

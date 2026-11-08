@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### Added — UI：AI 操作能力引导（MCP/Skill onboarding，2026-11-08）
+
+Web 是看的，MCP/Skill 是操作的——控制台三处主动引导把 AI Agent 接到 WAO：
+
+- **总览引导卡**：复制 MCP 配置 / 查看完整指南；状态行按 `/api/mcp` 实时显示「✓ N 个 AI 会话活跃」或未连接引导文案。
+- **设置「AI 操作」section**（第一 section）：MCP 端点与 Claude / Codex / ZCode 三家接入配置（一键复制 / 下载 .json/.toml；控制台已存令牌时配置自动附 `X-WAO-Token` 头）+ 19 个 MCP 工具清单（7 个高危标记）+ `wao-company` skill 文件下载/复制 + MCP 连通性测试（无会话探测，不占会话名额）。
+- **机器人详情 AI 提示行**：set_duty / broadcast 直达话术示例，一键跳设置 → AI 操作。
+- **mcp-gateway**：新增 `GET /api/mcp`（会话数 + 工具清单）与 `GET /api/mcp/skill`（仓库 skill 文档全文）两个只读端点供 UI 使用（走同一 WAO_TOKEN 鉴权；MCP 协议面 `tools/list` 形状不变）。
+- 测试：test/mcp/protocol.test.js 新增 /api/mcp 状态面用例；截图基线 30→33 张（settings AI section ×浅/深 + 工具清单展开态）。
+
 ### Changed — UI 术语还原：公司隐喻 → 标准产品术语（2026-11-08）
 
 只改用户可见文案，不动代码逻辑 / API 路径 / 数据结构。对照表见 README §4.2。

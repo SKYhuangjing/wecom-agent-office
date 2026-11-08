@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Added — AI 操作引导（v2，2026-11-08）
+
+Web 是看的，MCP/Skill 是操作的——控制台主动把 AI Agent 接进来的路铺好：
+
+- **总览引导卡**（`overview.js`）：复制 MCP 配置 / 查看完整指南两个动作 + `/api/mcp` 5 秒轮询状态行（✓ N 个 AI 会话活跃 / 还没有 AI 连接 / 未检测到（网关停用时））。
+- **设置「AI 操作」section**（`settings.js`，第一 section）：MCP 端点 + Claude/Codex/ZCode 三家配置（复制/下载 .json/.toml；本机已存令牌自动附 X-WAO-Token 头）+ 19 工具清单（高危标记，?ai-tools=1 深链展开）+ skill 文件下载/复制（/api/mcp/skill 按需拉取）+ MCP 连通性测试（无会话探测，应答 -32002 即活）。
+- **机器人详情 AI 提示行**（`robots.js`）：「帮我暂停 ××」→ set_duty、推送 → broadcast 的一行提示 + 跳设置 → AI 操作。
+- 共享实现 `ui/ai-access.js`（useMcpStatus/useMcpStatus 轮询、配置文本生成、clipboard API + textarea 兜底、Blob 下载、探测超时）；假数据补 `/api/mcp`·`/api/mcp/skill`；截图基线 30→33 张（settings-ai ×浅/深 + ai-tools 展开态）。
+
 资产科（W3 T4，DESIGN-ASSETS §2/§8）——资产注册表 + per-bot 装备面。
 
 ### Added

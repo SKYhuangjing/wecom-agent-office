@@ -11,6 +11,12 @@ JSON-RPC 2.0 over HTTP 自研协议子集（计划见 docs/superpowers/plans/202
 | POST | `/mcp` | JSON-RPC 2.0：`initialize` / `tools/list` / `tools/call` / `notifications/*`（单个请求，或纯通知数组） |
 | GET | `/mcp` | 405 + 说明体（SSE 服务端推送为二期能力） |
 | DELETE | `/mcp` | 202，终结 `Mcp-Session-Id` 会话（幂等；未知/缺头同样 202） |
+| GET | `/api/mcp` | 控制台状态面（v2 AI-access discovery）：`{ok, endpoint:'/mcp', sessions, tools:[{name,description,dangerous}]}`——活跃会话数 + 19 工具清单（高危标记），总览引导卡与设置「AI 操作」section 的数据源 |
+| GET | `/api/mcp/skill` | `{ok, filename:'wao-company.md', content}`：仓库 `docs/skills/wao-company.md` 全文（按请求读取；打包安装缺仓库 docs 树时诚实 404），设置页「下载 skill 文件」用 |
+
+`/api/mcp*` 与其它 `/api/*` 同样走 `WAO_TOKEN` 鉴权（Web SDK 的 api() 自动带头）。
+`toolRoster()`（tools.js）导出 name+dangerous 清单给状态面——MCP `tools/list` 描述符
+形状不变，已接入的客户端零影响。
 
 ## 协议子集
 

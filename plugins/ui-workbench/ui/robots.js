@@ -17,6 +17,7 @@ import { chatsOf, TurnCard, humanizeWarning } from './_legacy/session.js';
 import { TYPE_LABEL, MODE_LABEL, MODE_HINT, TypeBadge, ModeBadge, ToolBadge, Receipt } from './_legacy/assets.js';
 import { Group } from './_legacy/bots.js';
 import { KIND_LABEL, KIND_ICON, fmtClock } from './_legacy/timeline.js';
+import { goSettingsAi } from './ai-access.js';
 
 const NAME_MAX = 30;
 const HANDOFF_KEY = 'wao-robots-handoff';
@@ -25,7 +26,7 @@ const TAB_LABEL = { session: '会话', logs: '日志', tools: '工具', settings
 const WINDOWS = [5, 15, 30]; // minutes
 const PUSH_MAX = 4000;
 const errorLines = (message) => String(message ?? '').split('; ').filter((s) => s.trim() !== '');
-const PROVIDER_LABEL = { dsh: 'DSH 引擎', claude: 'Claude 引擎', codex: 'Codex 引擎', pi: 'pi 引擎' };
+const PROVIDER_LABEL = { dsh: 'DSH 引擎', claude: 'Claude 引擎', codex: 'Codex 引擎', pi: 'pi 引擎', cursor: 'Cursor 引擎' };
 
 // 跨页交接（shell 路由是裸 '#/<pageid>'）：发起方先把 {id, tab, test} 塞进
 // sessionStorage 再翻 hash；本页 mount 时消费一次。
@@ -534,7 +535,7 @@ const DetailSettings = ({ WAO, bot, ports, onSaved, onDeleted, focusTest }) => {
           ? [h('option', { value: '' }, '（无可用引擎）')]
           : ports.providers.map((p) => h('option', { key: p.id, value: p.id },
             `${PROVIDER_LABEL[p.id] ?? p.id}（${p.id}）`))),
-        h('span', { className: 'wb-hint' }, 'dsh=DeepSeek Harness / claude=Claude Code / codex=OpenAI Codex CLI / pi=pi coding agent')),
+        h('span', { className: 'wb-hint' }, 'dsh=DeepSeek Harness / claude=Claude Code / codex=OpenAI Codex CLI / pi=pi coding agent / cursor=Cursor CLI')),
       providerSwitched ? h('div', { className: 'wb-notice' },
         `更换引擎 ${storedBot?.provider} → ${draft.provider}：保存后首轮将携带近期对话摘要续接上下文（仅文本问答对，工具/思考/压缩状态不迁移）。`) : null,
       h(SchemaFields, {
@@ -817,6 +818,16 @@ export default {
           h('button', { className: 'wb-btn', onClick: () => setSelected(null), title: '回到机器人列表' }, '← 返回列表')),
         agentsError != null ? h('div', { className: 'error', style: { marginTop: 8 } },
           bannerText('加载实时状态失败：', agentsError)) : null,
+        // AI 操作提示行（v2）：一行点到为止——这个 bot 的启停/推送/配置都能
+        // 让 AI 经 MCP 直接做，完整接入去设置 → AI 操作。
+        h('div', {
+          className: 'wb-hint wb-bot-ai-hint',
+          title: '经 MCP 网关（wao-company server）对话式操作；工具：set_duty 暂停/启用、broadcast 推送、update_employee 改配置',
+        },
+          '💡 你的 AI 可以直接操作这个机器人：',
+          h('code', null, `"帮我暂停 ${bot.name ?? bot.id}"`), ' → set_duty · ',
+          h('code', null, `"给 ${bot.name ?? bot.id} 发一条推送"`), ' → broadcast · 接入方法见',
+          h('button', { className: 'wb-linklike', onClick: () => goSettingsAi() }, '设置 → AI 操作')),
         h('div', { className: 'wb-tabs', style: { margin: '14px 0 0' } },
           TAB_IDS.map((t) => h('button', {
             key: t,

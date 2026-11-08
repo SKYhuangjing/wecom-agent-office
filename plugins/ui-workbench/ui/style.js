@@ -365,6 +365,84 @@ const CSS = `
   transition: border-color .15s ease;
 }
 .ov-act-row:hover { border-color: #CBD5E1; }
+
+/* —— v2 AI 操作引导：总览引导卡 + 设置 AI section + 机器人详情提示行 ———— */
+/* 引导卡：细条 + accent 左边框——低调但可见，不抢 3D 主视觉焦点 */
+.ov-ai-card {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px;
+  background: color-mix(in srgb, var(--accent) 5%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-left: 3px solid var(--accent);
+  border-radius: 12px; padding: 10px 14px; margin-top: 14px;
+  box-shadow: var(--shadow-sm);
+}
+.ov-ai-icon { flex: none; color: var(--accent); display: inline-flex; }
+.ov-ai-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 300px; }
+.ov-ai-title { font-weight: 700; font-size: 13.5px; color: var(--ink); }
+.ov-ai-copy { font-size: 12.5px; color: var(--muted); }
+.ov-ai-actions { display: flex; gap: 8px; flex: none; }
+.ov-ai-status { flex: 1 1 100%; font-size: 12px; }
+.ov-ai-on { color: var(--ok); }
+.ov-ai-idle { color: var(--muted); }
+.ov-ai-off { color: var(--warn); }
+
+/* 小号按钮（配置块/工具行内联动作） */
+.wb-btn-sm { padding: 3px 10px; font-size: 12px; }
+
+/* 配置块：标题+按钮排 + 等宽代码体 */
+.ai-box {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px 14px; margin-top: 12px; box-shadow: var(--shadow-sm);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.ai-box-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.ai-box-title { font-weight: 600; font-size: 13px; color: var(--ink); }
+.ai-box-actions { display: flex; gap: 6px; }
+.ai-code {
+  margin: 0; padding: 10px 12px; border-radius: 8px; overflow-x: auto;
+  background: var(--bg); border: 1px solid var(--line-subtle);
+  font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  color: var(--ink); white-space: pre;
+}
+
+/* 工具清单 / skill / 连通性 */
+.ai-tools, .ai-skill { margin-top: 14px; }
+.ai-tools-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  flex-wrap: wrap; font-size: 13px; color: var(--ink);
+}
+.ai-tool-list {
+  list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px;
+}
+.ai-tool-list li {
+  display: flex; align-items: baseline; gap: 8px; font-size: 12.5px;
+  background: var(--panel); border: 1px solid var(--line-subtle); border-radius: 8px;
+  padding: 7px 10px;
+}
+.ai-tool-list code { flex: none; font-size: 12px; }
+.ai-tool-danger {
+  flex: none; font-size: 11px; font-weight: 600; color: var(--bad);
+  border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent);
+  border-radius: 999px; padding: 0 7px;
+}
+.ai-tool-desc { color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
+.ai-probe { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+.ai-probe-ok { color: var(--ok); font-size: 12.5px; }
+.ai-probe-bad { color: var(--bad); font-size: 12.5px; overflow-wrap: anywhere; }
+
+/* 机器人详情的 AI 提示行：一行点到为止 */
+.wb-bot-ai-hint {
+  margin-top: 10px; font-size: 12px; overflow-wrap: anywhere;
+}
+.wb-bot-ai-hint code {
+  font-family: var(--mono); font-size: 11.5px; background: var(--bg);
+  border: 1px solid var(--line-subtle); border-radius: 5px; padding: 0 4px;
+}
+.wb-linklike {
+  border: 0; background: none; padding: 0; font: inherit; font-size: 12px;
+  color: var(--accent); cursor: pointer; text-decoration: underline;
+}
+.wb-linklike:hover { color: color-mix(in srgb, var(--accent) 80%, #000); }
 `;
 
 export function ensurePageStyle() {

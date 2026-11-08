@@ -5,7 +5,9 @@
 #   - ui-workbench 三页（v2 导航收敛：overview/robots/settings）× 浅/深
 #     + 总览卡片视图（?view=cards）与详情 tab 基线（robots&tab=tools/settings）
 #     + 向导两视图（?select=new&step=3 配发装备 / step=5 通信渠道）× 浅/深
-#     + 设置页第二 section（?section=system 系统信息）与内嵌装备台
+#     + 设置页 AI 操作 section（?section=ai，v2 MCP/Skill 引导）× 浅/深
+#     + AI 工具清单展开态（?section=ai&ai-tools=1，浅）
+#     + 设置页其余 section（?section=system 系统信息）与内嵌装备台
 #       （?view=equip&bot=bot-2，含警示条/私发快照）× 浅/深
 #   - ui-office3d  Magpie iso/2d × 浅/深（插件自带 harness，不占导航）
 #   - ui-office-studio 白棚 × 浅
@@ -51,12 +53,13 @@ trap cleanup EXIT
 # ---- CDP 截图驱动（重建自 T4 用过的 /tmp 脚本；ws 为仓库既装依赖） -----------
 export WAO_SHOT_ROOT="$ROOT"
 cat > "$DRIVER" <<'EOF'
-// shot.mjs <cdpPort> <url> <out.png> <waitMs> <light|dark> — 经常驻无头
-// Chrome 的 CDP 截一张：emulate prefers-color-scheme + 1280x800 视口 +
-// 真实时钟等待（无 virtual-time-budget，SSE 页面同样适用）。
+// shot.mjs <cdpPort> <url> <out.png> <waitMs> <light|dark> [scrollToSel] — 经常驻
+// 无头 Chrome 的 CDP 截一张：emulate prefers-color-scheme + 1280x800 视口 +
+// 真实时钟等待（无 virtual-time-budget，SSE 页面同样适用）。可选 scrollToSel：
+// 截图前把该 CSS 选择器的首元素 scrollIntoView（基线在首屏以下的区块用）。
 import { createRequire } from 'node:module';
 import { writeFileSync } from 'node:fs';
-const [,, cdpPort, url, outFile, waitMs, scheme] = process.argv;
+const [,, cdpPort, url, outFile, waitMs, scheme, scrollToSel] = process.argv;
 const require = createRequire(process.env.WAO_SHOT_ROOT + '/package.json');
 const WebSocket = require('ws');
 const openTarget = async () => {
@@ -91,6 +94,12 @@ try {
   });
   await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   await new Promise((r) => setTimeout(r, Number(waitMs) || 2500));
+  if (scrollToSel) {
+    await send('Runtime.evaluate', {
+      expression: `document.querySelector(${JSON.stringify(scrollToSel)})?.scrollIntoView()`,
+    });
+    await new Promise((r) => setTimeout(r, 400));
+  }
   const shot = await send('Page.captureScreenshot', { format: 'png' });
   writeFileSync(outFile, Buffer.from(shot.data, 'base64'));
   console.log(`  shot ${outFile} (${scheme})`);
@@ -128,9 +137,9 @@ wait_http() { # wait_http <url> <name> <timeout_s>
 wait_http "$BASE/healthz" "内核" 30
 wait_http "http://127.0.0.1:$CDP_PORT/json/version" "Chrome CDP" 30
 
-shot() { # shot <name> <theme> <waitMs> <query>
+shot() { # shot <name> <theme> <waitMs> <query> [scrollToSel]
   local url="$BASE/$4"
-  node "$DRIVER" "$CDP_PORT" "$url" "$OUT_DIR/$1-$2.png" "$3" "$2"
+  node "$DRIVER" "$CDP_PORT" "$url" "$OUT_DIR/$1-$2.png" "$3" "$2" "${5:-}"
 }
 
 echo "· ui-workbench 三页（v2 导航收敛）× 浅/深"
@@ -153,11 +162,13 @@ for theme in light dark; do
   shot "ui-workbench-wizard-channel" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=robots&select=new&step=5"
 done
 
-echo "· ui-workbench 设置页（系统信息 section + 内嵌装备台）× 浅/深"
+echo "· ui-workbench 设置页（AI 操作 section + 系统信息 section + 内嵌装备台）× 浅/深"
 for theme in light dark; do
+  shot "ui-workbench-settings-ai" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=settings&section=ai"
   shot "ui-workbench-settings-system" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=settings&section=system"
   shot "ui-workbench-settings-equip" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=settings&view=equip&bot=bot-2"
 done
+shot "ui-workbench-settings-ai-tools" light 2800 "api/ui/ui-workbench/harness.html?page=settings&section=ai&ai-tools=1" ".ai-tools"
 
 echo "· ui-office3d Magpie iso/2d × 浅/深"
 for theme in light dark; do
@@ -193,6 +204,9 @@ ui-workbench-robots-settings-light
 ui-workbench-robots-settings-dark
 ui-workbench-settings-light
 ui-workbench-settings-dark
+ui-workbench-settings-ai-light
+ui-workbench-settings-ai-dark
+ui-workbench-settings-ai-tools-light
 ui-workbench-settings-system-light
 ui-workbench-settings-system-dark
 ui-workbench-settings-equip-light
@@ -226,4 +240,4 @@ if [ "$fails" -gt 0 ]; then
   echo "✗ $fails 张基线不合格（${OUT_DIR}）" >&2
   exit 1
 fi
-echo "✓ 30 张基线齐备 → $OUT_DIR"
+echo "✓ 33 张基线齐备 → $OUT_DIR"

@@ -640,6 +640,14 @@ const TOOLS = [
 // — the T2 seam server.js's createMcpHandler consumes. dangerousTools (P1-5,
 // default true) gates the dangerous 7 at callTool time; listTools still
 // advertises them so the Agent can read WHY the call was refused.
+//
+// toolRoster(): name + dangerous flag only — the console's /api/mcp status
+// (AI-access discovery) marks the dangerous tools in the human-facing list
+// WITHOUT changing the MCP tools/list descriptor shape clients validate.
+export function toolRoster() {
+  return TOOLS.map(({ name, dangerous }) => ({ name, dangerous: dangerous === true }));
+}
+
 export function createToolSurface({ services, log, dangerousTools = true } = {}) {
   const listTools = () => TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
 

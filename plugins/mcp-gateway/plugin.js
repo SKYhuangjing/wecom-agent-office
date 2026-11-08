@@ -7,10 +7,20 @@
 // nothing anywhere (unlike calling ctx.registerMiddleware, which would add us
 // to the engine's outbound mask chain). http.register is the plugin's only
 // side effect; it registers no port and the loader treats the prefix plainly.
+//
+// v2 AI-access discovery: a second route /api/mcp (longer prefix, wins over
+// core-engine's /api catch-all) feeds the console's onboarding UI — session
+// count, tool roster, and the repo's Agent skill doc (docs/skills/
+// wao-company.md, read per request; a packaged install without the repo docs
+// tree answers 404 honestly instead of pretending).
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createMcpHandler } from './server.js';
-import { createToolSurface } from './tools.js';
+import { createToolSurface, toolRoster } from './tools.js';
 
 const VERSION = '0.1.0';
+const SKILL_DOC = resolve(dirname(fileURLToPath(import.meta.url)), '../../docs/skills/wao-company.md');
 
 export default {
   manifest: {
@@ -35,7 +45,48 @@ export default {
     // both looked up per call so a reload's fresh closures stay current.
     const dangerousTools = ctx.config?.dangerousTools !== false;
     const { listTools, callTool } = createToolSurface({ services: ctx.services, log: ctx.log, dangerousTools });
-    ctx.http.register({ prefix: '/mcp', handler: createMcpHandler({ version: VERSION, listTools, callTool, log: ctx.log }) });
+    const { handler, sessionCount } = createMcpHandler({ version: VERSION, listTools, callTool, log: ctx.log });
+    ctx.http.register({ prefix: '/mcp', handler });
+
+    // Console status face (GET /api/mcp · GET /api/mcp/skill). Read-only; the
+    // UI's api() carries WAO_TOKEN so this sits behind the same auth gate as
+    // every other /api route when the operator set one.
+    const dangerousByName = new Map(toolRoster().map((t) => [t.name, t.dangerous]));
+    const json = (res, code, obj, extra = {}) => {
+      res.writeHead(code, { 'Content-Type': 'application/json', ...extra });
+      res.end(JSON.stringify(obj));
+    };
+    ctx.http.register({
+      prefix: '/api/mcp', handler: (req, res) => {
+        // Prefix bleed guard (shell matches startsWith): only our two exact
+        // paths answer; anything else under the prefix is a plain 404.
+        const pathname = new URL(req.url, 'http://localhost').pathname;
+        if (pathname !== '/api/mcp' && pathname !== '/api/mcp/' && pathname !== '/api/mcp/skill') {
+          req.resume();
+          return json(res, 404, { error: 'not found' });
+        }
+        if (req.method !== 'GET') {
+          req.resume(); // drain any body so keep-alive sockets stay reusable
+          return json(res, 405, { error: 'method not allowed' }, { Allow: 'GET' });
+        }
+        req.resume();
+        if (pathname === '/api/mcp/skill') {
+          let content = null;
+          try { content = readFileSync(SKILL_DOC, 'utf8'); } catch { content = null; /* honest 404 below */ }
+          if (content == null) {
+            return json(res, 404, { error: `skill 文件未找到（${SKILL_DOC}）——请从仓库 docs/skills/wao-company.md 获取` });
+          }
+          return json(res, 200, { ok: true, filename: 'wao-company.md', content });
+        }
+        return json(res, 200, {
+          ok: true,
+          endpoint: '/mcp',
+          sessions: sessionCount(),
+          tools: listTools().map(({ name, description }) => ({
+            name, description, dangerous: dangerousByName.get(name) === true,
+          })),
+        });
+      },
+    });
   },
 };
-

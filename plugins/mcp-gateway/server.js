@@ -73,6 +73,8 @@ const readBody = (req) => new Promise((resolve, reject) => {
 // Build the /mcp request handler. `listTools`/`callTool` are the T2 seam:
 // T1 ships the protocol shell with an empty roster and no call impl
 // (tools/call answers -32601 until the tool surface lands).
+// Returns { handler, sessionCount } — sessionCount is the console's AI-access
+// discovery probe (/api/mcp in plugin.js reads it to show "N 个 AI 会话活跃").
 export function createMcpHandler({ version, listTools = () => [], callTool = null, log = null }) {
   // Live Mcp-Session-Id set. Single-user office: no TTL — the ONLY way a
   // session ends is an explicit DELETE /mcp (or a server restart, which a
@@ -226,12 +228,15 @@ export function createMcpHandler({ version, listTools = () => [], callTool = nul
 
   // Sole entry the kernel shell sees. The catch is ours, not the shell's:
   // a JSON-RPC client must never receive the shell's REST 500 shape.
-  return (req, res) => {
-    dispatch(req, res).catch((err) => {
-      log?.error?.(`mcp: handler failed: ${err?.message ?? err}`);
-      if (res.writableEnded) return;
-      if (res.headersSent) { res.destroy?.(); return; }
-      httpJson(res, 500, { error: 'mcp gateway failure' });
-    });
+  return {
+    handler: (req, res) => {
+      dispatch(req, res).catch((err) => {
+        log?.error?.(`mcp: handler failed: ${err?.message ?? err}`);
+        if (res.writableEnded) return;
+        if (res.headersSent) { res.destroy?.(); return; }
+        httpJson(res, 500, { error: 'mcp gateway failure' });
+      });
+    },
+    sessionCount: () => liveSessions.size,
   };
 }

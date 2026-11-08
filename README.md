@@ -227,6 +227,8 @@ Windows 上优先用 dsh/codex（提示词走 stdin）或把人设写成单行�
 - **输出双形态**：每工具 `content[].text`（中文摘要）+ `structuredContent`（结构化数据）；
   secret 永不回显（`__MASKED__` 语义同 §3）。当前回环无鉴权（§2 边界同样适用）。
 
+控制台里也有同款引导：**总览页引导卡**（一键复制 MCP 配置）与**设置 → AI 操作** section（三家配置复制/下载、19 个工具清单、skill 文件下载、MCP 连通性测试，实时显示活跃 AI 会话数——数据来自 mcp-gateway 的 `GET /api/mcp`）。
+
 三家 CLI 配置样例（服务须先 `node src/index.js start`；**设置 `WAO_TOKEN` 后三家都要在配置里带头**，令牌换成实际值）：
 
 ```jsonc

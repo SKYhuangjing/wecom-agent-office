@@ -7,9 +7,9 @@
 // notification 202s, transport-level status codes.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve, dirname } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createKernel } from '../../src/index.js';
 
@@ -18,12 +18,21 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 let kernel = null;
 let base = null;
+let tmpOuter = null;
 let tmpRoot = null;
 let dataDir = null;
 
 before(async () => {
-  tmpRoot = mkdtempSync(join(tmpdir(), 'wao-mcp-plugins-'));
+  // Nested layout: <outer>/plugins/mcp-gateway (the boot scan root) plus
+  // <outer>/docs/skills/wao-company.md — the /api/mcp/skill route resolves
+  // ../../docs/skills relative to the plugin dir, so the outer docs tree makes
+  // its 200 path testable without touching the real repo checkout.
+  tmpOuter = mkdtempSync(join(tmpdir(), 'wao-mcp-'));
+  tmpRoot = join(tmpOuter, 'plugins');
+  mkdirSync(tmpRoot);
   cpSync(pluginDir, join(tmpRoot, 'mcp-gateway'), { recursive: true });
+  mkdirSync(join(tmpOuter, 'docs', 'skills'), { recursive: true });
+  writeFileSync(join(tmpOuter, 'docs', 'skills', 'wao-company.md'), '# wao-company (protocol-test fixture)\n');
   dataDir = mkdtempSync(join(tmpdir(), 'wao-mcp-data-'));
   kernel = await createKernel({ port: 0, dataDir, pluginsDirs: [tmpRoot] });
   base = `http://127.0.0.1:${kernel.http.port}`;
@@ -31,7 +40,7 @@ before(async () => {
 
 after(async () => {
   await kernel.stop();
-  rmSync(tmpRoot, { recursive: true, force: true });
+  rmSync(tmpOuter, { recursive: true, force: true });
   rmSync(dataDir, { recursive: true, force: true });
 });
 
@@ -253,4 +262,53 @@ test('two concurrent sessions stay isolated: distinct ids, each echoes its own',
   const viaB = await rpc({ jsonrpc: '2.0', id: 11, method: 'tools/list' }, { 'mcp-session-id': b.sessionId });
   assert.equal(viaB.headers.get('mcp-session-id'), b.sessionId);
   assert.equal(viaB.body.id, 11);
+});
+
+// —— v2 AI-access discovery：/api/mcp 控制台状态面 ——————————————————————————
+
+test('GET /api/mcp: tool roster with dangerous flags, session count tracks live sessions', async () => {
+  // Earlier tests in this file minted sessions they never DELETE, so the
+  // count is only asserted RELATIVELY (before → +2 → −1).
+  const before = (await (await fetch(`${base}/api/mcp`)).json()).sessions;
+  const boot = await (await fetch(`${base}/api/mcp`)).json();
+  assert.equal(boot.ok, true);
+  assert.equal(boot.endpoint, '/mcp');
+  assert.equal(typeof before, 'number');
+  assert.equal(boot.tools.length, 19);
+  const byName = new Map(boot.tools.map((t) => [t.name, t]));
+  assert.equal(byName.get('list_employees').dangerous, false);
+  assert.equal(byName.get('set_duty').dangerous, false);
+  assert.equal(byName.get('offboard').dangerous, true);
+  assert.equal(byName.get('broadcast').dangerous, true);
+  assert.equal(byName.get('rematerialize').dangerous, true);
+  assert.ok(byName.get('hire').description.length > 0, 'description carried for the UI list');
+
+  const a = await initialize();
+  const b = await initialize();
+  const two = await (await fetch(`${base}/api/mcp`)).json();
+  assert.equal(two.sessions, before + 2, 'initialize mints sessions the status face can count');
+
+  await fetch(`${base}/mcp`, { method: 'DELETE', headers: { 'mcp-session-id': a.sessionId } });
+  const one = await (await fetch(`${base}/api/mcp`)).json();
+  assert.equal(one.sessions, before + 1, 'DELETE decrements the count');
+  await fetch(`${base}/mcp`, { method: 'DELETE', headers: { 'mcp-session-id': b.sessionId } });
+});
+
+test('GET /api/mcp/skill: serves the repo skill doc as JSON {filename, content}', async () => {
+  const res = await fetch(`${base}/api/mcp/skill`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.filename, 'wao-company.md');
+  assert.ok(body.content.includes('wao-company'), 'content is the docs/skills markdown');
+});
+
+test('/api/mcp surface guards: wrong method 405, unknown subpath 404', async () => {
+  const post = await fetch(`${base}/api/mcp`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+  assert.equal(post.status, 405);
+  assert.equal(post.headers.get('allow'), 'GET');
+  const bleed = await fetch(`${base}/api/mcpfoo`);
+  assert.equal(bleed.status, 404, 'prefix bleed stays a plain 404');
+  const sub = await fetch(`${base}/api/mcp/nope`);
+  assert.equal(sub.status, 404);
 });

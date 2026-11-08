@@ -385,4 +385,36 @@ export const FAKE_API = {
     ok: true, uptimeSec: 93725, pid: 4242, dataDir: '/Users/sky/.local/share/wao',
     plugins: FAKE_PLUGINS, uiPlugins: [{ id: 'ui-workbench' }, { id: 'ui-office3d' }],
   },
+  // —— v2 AI 操作引导（/api/mcp · /api/mcp/skill，mcp-gateway 提供）————————
+  // 19 个工具名与高危标记照抄 plugins/mcp-gateway/tools.js（描述截短——
+  // 截图只要看清单形状，不必背全文）；sessions: 2 让引导卡/状态行展示
+  // 「已连接」形态（未连接形态在 ?state=error 基线里以 stub 缺席自然出现）。
+  '/api/mcp': {
+    ok: true, endpoint: '/mcp', sessions: 2,
+    tools: [
+      { name: 'list_employees', description: '查看在线机器人清单：状态/进度/消息统计（只读）' },
+      { name: 'get_employee', description: '按机器人 ID 查详情：配置摘要/工作目录/消息统计（只读）' },
+      { name: 'hire', description: '创建机器人：提交完整 bot 记录（含引擎/渠道配置）' },
+      { name: 'update_employee', description: '更新机器人配置（patch 语义：只传要改的字段）' },
+      { name: 'offboard', description: '删除机器人：收尾断开、清理工作目录、台账保留', dangerous: true },
+      { name: 'set_duty', description: '启停切换：在线↔暂停（配置保留）' },
+      { name: 'probation_test', description: '测试运行：直连引擎跑一轮探针（不进引擎链）' },
+      { name: 'broadcast', description: '以某机器人身份向指定会话推送消息（真实送达）', dangerous: true },
+      { name: 'list_departments', description: '查看插件清单：id/类型/状态（只读）' },
+      { name: 'department_toggle', description: '插件启停：四阶段重载，依赖的机器人随之离线/恢复', dangerous: true },
+      { name: 'work_log', description: '查会话历史（台账）：对话轮次记录，可按会话过滤' },
+      { name: 'work_timeline', description: '查活动日志（时间线事件流），可限定窗口' },
+      { name: 'company_state', description: '系统状态摘要：运行时长/插件/机器人计数（只读）' },
+      { name: 'create_asset', description: '添加工具（skill/memory/mcp/prompt/tool 五类）' },
+      { name: 'update_asset', description: '更新工具内容（patch 语义，version 自增）' },
+      { name: 'delete_asset', description: '删除工具：解绑共享绑定并重物化清理', dangerous: true },
+      { name: 'bind_asset', description: '将工具绑定到 bot（共享/独立），写入磁盘下一轮生效', dangerous: true },
+      { name: 'unbind_asset', description: '解绑 bot 的工具，删除盘上产物', dangerous: true },
+      { name: 'rematerialize', description: '按当前绑定强制重写全部工具产物文件（幂等）', dangerous: true },
+    ],
+  },
+  '/api/mcp/skill': {
+    ok: true, filename: 'wao-company.md',
+    content: '---\nname: wao-company\ndescription: 操作 wecom-agent-office（wao）机器人公司：经 MCP server「wao-company」做日常巡检、入职新 bot、调岗改配置、调休返岗、办离职、发广播、部门（插件）启停、查工单与工作日志、资产配发。\n---\n\n（harness 摘录——全文见仓库 docs/skills/wao-company.md）\n\n你是 wao 公司的运营助手。操作面经 MCP server `wao-company` 暴露（19 个工具）。\n\n## 常用意图 → 工具\n\n- 「看看机器人在岗情况」→ list_employees\n- 「帮我暂停 main」→ set_duty\n- 「给 main 发一条推送」→ broadcast（危险：先复述会话与内容）\n',
+  },
 };

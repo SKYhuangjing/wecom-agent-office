@@ -1,8 +1,9 @@
-// 总览 (v2 导航收敛): landing page——办公室 3D 为主视觉（ui-office3d 保留为
-// 独立插件、hidden 不占导航，这里通过 WAO.getPage('office3d') 内嵌渲染；未
-// 注册时兜底同源动态 import，harness 与注册竞态都吃得下），可切到 bot 状态
-// 卡片（_legacy/list.js 精简版：名称/状态/进度/暂停启用/测试运行），底部是
-// 最近活动摘要（最近 5 条，点击跳机器人详情的日志 tab）。Node 顶层安全：无
+// 总览 (v2 导航收敛): landing page——AI 操作引导卡（Web 是看的，MCP/Skill
+// 是操作的）+ 办公室 3D 为主视觉（ui-office3d 保留为独立插件、hidden 不占
+// 导航，这里通过 WAO.getPage('office3d') 内嵌渲染；未注册时兜底同源动态
+// import，harness 与注册竞态都吃得下），可切到 bot 状态卡片（_legacy/
+// list.js 精简版：名称/状态/进度/暂停启用/测试运行），底部是最近活动摘要
+// （最近 5 条，点击跳机器人详情的日志 tab）。Node 顶层安全：无
 // document/location 顶层访问（plugin.js 的 manifest 发现会在裸 Node import）。
 import { ensurePageStyle } from './style.js';
 import { Avatar, STATUS_LABEL, statusTitle, providerMeta } from './hr.js';
@@ -10,6 +11,7 @@ import { IconEl } from './icons.js';
 import { bannerText } from './_legacy/list.js';
 import { goRobots } from './robots.js';
 import { KIND_LABEL, KIND_ICON, fmtClock } from './_legacy/timeline.js';
+import { claudeMcpJson, copyText, goSettingsAi, mcpUrl, useMcpStatus } from './ai-access.js';
 
 // 办公室 3D 页面模块（方案 A 内嵌）：先查注册表（shell 会 import 全部 ui 插件
 // entry，office3d hidden 注册在表里），查不到再拉同源模块——import 模块缓存
@@ -49,6 +51,51 @@ const OfficeEmbed = ({ WAO }) => {
   }
   // 直接调其 component（同一份 WAO 契约），不是 portal——整棵子树共享 hooks。
   return h('div', { className: 'ov-embed' }, h(page.component, { WAO }));
+};
+
+// AI 操作引导卡：Web 是看的，MCP/Skill 是操作的——落地页主动铺路。数据来自
+// mcp-gateway 的 /api/mcp（5 秒轮询）：有活跃会话报「✓ N 个 AI 会话活跃」，
+// 网关在但没有连接推「把配置贴进你的 CLI」，插件停用/断联则给未检测到文案。
+// 低调但可见：细条 + accent 左边框，不抢 3D 主视觉的焦点。
+const AiGuideCard = ({ WAO }) => {
+  const { h, useState } = WAO;
+  const { status, error } = useMcpStatus(WAO);
+  const [copied, setCopied] = useState(null); // 'ok' | 'fail' | null
+
+  const onCopy = async () => {
+    const ok = await copyText(claudeMcpJson(mcpUrl()));
+    setCopied(ok ? 'ok' : 'fail');
+    setTimeout(() => setCopied(null), 1800);
+  };
+
+  const statusLine = status != null
+    ? (status.sessions > 0
+      ? { cls: 'ov-ai-on', text: `✓ ${status.sessions} 个 AI 会话活跃（MCP 网关在线，共 ${status.tools.length} 个工具）` }
+      : { cls: 'ov-ai-idle', text: 'MCP 网关在线，还没有 AI 连接——把配置贴进你的 CLI 即可' })
+    : { cls: 'ov-ai-off', text: '状态：未检测到 AI 连接（MCP 网关未启用或不可达——接入方法见「查看完整指南」）' };
+
+  return h('section', {
+    className: 'ov-ai-card',
+    'aria-label': '用 AI 操作 WAO',
+  },
+  h('span', { className: 'ov-ai-icon' }, h(IconEl, { h, name: 'plug', size: 16 })),
+  h('div', { className: 'ov-ai-main' },
+    h('span', { className: 'ov-ai-title' }, '用 AI 操作 WAO'),
+    h('span', { className: 'ov-ai-copy' },
+      '连接你的 Claude / Codex / ZCode 到 WAO，直接对话式管理机器人、查日志、配工具。')),
+  h('div', { className: 'ov-ai-actions' },
+    h('button', {
+      className: 'wb-btn', title: `复制 MCP 配置 JSON（${mcpUrl()}）`,
+      onClick: () => void onCopy(),
+    }, copied === 'ok' ? '✓ 已复制' : copied === 'fail' ? '复制失败，请手动选择' : '复制 MCP 配置'),
+    h('button', {
+      className: 'wb-btn', title: '查看三家 CLI 的完整接入指南（设置 → AI 操作）',
+      onClick: () => goSettingsAi(),
+    }, '查看完整指南')),
+  h('span', {
+    className: `ov-ai-status ${statusLine.cls}`,
+    title: `${mcpUrl()}${error != null ? `\n探测原因：${error}` : ''}`,
+  }, statusLine.text));
 };
 
 // 状态卡片叠加视图：_legacy/list.js 的精简版——名称/状态/进度行/暂停启用开关
@@ -194,6 +241,7 @@ export default {
         }, '＋ 创建机器人') : null),
       error != null ? h('div', { className: 'error', style: { marginTop: 12 } },
         bannerText('加载机器人列表失败：', error)) : null,
+      h(AiGuideCard, { WAO }),
       view === 'office' && error == null ? h(OfficeEmbed, { WAO }) : null,
       view === 'office' && error == null ? null : h('div', { style: { marginTop: 14 } },
         h(BotCards, { WAO, agents, busyId, onToggle: toggle, actionError })),
