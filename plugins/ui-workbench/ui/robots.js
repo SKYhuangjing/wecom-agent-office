@@ -116,7 +116,7 @@ const DetailSession = ({ WAO, botId, agent }) => {
     body = h('div', null,
       h('div', { className: 'wb-toolbar' },
         h('input', {
-          className: 'wb-input', style: { maxWidth: 420, fontFamily: 'ui-monospace, Menlo, Consolas, monospace' },
+          className: 'wb-input', style: { maxWidth: 420, fontFamily: 'var(--mono)' },
           value: sessionId, placeholder: '引擎会话编号（provider session id）',
           onChange: (e) => setSessionId(e.target.value),
           onKeyDown: (e) => { if (e.key === 'Enter') void loadNative(sessionId.trim()); },

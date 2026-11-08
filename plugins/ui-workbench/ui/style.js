@@ -146,7 +146,7 @@ const CSS = `
 .wb-badge-timeout, .wb-badge-error { color: var(--bad); border-color: var(--bad); }
 .wb-chip {
   border: 1px dashed var(--line); background: none; color: var(--muted);
-  font: inherit; font-size: 11px; font-family: ui-monospace, Menlo, Consolas, monospace;
+  font: inherit; font-size: 11px; font-family: var(--mono);
   border-radius: 6px; padding: 1px 8px; cursor: pointer;
 }
 .wb-chip:hover { color: var(--accent); border-color: var(--accent); }
@@ -163,11 +163,13 @@ const CSS = `
 .wb-counter.over { color: var(--bad); }
 
 .wb-table { border-collapse: collapse; width: 100%; max-width: 980px; margin-top: 14px; background: var(--panel); }
+/* UX 评审 L12：去竖向网格线，只留行分隔 + 表头底线（Linear/Vercel 表格气质） */
 .wb-table th, .wb-table td {
-  border: 1px solid var(--line); padding: 8px 12px; font-size: 13px; text-align: left;
+  border: none; border-bottom: 1px solid var(--line); padding: 8px 12px; font-size: 13px; text-align: left;
   vertical-align: top;
 }
-.wb-table th { color: var(--muted); font-weight: 600; background: color-mix(in srgb, var(--line) 25%, var(--panel)); }
+.wb-table tbody tr:last-child td { border-bottom: none; }
+.wb-table th { color: var(--muted); font-weight: 600; border-bottom: 1px solid #D4D4D8; background: var(--panel); }
 .wb-table tbody tr { transition: background-color 0.12s ease; }
 .wb-table tbody tr:hover { background: var(--panel-2); }
 .wb-table td .wb-sub { margin-top: 2px; }
@@ -218,7 +220,7 @@ const CSS = `
 }
 .wb-tl-chat {
   flex: none; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--muted); font-size: 11px; font-family: ui-monospace, Menlo, Consolas, monospace;
+  color: var(--muted); font-size: 11px; font-family: var(--mono);
 }
 .wb-tl-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
 /* 单色收敛：kind 不再分色——统一 muted 中性 pill，差异靠 icon 形状（timeline.js） */

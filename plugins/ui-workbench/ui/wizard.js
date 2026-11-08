@@ -112,6 +112,8 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
   // 且姓名错误只在失焦后才显示——刚打开就报「必填」是过早校验。
   const [nameTouched, setNameTouched] = useState(false);
   const [formDirty, setFormDirty] = useState(false); // 动过任意字段：此时禁用的「下一步」需要看得见原因
+  const [attempted, setAttempted] = useState(false); // 点过「下一步/创建」未通过：此后底部汇总由灰提示转红错误
+  const [confirmCancel, setConfirmCancel] = useState(false); // 自绘取消确认（UX 评审 M6：原生 confirm 样式突兀）
   const nameErr = draft.name.trim() === ''
     ? '姓名必填'
     : draft.name.length > NAME_MAX ? `姓名过长（≤${NAME_MAX} 字）` : null;
@@ -404,16 +406,16 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
         h('span', null, s.title))),
       h('span', { className: 'wb-step-sub' }, STEPS[step].sub)),
     body,
-    // 第 1 步错误已按字段就近渲染；其余步骤保留底部汇总（含最后一步——
-    // 走查 M2：点击被拦截时必须看得见原因，不能只靠禁用）
+    // 第 1 步错误已按字段就近渲染；其余步骤保留底部汇总（含最后一步）。
+    // UX 评审 M6：未尝试前进时是中性灰「要求说明」，点过下一步未通过才变红
+    // ——红色只留给真正的校验失败，不被当成需求说明稀释。
     errs.length > 0 && step !== 0
-      ? h('div', { className: 'wb-field-error' }, errs[0]) : null,
+      ? h('div', { className: attempted ? 'wb-field-error' : 'wb-hint' }, errs[0]) : null,
     h('div', { className: 'wb-wizard-nav' },
-      // 取消出口（M2）：向导全程要有明确退路——填过东西时先确认再丢弃
+      // 取消出口：填过内容时先自绘确认弹层再丢弃（M6：不用原生 confirm）
       h('button', {
         className: 'wb-btn', onClick: () => {
-          if ((draft.name.trim() !== '' || draft.equip.length > 0)
-            && !window.confirm('放弃创建？已填写的内容不会保存。')) return;
+          if (draft.name.trim() !== '' || draft.equip.length > 0) { setConfirmCancel(true); return; }
           onDone();
         },
       }, '取消'),
@@ -428,18 +430,28 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
             if (errs.length > 0) {
               setNameTouched(true);
               setFormDirty(true);
+              setAttempted(true);
               return;
             }
+            setAttempted(false);
             setStep(step + 1);
           },
         }, '下一步')
         : h('button', {
           className: 'wb-btn wb-btn-primary', disabled: submitting,
           onClick: () => {
-            if (errs.length > 0) return; // 底部汇总行已显示原因
+            if (errs.length > 0) { setAttempted(true); return; } // 底部汇总行已显示原因
             void submit();
           },
-        }, submitting ? '创建中…' : '创建机器人')));
+        }, submitting ? '创建中…' : '创建机器人')),
+    // 取消确认弹层（复用 wb-modal 体系，与全站同一视觉语言）
+    confirmCancel ? h('div', { className: 'wb-modal-wrap', onClick: () => setConfirmCancel(false) },
+      h('div', { className: 'wb-modal', onClick: (e) => e.stopPropagation() },
+        h('h3', null, '放弃创建？'),
+        h('p', { className: 'wb-hint' }, '已填写的姓名与工具配置不会保存。'),
+        h('div', { className: 'wb-toolbar' },
+          h('button', { className: 'wb-btn wb-btn-primary', onClick: () => { setConfirmCancel(false); onDone(); } }, '放弃创建'),
+          h('button', { className: 'wb-btn', onClick: () => setConfirmCancel(false) }, '继续填写')))) : null);
 };
 
 export default Wizard;
