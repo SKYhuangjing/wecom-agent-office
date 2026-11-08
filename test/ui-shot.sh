@@ -2,13 +2,15 @@
 # test/ui-shot.sh (M3 T5) — harness 截图工作流固化（改 UI 红线的工具面）。
 #
 # 一条命令产出全部页面插件 harness 基线截图到 test/ui-shots/（提交进库）：
-#   - ui-workbench 七页（workbench/bots/assets/session/push/plugins/timeline）× 浅/深
-#     + 资产科装备台第二视图（?view=equip&bot=bot-2，含警示条/私发快照）× 浅/深
-#     + 入职向导两视图（?select=new&step=3 配发装备 / step=5 通信渠道）× 浅/深
-#   - ui-office3d  Magpie iso/2d × 浅/深
+#   - ui-workbench 三页（v2 导航收敛：overview/robots/settings）× 浅/深
+#     + 总览卡片视图（?view=cards）与详情 tab 基线（robots&tab=tools/settings）
+#     + 向导两视图（?select=new&step=3 配发装备 / step=5 通信渠道）× 浅/深
+#     + 设置页第二 section（?section=system 系统信息）与内嵌装备台
+#       （?view=equip&bot=bot-2，含警示条/私发快照）× 浅/深
+#   - ui-office3d  Magpie iso/2d × 浅/深（插件自带 harness，不占导航）
 #   - ui-office-studio 白棚 × 浅
 #   - template-page demo × 浅（脚手架示例）
-#   - 边界基线 ×4：workbench 空态/错误态、office 空态/错误态（浅色）
+#   - 边界基线 ×4：overview 空态/错误态、office 空态/错误态（浅色）
 #
 # 为什么 CDP 而不是 chrome --screenshot：真实控制台页有 SSE（EventSource），
 # --virtual-time-budget 会与长连接互卡；这里统一走「常驻无头 Chrome + CDP
@@ -131,22 +133,30 @@ shot() { # shot <name> <theme> <waitMs> <query>
   node "$DRIVER" "$CDP_PORT" "$url" "$OUT_DIR/$1-$2.png" "$3" "$2"
 }
 
-echo "· ui-workbench 七页 × 浅/深"
-for page in workbench bots assets session push plugins timeline; do
+echo "· ui-workbench 三页（v2 导航收敛）× 浅/深"
+for page in overview robots settings; do
   for theme in light dark; do
     shot "ui-workbench-$page" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=$page"
   done
 done
 
-echo "· ui-workbench 资产科装备台（第二视图）× 浅/深"
+echo "· ui-workbench 总览卡片视图 / 机器人详情 tab 基线 × 浅/深"
 for theme in light dark; do
-  shot "ui-workbench-assets-equip" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=assets&view=equip&bot=bot-2"
+  shot "ui-workbench-overview-cards" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=overview&view=cards"
+  shot "ui-workbench-robots-tools" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=robots&select=bot-2&tab=tools"
+  shot "ui-workbench-robots-settings" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=robots&select=main-bot&tab=settings"
 done
 
 echo "· ui-workbench 入职向导（第 3 步配发装备 / 第 5 步通信渠道）× 浅/深"
 for theme in light dark; do
-  shot "ui-workbench-wizard-equip" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=bots&select=new&step=3"
-  shot "ui-workbench-wizard-channel" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=bots&select=new&step=5"
+  shot "ui-workbench-wizard-equip" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=robots&select=new&step=3"
+  shot "ui-workbench-wizard-channel" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=robots&select=new&step=5"
+done
+
+echo "· ui-workbench 设置页（系统信息 section + 内嵌装备台）× 浅/深"
+for theme in light dark; do
+  shot "ui-workbench-settings-system" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=settings&section=system"
+  shot "ui-workbench-settings-equip" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=settings&view=equip&bot=bot-2"
 done
 
 echo "· ui-office3d Magpie iso/2d × 浅/深"
@@ -162,8 +172,8 @@ echo "· template-page demo"
 shot "template-page-demo" light 2200 "api/ui/template-page/harness.html"
 
 echo "· 边界基线（空态/错误态 = 断服 fetch 失败文案，浅色）"
-shot "ui-workbench-workbench-empty" light 2600 "api/ui/ui-workbench/harness.html?page=workbench&state=empty"
-shot "ui-workbench-workbench-error" light 2600 "api/ui/ui-workbench/harness.html?page=workbench&state=error"
+shot "ui-workbench-overview-empty" light 2600 "api/ui/ui-workbench/harness.html?page=overview&state=empty"
+shot "ui-workbench-overview-error" light 2600 "api/ui/ui-workbench/harness.html?page=overview&state=error"
 shot "ui-office3d-iso-empty" light 4000 "api/ui/ui-office3d/harness.html?state=empty"
 shot "ui-office3d-iso-error" light 4000 "api/ui/ui-office3d/harness.html?state=error"
 
@@ -171,34 +181,34 @@ shot "ui-office3d-iso-error" light 4000 "api/ui/ui-office3d/harness.html?state=e
 # 注意：set -u 下 $VAR 紧跟全角字符（如「）」）会被当成变量名一部分，
 # 因此这里一律用 ${VAR} 括起来。
 EXPECTED="
-ui-workbench-workbench-light
-ui-workbench-workbench-dark
-ui-workbench-bots-light
-ui-workbench-bots-dark
-ui-workbench-assets-light
-ui-workbench-assets-dark
-ui-workbench-assets-equip-light
-ui-workbench-assets-equip-dark
+ui-workbench-overview-light
+ui-workbench-overview-dark
+ui-workbench-overview-cards-light
+ui-workbench-overview-cards-dark
+ui-workbench-robots-light
+ui-workbench-robots-dark
+ui-workbench-robots-tools-light
+ui-workbench-robots-tools-dark
+ui-workbench-robots-settings-light
+ui-workbench-robots-settings-dark
+ui-workbench-settings-light
+ui-workbench-settings-dark
+ui-workbench-settings-system-light
+ui-workbench-settings-system-dark
+ui-workbench-settings-equip-light
+ui-workbench-settings-equip-dark
 ui-workbench-wizard-equip-light
 ui-workbench-wizard-equip-dark
 ui-workbench-wizard-channel-light
 ui-workbench-wizard-channel-dark
-ui-workbench-session-light
-ui-workbench-session-dark
-ui-workbench-push-light
-ui-workbench-push-dark
-ui-workbench-plugins-light
-ui-workbench-plugins-dark
-ui-workbench-timeline-light
-ui-workbench-timeline-dark
 ui-office3d-iso-light
 ui-office3d-iso-dark
 ui-office3d-2d-light
 ui-office3d-2d-dark
 ui-office-studio-light
 template-page-demo-light
-ui-workbench-workbench-empty-light
-ui-workbench-workbench-error-light
+ui-workbench-overview-empty-light
+ui-workbench-overview-error-light
 ui-office3d-iso-empty-light
 ui-office3d-iso-error-light
 "

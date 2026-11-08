@@ -7,8 +7,8 @@
 // 徽章与文案只用「配发」(mode:'shared') /「私发」(mode:'exclusive')；卸下装备
 // =unbind，重新物化=rematerialize，下架=DELETE 资产；技术词（type/mode 原值、
 // 落盘路径）收进 tooltip/副标题——双层语言，运维不歧义。
-import { ensurePageStyle } from './style.js';
-import { IconEl } from './icons.js';
+import { ensurePageStyle } from '../style.js';
+import { IconEl } from '../icons.js';
 
 // （词表：skill=技能…；wizard 第 3.5 步复用同一张类型标签表）
 export const TYPE_LABEL = { skill: '技能', memory: '记忆', mcp: 'MCP', prompt: '提示词', tool: '工具' };
@@ -19,8 +19,8 @@ const TYPE_BLURB = {
   prompt: '一段可复用的提示词文案',
   tool: '白名单工具：rtk（token 瘦身钩子）/ ripgrep（代码检索指引）',
 };
-const MODE_LABEL = { shared: '共享', exclusive: '独立' };
-const MODE_HINT = {
+export const MODE_LABEL = { shared: '共享', exclusive: '独立' };
+export const MODE_HINT = {
   shared: '跟源更新：工具改动即时同步到它（shared）',
   exclusive: '快照隔离：绑定时定格一份独立副本，源更新不跟版（exclusive）',
 };
@@ -95,11 +95,11 @@ const serializeForm = (f) => {
 
 // —— 小件 ————————————————————————————————————————————————————————————
 
-const TypeBadge = ({ h, type }) => h('span', {
+export const TypeBadge = ({ h, type }) => h('span', {
   className: `badge wb-atype-${type}`, title: `type: ${type}`,
 }, TYPE_LABEL[type] ?? type);
 
-const ModeBadge = ({ h, mode }) => h('span', {
+export const ModeBadge = ({ h, mode }) => h('span', {
   className: `badge wb-bmode-${mode}`, title: `mode: ${mode} —— ${MODE_HINT[mode] ?? ''}`,
 }, MODE_LABEL[mode] ?? mode);
 
@@ -108,7 +108,7 @@ const ModeBadge = ({ h, mode }) => h('span', {
 // 在册、盘面未装备——装好二进制后「重新物化」即可）；无清单条目 → 未物化。
 // 徽章配色单色收敛：ok/warn 语义色 + 内联 SVG icon。
 const TOOL_OK_STATES = new Set(['armed', 'available']);
-const ToolBadge = ({ h, entry }) => {
+export const ToolBadge = ({ h, entry }) => {
   if (entry == null) {
     return h('span', {
       className: 'wb-hint',
@@ -130,7 +130,7 @@ const ToolBadge = ({ h, entry }) => {
 // 操作回执（bind/unbind/rematerialize 共用形状 §3.2）：rematerialized/failed/
 // writes + notes/skipped；bind 另带 warnings/suppressed。落盘路径逐条照实展示
 // ——「写到哪里」是装备面的后果说明，一个字不减。
-const Receipt = ({ h, title, receipt }) => {
+export const Receipt = ({ h, title, receipt }) => {
   if (receipt == null) return null;
   const writes = Array.isArray(receipt.writes) ? receipt.writes : [];
   const failed = Array.isArray(receipt.failed) ? receipt.failed : [];

@@ -12,13 +12,17 @@ import { navIcon } from './icons.js';
 
 // Page registry: discovered uiPlugins (dynamic import) + runtime
 // registerPage() callers (harness/dynamic pages). One shape for both.
-const pages = new Map(); // id → {id,title,icon,order,component}
+// desc.hidden: registered (getPage can find it, #/<id> deep link renders) but
+// NOT listed in the nav — how embedded pages (overview 内嵌办公室 3D) stay
+// reachable as components without a nav slot.
+const pages = new Map(); // id → {id,title,icon,order,hidden,component}
 let pushPage = null; // set by <Shell/> once state exists
 const registerPage = (desc) => {
   if (desc == null || typeof desc.id !== 'string' || desc.id === '') return;
   pages.set(desc.id, desc);
   pushPage?.(desc);
 };
+const getPage = (id) => pages.get(id) ?? null;
 
 // The browser contract every page plugin codes against (DESIGN §9). Mounted
 // before any page module import so a module reading window.WAO at top level
@@ -28,7 +32,7 @@ const WAO = {
   useState, useEffect, useCallback, useRef,
   api, useAgents, useTimeline, useSSE,
   avatar, avatarUrl,
-  registerPage,
+  registerPage, getPage,
 };
 globalThis.WAO = WAO;
 window.WAO = WAO;
@@ -78,18 +82,18 @@ const PunchClock = () => {
 
   return h('div', { className: 'clockbar', role: 'status' },
     h('div', { className: 'clock-group-left' },
-      link('workbench', `${onDuty.length} 个机器人在线（共 ${enabled.length} 个）`,
+      link('overview', `${onDuty.length} 个机器人在线（共 ${enabled.length} 个）`,
         h('span', { className: 'clock-pulse-dot' }),
         h('span', { className: 'clock-label' }, '在线:'),
         h('span', { className: 'clock-num' }, `${onDuty.length} / ${enabled.length || 6}`)),
       h('div', { className: 'clock-item' },
         h('span', { className: 'clock-label' }, '企微通道:'),
         h('span', { className: 'clock-num', style: { color: 'var(--ok)' } }, 'wss 在线')),
-      link('workbench', `今天累计 ${todayOrders} 条消息`,
+      link('robots', `今天累计 ${todayOrders} 条消息`,
         h('span', { className: 'clock-label' }, '今日消息:'),
         h('span', { className: 'clock-num clock-capsule' }, todayOrders)),
     ),
-    link('timeline', '查看今日活动',
+    link('overview', '回到总览',
       h('span', { className: 'clock-label' }, '实时时刻:'),
       h('span', { className: 'clock-num', style: { fontFamily: 'var(--mono)' } }, clock)),
   );
@@ -152,6 +156,9 @@ const Shell = () => {
 
   const sorted = [...list].sort((a, b) => ((a.order ?? 10) - (b.order ?? 10)) || (a.id < b.id ? -1 : 1));
   const current = sorted.find((p) => p.id === active) ?? sorted[0] ?? null;
+  // hidden pages stay routable (#/<id>) but never take a nav slot — overview
+  // embeds 办公室 3D from the registry, so it must not double-list in nav.
+  const navItems = sorted.filter((p) => p.hidden !== true);
   const nav = (p) => h('a', {
     key: p.id,
     href: `#/${p.id}`,
@@ -176,7 +183,7 @@ const Shell = () => {
           h('div', { className: 'brand-sub' }, 'WeCom Agent Office'),
         ),
       ),
-      sorted.length > 0 ? sorted.map(nav) : h('div', { className: 'nav-item muted' }, '（加载中…）'),
+      sorted.length > 0 ? navItems.map(nav) : h('div', { className: 'nav-item muted' }, '（加载中…）'),
     ),
     h('main', { className: 'main' },
       h(PunchClock),

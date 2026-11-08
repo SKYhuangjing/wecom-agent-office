@@ -379,4 +379,10 @@ export const FAKE_API = {
         ? { notes: ['rtk 不可用：二进制未安装或不在 PATH——绑定保留，装好 rtk 后重跑「重新物化」即可配置'] } : {}),
     }),
   ])),
+  // —— v2 设置页（系统信息 section）————————————————————————————————————
+  '/healthz': { ok: true, version: '0.1.0' },
+  '/api/state': {
+    ok: true, uptimeSec: 93725, pid: 4242, dataDir: '/Users/sky/.local/share/wao',
+    plugins: FAKE_PLUGINS, uiPlugins: [{ id: 'ui-workbench' }, { id: 'ui-office3d' }],
+  },
 };

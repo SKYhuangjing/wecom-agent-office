@@ -1,17 +1,21 @@
 <!doctype html>
-<!-- ui-workbench harness (M3 T2/T3 截图工作流, W3 T4 增资产科, v2 增向导步直达,
-     kernel-hosted same-origin): ?page=workbench (default) renders 工作台; also
-     bots / assets / session / push / plugins / timeline. assets 页 ?view=equip
-     直达装备台（&bot=<id> 选同事）。bots 页 ?select=new 打开入职向导，&step=N
-     (1-5) 直达第 N 步——第 3 步配发装备/第 5 步通信渠道的基线用。
+<!-- ui-workbench harness (截图工作流, v2 导航收敛为三页): ?page=overview
+     (default, 总览) renders 办公室 3D 内嵌 + 状态卡片切换 + 最近活动; also
+     robots / settings. robots 页 ?select=new&step=N (1-5) 直达入职向导第 N
+     步, ?select=<botId>&tab=session|logs|tools|settings 直达详情 tab——
+     向导第 3 步配发装备 / 工具 tab / 设置 tab 的基线用。settings 页
+     ?section=system 直达系统信息；内嵌的资产科 ?view=equip[&bot=<id>] 深链
+     仍然有效（装备台基线）。总览的 3D 由 overview.js 按需同源 import
+     /api/ui/ui-office3d/index.js（真控制台同路径，harness 无需额外接线）。
      ?state=empty (no bots) / ?state=error (服务断联的 fetch 失败文案)
-     swap the fake data for those boundary states — test/ui-shot.sh 截空态/错误态
-     基线用. Swap fake-data.js entries for the state you want to screenshot
-     (empty ledger, offline bot, failed plugin, push error...), then:
-       chrome --headless=new --disable-gpu --screenshot=list-light.png \
+     swap the fake data for those boundary states — test/ui-shot.sh 截空态/
+     错误态基线用. Swap fake-data.js entries for the state you want to
+     screenshot (empty ledger, offline bot, failed plugin, push error...),
+     then:
+       chrome --headless=new --disable-gpu --screenshot=overview-light.png \
          --window-size=1280,800 http://127.0.0.1:8792/api/ui/ui-workbench/harness.html
-       chrome ... --screenshot=session-light.png \
-         http://127.0.0.1:8792/api/ui/ui-workbench/harness.html?page=session
+       chrome ... --screenshot=robots-light.png \
+         http://127.0.0.1:8792/api/ui/ui-workbench/harness.html?page=robots
      and again with --force-dark-mode for the dark pair of each page. -->
 <html lang="zh-CN">
 <head>
@@ -39,7 +43,7 @@
       }
         : { agents: FAKE.agents, timeline: FAKE_TIMELINE, api: FAKE_API };
     const stub = makeWAOStub(fake);
-    const index = await import('./index.js'); // registers all six pages via the collector
+    const index = await import('./index.js'); // registers the three pages via the collector
     const wanted = params.get('page');
     const page = [index.default, ...stub.pages].find((p) => p.id === wanted) ?? index.default;
     stub.render(page, document.getElementById('root'));

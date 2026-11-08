@@ -9,7 +9,7 @@
 // （botId）决定——同一张脸跟它一生。
 import { Avatar, PROVIDER_META, providerMeta, rollBadgeId, fmtDate, ensurePageStyle } from './hr.js';
 import { fieldsFromSchema, SchemaFields, serializeSchema } from './form.js';
-import { TYPE_LABEL } from './assets.js';
+import { TYPE_LABEL } from './_legacy/assets.js';
 import { IconEl } from './icons.js';
 
 const STEPS = [

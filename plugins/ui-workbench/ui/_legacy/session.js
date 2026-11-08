@@ -4,7 +4,7 @@
 // session history (GET /api/session?bot=&session= → {turns,truncated,warnings}),
 // reachable by typing a sessionId or clicking one on a ledger turn. Export
 // hands the whole bot ledger to the browser as Markdown (GET /api/export).
-import { ensurePageStyle } from './style.js';
+import { ensurePageStyle } from '../style.js';
 import { bannerText } from './list.js';
 
 const REASON_LABEL = { completed: '完成', interrupted: '被打断', timeout: '超时', error: '错误' };
@@ -15,7 +15,7 @@ const fmtTime = (at) => (Number.isFinite(at) && at > 0 ? new Date(at).toLocaleSt
 // `session file not found: <绝对路径>` — map it to operator copy keeping only
 // the file NAME (the full path is machine detail). Unknown warnings pass
 // through verbatim, never swallowed.
-const humanizeWarning = (w) => {
+export const humanizeWarning = (w) => {
   const m = /^session file not found: (.*)$/.exec(String(w));
   if (m == null) return String(w);
   const name = m[1].split(/[\\/]/).filter(Boolean).pop() ?? m[1];
@@ -35,7 +35,7 @@ export const chatsOf = (rows) => {
   return [...byChat.values()].sort((a, b) => b.lastAt - a.lastAt);
 };
 
-const TurnCard = ({ h, row, onSession }) => h('div', { key: row.seq, className: 'wb-turn' },
+export const TurnCard = ({ h, row, onSession }) => h('div', { key: row.seq, className: 'wb-turn' },
   h('div', { className: 'wb-turn-head' },
     h('time', null, fmtTime(row.at)),
     h('span', {

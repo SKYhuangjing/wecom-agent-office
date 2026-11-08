@@ -51,6 +51,9 @@ export function makeWAOStub(fakeData = {}) {
     api, useAgents, useTimeline, useSSE,
     avatar, avatarUrl,
     registerPage: (desc) => { pages.push(desc); },
+    // Same lookup contract as the shell's WAO.getPage — overview embeds the
+    // office3d page through it, and the harness must exercise that path too.
+    getPage: (id) => pages.find((p) => p?.id === id) ?? null,
   };
   globalThis.window.WAO = WAO;
 

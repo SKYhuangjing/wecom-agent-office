@@ -255,7 +255,7 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
   http.register({
     prefix: '/api/state', owner: 'kernel', handler: (req, res) => {
       if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' }, { Allow: 'GET' });
-      json(res, 200, { ok: true, uptimeSec: uptimeSec(), pid: process.pid, plugins: pluginList(), uiPlugins: uiPlugins() });
+      json(res, 200, { ok: true, uptimeSec: uptimeSec(), pid: process.pid, dataDir: dir, plugins: pluginList(), uiPlugins: uiPlugins() });
     },
   });
   // Page-plugin static hosting (DESIGN §9): /api/ui/<id>/<file> serves the

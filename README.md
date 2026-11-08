@@ -3,7 +3,7 @@
 > 前身：`wecom-bridge`（单 bot 数据面）+ `wecom-bots`（管理面板）。本仓库是重写：
 > **微内核 + 插件体系**，一切业务（引擎/企微通道/Agent provider/UI）皆插件。
 > M1 交付内核 + core-engine + channel-wecom + provider-dsh；M2 交付 provider-claude/codex
-> （三家切换矩阵全绿）；M3 交付 Web UI（工作台六页 + 办公室 3D，21 张截图基线）+
+> （三家切换矩阵全绿）；M3 交付 Web UI；v2（2026-11-08）导航收敛为 总览/机器人/设置 三页（30 张截图基线）+
 > 无人值守运维（launchd）。**生产切换 runbook：`docs/CUTOVER.md`**。
 
 ---
@@ -342,20 +342,22 @@ curl -si -X POST localhost:8792/mcp -H 'content-type: application/json' \
   静态资源来自 `web/dist/`（**产物已提交**，运行与测试都不需要构建）；改 `web/src/{shell.jsx,sdk.js,styles.css}`
   或 `web/index.html` 后 `npm i && node web/build.mjs` 重建并提交 dist。
 - **页面插件契约（硬性）**：无构建 ES Module、禁 JSX/bare import，React/SDK 一律从注入的
-  `WAO` 取（`h/useState/useEffect/useCallback/api/useAgents/useTimeline/useSSE/avatar/avatarUrl/registerPage`）。
-  manifest 声明 `ui: './ui'` → 内核托管 `/api/ui/<id>/` 并进 `/api/state.uiPlugins`。细节与
+  `WAO` 取（`h/useState/useEffect/useCallback/api/useAgents/useTimeline/useSSE/avatar/avatarUrl/registerPage/getPage`——
+  `getPage(id)` 供页间内嵌查找，页面描述带 `hidden: true` 时注册但不进导航）。manifest 声明 `ui: './ui'` → 内核托管 `/api/ui/<id>/` 并进 `/api/state.uiPlugins`。细节与
   harness 模板见 `docs/PLUGIN-DEV.md` §5.4，参照实现 `plugins/_template/page/`。
 - **harness 截图（改 UI 红线：必须截图验证）**：每页面插件 `ui/harness.html` 用
   `web/harness-lib/wao-stub.js` 的假数据桩独立渲染（内核同源托管）。**UI 改动工作流
   = 改页 → 跑截图脚本 → 逐张看图（浅/深/空态/错误态）→ 图随代码一起提交**：
 
   ```sh
-  bash test/ui-shot.sh      # 起临时内核(18798)+CDP 无头 Chrome，重产 21 张基线到 test/ui-shots/
+  bash test/ui-shot.sh      # 起临时内核(18798)+CDP 无头 Chrome，重产 30 张基线到 test/ui-shots/
   ```
 
-  基线清单（提交进库，review 时对照）：ui-workbench 六页 × 浅/深（`?page=`）+
-  ui-office3d iso/2d × 浅(day)/深(night)（`?dim=`/`?phase=`）+ template-page demo +
-  边界四张（`?state=empty|error`：工作台与办公室的空态 / 断服 fetch 失败文案）。
+  基线清单（提交进库，review 时对照）：ui-workbench 三页（v2 导航收敛：overview/robots/
+  settings）× 浅/深 + 总览卡片视图/机器人详情 tab（工具/设置）/向导两步 × 浅/深 +
+  设置系统信息与内嵌装备台 × 浅/深 + ui-office3d iso/2d × 浅/深（插件自带 harness，
+  页面 hidden 不占导航、由总览内嵌）+ ui-office-studio + template-page demo +
+  边界四张（`?state=empty|error`：总览与办公室的空态 / 断服 fetch 失败文案）。
   主题由 CDP `Emulation.setEmulatedMedia` 精确控制（不依赖系统外观）；任一图缺失或
   <5KB 脚本 exit 1。harness 还支持手工改 `ui/fake-data.js` 桩出更多状态后单张复现：
 

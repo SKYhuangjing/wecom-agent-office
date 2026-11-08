@@ -4,17 +4,17 @@
 // 每行带上同事的化身（头像即化身——日志里也是那张脸）；kind 用公司话
 // （开工/步骤/工具/思考/工单/收工），技术原值收进 title。bot picker 是
 // 全部同事+单人，窗口 5/15/30 分钟。
-import { ensurePageStyle } from './style.js';
+import { ensurePageStyle } from '../style.js';
 import { bannerText } from './list.js';
-import { Avatar, providerMeta } from './hr.js';
-import { IconEl } from './icons.js';
+import { Avatar, providerMeta } from '../hr.js';
+import { IconEl } from '../icons.js';
 
-const KIND_LABEL = { run_start: '开始', step: '步骤', tool: '工具', thinking: '思考', turn: '消息', run_end: '结束' };
+export const KIND_LABEL = { run_start: '开始', step: '步骤', tool: '工具', thinking: '思考', turn: '消息', run_end: '结束' };
 // 单色收敛：kind 不再分色，差异靠 icon 形状（无自然映射的 kind 纯文字）。
-const KIND_ICON = { run_start: 'play', tool: 'zap', turn: 'send', run_end: 'check' };
+export const KIND_ICON = { run_start: 'play', tool: 'zap', turn: 'send', run_end: 'check' };
 const WINDOWS = [5, 15, 30]; // minutes
 
-const fmtClock = (at) => (Number.isFinite(at) && at > 0
+export const fmtClock = (at) => (Number.isFinite(at) && at > 0
   ? new Date(at).toLocaleTimeString('zh-CN', { hour12: false })
   : '--:--:--');
 

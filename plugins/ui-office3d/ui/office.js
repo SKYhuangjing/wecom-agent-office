@@ -149,6 +149,9 @@ export default {
   title: '办公室',
   icon: 'building',
   order: 5,
+  // v2 导航收敛：不再占导航位，由「总览」页通过 WAO.getPage('office3d')
+  // 内嵌渲染；本插件保持独立注册（#/office3d 深链与自带 harness 仍可用）。
+  hidden: true,
   component({ WAO }) {
     ensureStyle();
     // useRef 不在 WAO hook 表面 — 与 legacy office 一样从共享 React 取
@@ -425,7 +428,7 @@ export default {
           ? h('div', { className: 'of-empty' },
             h('div', { className: 'card' },
               h('p', null, '空的办公室——第一位同事入职后就会搬进来'),
-              h('p', { className: 'muted' }, '去人事部办理入职，它将出现在工位上')))
+              h('p', { className: 'muted' }, '去「机器人」页办理入职，它将出现在工位上')))
           : null,
         selAgent ? (() => {
           const off = isOff(selAgent);

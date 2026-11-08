@@ -5,7 +5,7 @@
 // offline (counted from live /api/agents data against /api/ports owners — a
 // port id need not match its registering plugin's id); reload warns that
 // in-flight turns are interrupted with the maintenance copy.
-import { ensurePageStyle } from './style.js';
+import { ensurePageStyle } from '../style.js';
 
 const STATUS_LABEL = { active: '运行中', disabled: '已停用', failed: '加载失败' };
 const TYPE_LABEL = { core: '内核', channel: '渠道', provider: '引擎插件', ui: '页面', middleware: '中间件', progressor: '进度器' };

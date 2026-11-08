@@ -3,12 +3,12 @@
 // 数据面不变：GET /api/ports（schema）+ GET /api/bots（脱敏记录）；表单仍由
 // schema 驱动（form.js）。双层语言：主层公司话，技术词（bot id、provider
 // 名、schema 字段）收进 tooltip/副标题。
-import { ensurePageStyle } from './style.js';
-import { fieldsFromSchema, SchemaFields, serializeSchema } from './form.js';
+import { ensurePageStyle } from '../style.js';
+import { fieldsFromSchema, SchemaFields, serializeSchema } from '../form.js';
 import { HANDOFF_KEY } from './list.js';
-import { Avatar, STATUS_LABEL, statusTitle, providerMeta, fmtDate } from './hr.js';
-import { Wizard } from './wizard.js';
-import { Offboard } from './offboard.js';
+import { Avatar, STATUS_LABEL, statusTitle, providerMeta, fmtDate } from '../hr.js';
+import { Wizard } from '../wizard.js';
+import { Offboard } from '../offboard.js';
 
 const NAME_MAX = 30;
 const errorLines = (message) => String(message ?? '').split('; ').filter((s) => s.trim() !== '');
@@ -30,7 +30,7 @@ const draftFromRecord = (bot, ports) => ({
 });
 
 // 员工档案的分组折叠（基础/工牌凭证/岗位配置/高级）
-const Group = ({ WAO, title, sub, open, onToggle, children }) => {
+export const Group = ({ WAO, title, sub, open, onToggle, children }) => {
   const { h } = WAO;
   return h('section', { className: `wb-group${open ? ' open' : ''}` },
     h('button', { className: 'wb-group-head', onClick: onToggle, 'aria-expanded': open ? 'true' : 'false' },

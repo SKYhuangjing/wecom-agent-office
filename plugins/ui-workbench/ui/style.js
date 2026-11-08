@@ -339,6 +339,32 @@ const CSS = `
   .wb-side-item { width: auto; }
   .wb-grid { grid-template-columns: 1fr; }
 }
+
+/* —— v2 导航收敛：总览页（3D 内嵌高度适配 + 卡片名可点 + 最近活动条） ———— */
+/* 卡片名字是按钮（进详情）：去掉按钮外观，保留可点语义 */
+.wb-name-btn {
+  border: 0; background: none; padding: 0; font: inherit; color: inherit;
+  cursor: pointer; text-align: left; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; max-width: 100%;
+}
+.wb-name-btn:hover { color: var(--accent, var(--ink)); text-decoration: underline; }
+
+/* 办公室 3D 原页按独立页预留 158px 顶栏；总览还有页头+切换条+活动条，重设高 */
+.ov-embed .of-stage { height: calc(100vh - 330px); min-height: 420px; }
+@media (max-width: 900px) { .ov-embed .of-stage { height: 60vh; min-height: 360px; } }
+
+/* 最近活动摘要（最近 5 条，点击进机器人详情日志 tab） */
+.ov-act { margin-top: 16px; }
+.ov-act-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.ov-act-head h3 { margin: 0; font-size: 14px; }
+.ov-act-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ov-act-row {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 7px 12px; cursor: pointer; font-size: 12.5px;
+  transition: border-color .15s ease;
+}
+.ov-act-row:hover { border-color: #CBD5E1; }
 `;
 
 export function ensurePageStyle() {

@@ -180,6 +180,7 @@ export default {
   title: '工位棚',
   icon: '▢',
   order: 6,
+  hidden: true, // v2 导航收敛为 总览/机器人/设置 三项——全景页不再占导航位（深链 #/office-studio 仍可达）
   component({ WAO }) {
     ensureStyle();
     const { h, useState, useEffect, useAgents, useTimeline, React } = WAO;

@@ -3,7 +3,7 @@
 // cap with a live counter). Sending is refused while the bot is not connected
 // (offline / disabled) — the button stays disabled with the reason inline.
 // This page sends REAL messages: no dry-run, no confirmation shortcut.
-import { ensurePageStyle } from './style.js';
+import { ensurePageStyle } from '../style.js';
 import { chatsOf } from './session.js';
 import { bannerText } from './list.js';
 

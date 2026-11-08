@@ -2,8 +2,8 @@
 // 色环)+岗位称呼+状态(工作中 provider 色脉动/待命/休假)+工作汇报(SSE 进度行)
 // +今日统计。开关文案=调休/返岗。数据来自 useAgents（SSE+5s 轮询）；retry
 // 重挂内层组件让硬失败可手动重试。
-import { ensurePageStyle } from './style.js';
-import { Avatar, STATUS_LABEL, statusTitle, providerMeta } from './hr.js';
+import { ensurePageStyle } from '../style.js';
+import { Avatar, STATUS_LABEL, statusTitle, providerMeta } from '../hr.js';
 
 // Cross-page handoff (shell routing is bare '#/<pageid>'): the sender stashes
 // {action, id} here before flipping the hash; the bots page consumes it once.
