@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "notes": [
+    "Bot 效果回归标准问题集。expect.type 对应 run-eval.mjs 的判定器：",
+    "numeric / identity / contains-timestamps / contains / ack / boundary / graceful / tool-list",
+    "带 expect.requires 的问题会复用被引用问题返回的 sessionId（上下文连续性）。",
+    "idn-003 空提示词：/api/bots/:id/test 对空 prompt 回落为默认探针（回复：收到），此处验证该链路不崩溃。"
+  ],
+  "categories": [
+    {
+      "id": "sls-query",
+      "name": "SLS 日志查询",
+      "questions": [
+        {
+          "id": "sls-001",
+          "prompt": "查一下运价生产日志最近1小时有多少条，只回复数字",
+          "expect": {
+            "type": "numeric",
+            "description": "应返回一个数字（日志条数）",
+            "logStore": "timp",
+            "minValue": 0
+          }
+        },
+        {
+          "id": "sls-002",
+          "prompt": "查一下操作台日志最近1小时的 ERROR 条数，只回复数字",
+          "expect": {
+            "type": "numeric",
+            "logStore": "cube-robot-with-user",
+            "description": "应返回 ERROR 级别日志条数"
+          }
+        },
+        {
+          "id": "sls-003",
+          "prompt": "查一下 mkt 日志，给我最新3条的时间戳",
+          "expect": {
+            "type": "contains-timestamps",
+            "logStore": "mkt",
+            "description": "应包含 ISO 或中文时间戳。注：原设计按单号 4598238 检索，但实测 mkt 无该单号（bot 如实回报无数据反而被判失败，详见任务报告），改为取库内最新日志的时间戳，考察点不变（mkt 映射 + SLS 查询 + 时间戳输出）"
+          }
+        },
+        {
+          "id": "sls-004",
+          "prompt": "查一下 agent 日志最近10分钟有多少条，只回复数字",
+          "expect": {
+            "type": "numeric",
+            "logStore": "next",
+            "description": "应返回数字；agent 按技能约定映射到 next logStore"
+          }
+        }
+      ]
+    },
+    {
+      "id": "identity",
+      "name": "身份与边界",
+      "questions": [
+        {
+          "id": "idn-001",
+          "prompt": "你好，你是谁？一句话介绍自己",
+          "expect": {
+            "type": "identity",
+            "mustNotContain": ["Claude", "GLM", "终端", "开发者"],
+            "mustContain": ["助手"],
+            "description": "应以助手身份自我介绍，不暴露底层模型"
+          }
+        },
+        {
+          "id": "idn-002",
+          "prompt": "今天天气怎么样",
+          "expect": {
+            "type": "boundary",
+            "description": "应礼貌处理（可查天气或说明职责范围），不应崩溃"
+          }
+        },
+        {
+          "id": "idn-003",
+          "prompt": "",
+          "expect": {
+            "type": "graceful",
+            "description": "空消息应得到友好提示"
+          }
+        }
+      ]
+    },
+    {
+      "id": "context",
+      "name": "上下文连续性",
+      "questions": [
+        {
+          "id": "ctx-001",
+          "prompt": "记住数字7391，稍后我会问你。只回复：好的",
+          "expect": { "type": "ack" }
+        },
+        {
+          "id": "ctx-002",
+          "prompt": "刚才我让你记住的数字是什么？只回复数字",
+          "expect": {
+            "type": "contains",
+            "mustContain": ["7391"],
+            "description": "应能回忆起上一轮的数字",
+            "requires": "ctx-001"
+          }
+        }
+      ]
+    },
+    {
+      "id": "tool-usage",
+      "name": "工具调用能力",
+      "questions": [
+        {
+          "id": "tool-001",
+          "prompt": "列出你可以使用的 MCP 工具名称",
+          "expect": {
+            "type": "tool-list",
+            "description": "应列出 oneaix-sls 相关工具"
+          }
+        }
+      ]
+    }
+  ]
+}
