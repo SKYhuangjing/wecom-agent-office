@@ -1,11 +1,11 @@
-// M2 Task 6: the four-provider switch matrix over REAL CLIs (dsh / claude /
+// M2 Task 6: the five-provider switch matrix over REAL CLIs (dsh / claude /
 // codex / pi) — the M2 centerpiece proving DESIGN §7 switching semantics end
 // to end. NOT part of `npm test` (real CLIs + tokens): run via
 //   npm run test:matrix        (or: node --test test/e2e/switch-matrix.realtest.js)
 // The `.realtest.js` suffix keeps it out of the `test/**/*.test.js` glob.
 //
 // Two levels:
-//  A. ENGINE-LEVEL (the §7 semantics, one chatKey / 9 real turns):
+//  A. ENGINE-LEVEL (the §7 semantics, one chatKey / 11 real turns):
 //     real Engine + real Ledger + real SessionCache in a tmp dataDir, with the
 //     REAL provider runners (provider-dsh/-claude/-codex/-pi runner.js) wrapped
 //     in a recording proxy — the only instrumentation is capturing the prompt +
@@ -65,6 +65,7 @@ import { writeBotProfile, removeProfile } from '../../plugins/provider-dsh/profi
 import { createRunner as createClaudeRunner } from '../../plugins/provider-claude/runner.js';
 import { createRunner as createCodexRunner } from '../../plugins/provider-codex/runner.js';
 import { createRunner as createPiRunner } from '../../plugins/provider-pi/runner.js';
+import { createRunner as createCursorRunner } from '../../plugins/provider-cursor/runner.js';
 import { writeBotModels } from '../../plugins/provider-pi/models.js';
 import { createKernel } from '../../src/index.js';
 
@@ -74,7 +75,7 @@ const HANDOFF_HEADER = '以下是本对话此前的记录（供上下文参考�
 // Real CLIs are a hard precondition: absent CLI → whole-file skip (probe.sh
 // convention — loud, never fatal for CI without the CLIs).
 const have = (bin) => spawnSync(bin, ['--version'], { encoding: 'utf8', timeout: 20000 }).status === 0;
-const MISSING = ['dsh', 'claude', 'codex', 'pi'].filter((b) => !have(b));
+const MISSING = ['dsh', 'claude', 'codex', 'pi', 'agent'].filter((b) => !have(b));
 const RUN = MISSING.length === 0;
 const SKIP_REASON = RUN ? false : `real CLIs not on PATH: ${MISSING.join(', ')}`;
 
@@ -90,6 +91,8 @@ const R6 = '只回复两个字：收到';
 const R7 = '新来的助手刚才记的新暗号是什么？只回复暗号本身，不要有任何其他文字';
 const R8 = '暗号是什么？只回复暗号本身，不要有任何其他文字';
 const R9 = '只回复两个字：收到';
+const R10 = '新来的助手：之前的暗号你还记得吗？只回复暗号本身';
+const R11 = '只回复两个字：收到';
 
 const DSH_PROFILE = 'wecom-m2t6-matrix';
 const DSH_MODEL_A = { provider: 'magpie', model: 'workbuddy/deepseek-v4.1-flash' };
@@ -101,6 +104,9 @@ const CODEX_MODEL_B = 'auto/hy3'; // round-2 -m switch (config.toml default on r
 // under PI_MAGPIE_API_KEY — no dependency on the outer shell env.
 const PI_MODEL_A = 'auto/glm-5.3-flash';
 const PI_MODEL_B = 'workbuddy/deepseek-v4.1-flash';
+// cursor model-B switch id: gpt-5 is the --help example; CALIBRATE against
+// `agent models` once the account is logged in (drop-in constant).
+const CURSOR_MODEL_B = process.env.WAO_CURSOR_MODEL_B || 'gpt-5';
 
 // Real-run timescales: 4min hard cap per turn (smoke-dsh uses 180s), warn
 // phase effectively off, ms throttling irrelevant (reply-only fake adapter).
@@ -144,12 +150,14 @@ let dshSid = null;
 let claudeSid = null;
 let codexSid = null;
 let piSid = null;
+let cursorSid = null;
 
 const REAL_FACTORIES = {
   dsh: createDshRunner,
   claude: createClaudeRunner,
   codex: createCodexRunner,
   pi: createPiRunner,
+  cursor: createCursorRunner,
 };
 
 // The provider port's makeRunner equivalent, wrapped in the recording proxy:
@@ -419,6 +427,51 @@ test('S1-pi pi: --model switch → same session, bare prompt; journal spans all 
   assert.equal(rows()[8].sessionId, piSid, 'the pi row journals the resumed pi session');
 });
 
+// —— S2-cursor: 跨 provider 去（…→cursor 全量交接）————————————————————————
+test('S2-cursor switch to cursor: full handoff prefix over all 9 rows + functional recall', { skip: SKIP_REASON }, async () => {
+  setProvider('cursor', { cwd: workDir, cursorHome: join(dataDir, 'cursor-home') });
+  await turn(R10);
+  const r10 = lastRow();
+  assert.equal(r10.reason, 'completed', `cursor turn completed: ${r10.assistant}`);
+  cursorSid = r10.sessionId;
+  assert.ok(cursorSid && cursorSid !== piSid, 'cursor minted its own session');
+
+  const call = recorded[9];
+  assert.equal(call.sessionId, null, 'cross-provider turn starts a FRESH cursor session');
+  assert.ok(call.prompt.startsWith(HANDOFF_HEADER), `prompt starts with the handoff header: ${call.prompt.slice(0, 40)}`);
+  assert.ok(call.prompt.includes(R1) && call.prompt.includes(R5), 'prefix carries history across the prior providers');
+  assert.ok(call.prompt.endsWith(R10), 'the new message is appended after the prefix');
+
+  // Functional proof: both passcodes exist ONLY in prior providers' sessions —
+  // a fresh cursor session can only know either from the handoff text.
+  assert.ok(r10.assistant.includes(CODE1) || r10.assistant.includes(CODE2),
+    `cursor recalled a passcode from the handoff prefix (got: ${r10.assistant})`);
+
+  const rec = cache.get(K);
+  assert.equal(rec.current, 'cursor');
+  assert.equal(rec.cache.cursor.sessionId, cursorSid);
+  assert.equal(rec.cache.cursor.consumedAtBuild, 9, 'rule 1: consumedAtBuild = maxSeq BEFORE this turn');
+  assert.equal(rec.cache.cursor.consumedSeq, 10, 'rule 2 advanced past the cursor row');
+  assert.equal(rec.cache.pi.dirty, false, 'switching away does NOT dirty the old session');
+});
+
+// —— S1-cursor: cursor 同 provider 换模型（--model）原生续 ——————————————————
+test('S1-cursor cursor: --model switch → same session, bare prompt; journal spans all five providers', { skip: SKIP_REASON }, async () => {
+  setProvider('cursor', {
+    cwd: workDir, cursorHome: join(dataDir, 'cursor-home'),
+    model: { model: CURSOR_MODEL_B },
+  });
+  await turn(R11);
+  const r11 = lastRow();
+  assert.equal(r11.reason, 'completed', `cursor model-B round completed: ${r11.assistant}`);
+  assert.equal(recorded[10].sessionId, cursorSid, 'cursor NATIVELY resumed the same session across the model switch');
+  assert.equal(recorded[10].prompt, R11, 'native resume carries NO handoff prefix');
+  assert.equal(cache.get(K).cache.cursor.sessionId, cursorSid, 'cache cursor session unchanged');
+  assert.deepEqual(rows().map((r) => r.provider),
+    ['dsh', 'dsh', 'claude', 'claude', 'codex', 'codex', 'dsh', 'pi', 'pi', 'cursor', 'cursor'],
+    'ledger journal spans all FIVE providers on one chatKey');
+});
+
 // —— S4 note: 反例 A/B 的单元级锁定在 test/ledger/ledger.test.js（npm test 内）
 //    恒绿；本文件 turn 7 在真实链路上复证了反例 A 的行为（旧轮不再重放）。
 
@@ -427,7 +480,7 @@ test('S5 API smoke: real kernel, four enabled:false bots, /test round 2 {session
   const apiData = mkdtempSync(join(tmpdir(), 'wao-m2t6-api-'));
   // The bots' cwds must EXIST before any runner spawns in them (spawn in a
   // missing cwd fails with a bare ENOENT — first-run lesson of this suite).
-  for (const p of ['dsh', 'claude', 'codex', 'pi']) mkdirSync(join(apiData, p), { recursive: true });
+  for (const p of ['dsh', 'claude', 'codex', 'pi', 'cursor']) mkdirSync(join(apiData, p), { recursive: true });
   const kernel = await createKernel({ port: 0, dataDir: apiData, pluginsDirs: [join(repoRoot, 'plugins')] });
   const base = `http://127.0.0.1:${kernel.http.port}`;
   const post = (p, body) => fetch(base + p, {
@@ -449,6 +502,10 @@ test('S5 API smoke: real kernel, four enabled:false bots, /test round 2 {session
       // tmp — the real ~/.pi/agent-wao-<botId> is never touched. The apiKey
       // literal rides in model → env PI_MAGPIE_API_KEY (models.json refs it).
       { id: 'm2t6-api-pi', provider: 'pi', providerConfig: { cwd: join(apiData, 'pi'), piAgentDir: join(apiData, 'pi-agent'), model: { model: PI_MODEL_A, apiKey: 'magpie' } } },
+      // cursor: runs on the CLI's own login (no gateway route, no side
+      // files); cursorHome redirected into apiData so the session store
+      // stays in tmp — the real ~/.cursor login is never touched.
+      { id: 'm2t6-api-cursor', provider: 'cursor', providerConfig: { cwd: join(apiData, 'cursor'), cursorHome: join(apiData, 'cursor-home') } },
     ];
     for (const { id, provider, providerConfig } of cases) {
       const create = await post('/api/bots', {

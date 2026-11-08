@@ -71,7 +71,7 @@ WAO 现有四家 provider:dsh / claude / codex / pi(复制即契约,契约套件
 - `/v1/models` 已列出 `workbuddy/hy3`、`workbuddy/deepseek-v4.1-flash`、`workbuddy-ai/gpt-6-luna` 等(OpenAI 兼容面)。
 - **magpie 没有 cbc 原生协议的入口路由**:`/backend-api/codebuddy`、`/backend-api/workbuddy`、`/v2`、`/codebuddy`、`/workbuddy/v2` 全部 404(codex 有 `/backend-api/codex` 先例,cbc 无对应物)。→ **cbc 无法走 magpie**。
 
-### 3.6 Cursor CLI 补充深潜(2026-11-08,用户问询触发)
+### 3.6 Cursor CLI 补充深潜(2026-11-08,用户问询触发;**同日实测补充:编辑器 token 移植不可行**——cursor-safe-storage:v1 信封可解密(PBKDF2+AES-CBC,钥匙串密钥),解出 type=session JWT 未过期,但 api.cursor.com 拒绝之(凭证域分离:编辑器会话 ≠ CLI/API 凭证);provider-cursor 插件已落地至 fake 级验证,真 CLI 验证待 agent login,状态见 ROADMAP 搁置区)
 
 CLI 现名 **`agent`**(原 `cursor-agent`),安装 `curl https://cursor.com/install | bash`。
 

@@ -306,12 +306,21 @@ capture_pi() { # capture_pi <out-tmp>; prints exit code
   echo $rc
 }
 
+# cursor runs on the CLI's OWN login (`agent login`) or CURSOR_API_KEY — no
+# gateway route exists (PROVIDER-RESEARCH §3.6). The minimal probe uses the
+# default account model; -f un-attends tools (headless). Missing login → the
+# probe exits 1 with Authentication required (loud, never fatal for others).
+capture_cursor() { # capture_cursor <out-tmp>; prints exit code
+  printf '%s' "$PROMPT" | run_timed "$TIMEOUT_SECS" agent -p --output-format stream-json -f >"$1" 2>/dev/null
+  echo $?
+}
+
 NOW="$(date +%Y-%m-%d)"
 
-save_minimal() { # save_minimal <cli> <capture-fn>
-  local cli="$1" fn="$2" tmp rc
-  if ! have "$cli"; then
-    echo "skip  $cli: not installed"
+save_minimal() { # save_minimal <cli> <capture-fn> [bin] — bin defaults to cli (cursor's binary is 'agent')
+  local cli="$1" fn="$2" bin="${3:-$1}" tmp rc
+  if ! have "$bin"; then
+    echo "skip  $cli: not installed ($bin not on PATH)"
     return 0
   fi
   tmp="$(mktemp "$BASE_DIR/.tmp-${cli}.XXXXXX")"
@@ -955,10 +964,10 @@ probe_pi_history_roundtrip() {
 
 # —— check mode ——————————————————————————————————————————————————————————————
 
-check_minimal() { # check_minimal <cli> <capture-fn>
-  local cli="$1" fn="$2" base tmp drift=0
+check_minimal() { # check_minimal <cli> <capture-fn> [bin]
+  local cli="$1" fn="$2" bin="${3:-$1}" base tmp drift=0
   base="$BASE_DIR/${cli}.ndjson"
-  if ! have "$cli"; then
+  if ! have "$bin"; then
     echo "skip  $cli: not installed"
     return 0
   fi
@@ -991,6 +1000,7 @@ case "$MODE" in
     save_minimal claude capture_claude
     save_minimal codex capture_codex
     save_minimal pi capture_pi
+    save_minimal cursor capture_cursor agent
     probe_dsh_kill_resume
     probe_codex_resume_stdin
     probe_claude_resume
@@ -1008,6 +1018,7 @@ case "$MODE" in
     check_minimal claude capture_claude || fail=1
     check_minimal codex capture_codex || fail=1
     check_minimal pi capture_pi || fail=1
+    check_minimal cursor capture_cursor agent || fail=1
     if [ "$fail" = 1 ]; then
       echo "probe: DRIFT detected — update baselines deliberately (bash test/probe.sh && git add), never blindly"
       exit 1

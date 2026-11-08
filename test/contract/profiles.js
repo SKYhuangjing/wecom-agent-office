@@ -19,6 +19,7 @@ import { zstdCompressSync } from 'node:zlib';
 const FAKE_CLAUDE = fileURLToPath(new URL('../fake-bin/fake-claude.js', import.meta.url));
 const FAKE_CODEX = fileURLToPath(new URL('../fake-bin/fake-codex.js', import.meta.url));
 const FAKE_PI = fileURLToPath(new URL('../fake-bin/fake-pi.js', import.meta.url));
+const FAKE_CURSOR = fileURLToPath(new URL('../fake-bin/fake-cursor.js', import.meta.url));
 
 // claude's project-dir slugging (verified against real sessions — see
 // plugins/provider-claude/history.js header): every non-alphanumeric → '-'.
@@ -218,6 +219,45 @@ export const PROFILES = {
       piBin: wrapBin(mode, fakeHome),
       cwd,
       piAgentDir: join(cwd, 'pi-agent'),
+    }),
+  },
+
+  // plugins/provider-cursor — all groups, mirroring the claude profile (the
+  // closest CLI family: -p + stream-json with system/init session_id,
+  // assistant messages, result verdict): fake-cursor injected via cursorBin
+  // wrapper + cursorHome pointed INSIDE the group's tmp cwd so history never
+  // touches the real ~/.cursor. Session storage: the real CLI keeps worker
+  // state under ~/.cursor (agent-cli-state.json workerIds); the reader's
+  // historyPath convention mirrors the claude layout until the live probe
+  // pins the real on-disk session files (probe pending auth — calibrate
+  // historyPath + the fake's shapes against test/probe-baselines/cursor*.ndjson
+  // when captured).
+  cursor: {
+    note: 'full contract against fake-cursor via cursorBin wrapper injection (shapes from CLI docs; live-probe calibration pending auth)',
+    // ok-mode final text; cursor resumes via --resume <id> (claude spells it --resume too)
+    expect: { okFinalText: () => '答案文本', resumeArg: '--resume' },
+    fakeCli: true,
+    events: true,
+    history: true,
+    fakeBin: FAKE_CURSOR,
+    historyPath: (cwd, sessionId) =>
+      join(cwd, 'cursor-home', 'projects', projectDirName(cwd), `${sessionId}.jsonl`),
+    // Oversized-history fixture writer — claude's JSONL shape as the working
+    // hypothesis (same CLI family); recalibrate when the live probe lands.
+    hugeHistory: async (path) => {
+      const lines = [{ type: 'queue-operation', operation: 'enqueue', sessionId: 'huge', content: 'noise' }];
+      for (let i = 0; i < 2500; i++) {
+        const ts = new Date(100 + i).toISOString();
+        lines.push({ type: 'user', isSidechain: false, message: { role: 'user', content: `问题 ${i}` }, timestamp: ts });
+        lines.push({ type: 'assistant', isSidechain: false, message: { role: 'assistant', content: [{ type: 'text', text: `回答 ${i}` }] }, timestamp: ts });
+      }
+      lines.push({ type: 'cost-state', sessionId: 'huge', totalCostUSD: 0 });
+      writeFileSync(path, lines.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    },
+    makeRunnerArgs: ({ cwd, mode, fakeHome, wrapBin }) => ({
+      cursorBin: wrapBin(mode, fakeHome),
+      cwd,
+      cursorHome: join(cwd, 'cursor-home'),
     }),
   },
 };

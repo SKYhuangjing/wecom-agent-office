@@ -27,6 +27,11 @@ export const PROVIDER_META = {
     dept: '轻量系', tech: 'pi · pi coding agent',
     blurb: 'pi CLI 短平快、会话好续接，网关随配随走，适合轻量任务与自由路由。',
   },
+  cursor: {
+    label: 'Cursor 引擎', letter: 'U', color: 'var(--muted)',
+    dept: 'Cursor 系', tech: 'cursor · Cursor CLI (agent)',
+    blurb: 'Cursor CLI 与编辑器同一订阅池，工具全、上手快，适合通用开发任务（用量走 Cursor 账号）。',
+  },
 };
 export const providerMeta = (id) => (PROVIDER_META[id] ?? {
   label: id ? `${id} 引擎` : '未选择引擎',
