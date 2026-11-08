@@ -11,6 +11,7 @@ import { fieldsFromSchema, SchemaFields, serializeSchema } from './form.js';
 import { Avatar, STATUS_LABEL, statusTitle, providerMeta, fmtDate } from './hr.js';
 import { Wizard } from './wizard.js';
 import { Offboard } from './offboard.js';
+import { MdText } from './md.js';
 import { IconEl } from './icons.js';
 import { bannerText } from './_legacy/list.js';
 import { chatsOf, TurnCard, humanizeWarning } from './_legacy/session.js';
@@ -96,7 +97,7 @@ const DetailSession = ({ WAO, botId, agent }) => {
       h('div', { className: 'wb-turn-user' }, t.user)) : null,
     h('div', null,
       h('span', { className: 'wb-turn-role' }, '助手：'),
-      h('div', { className: 'wb-turn-assistant' }, t.assistant || '（无文本输出）')));
+      h('div', { className: 'wb-turn-assistant' }, h(MdText, { h, text: t.assistant || '（无文本输出）' }))));
 
   let body = null;
   if (view === 'ledger') {
@@ -316,7 +317,7 @@ const DetailTools = ({ WAO, botId }) => {
     bindings.length === 0
       ? h('div', { className: 'wb-empty' },
           h('p', null, '这个机器人还没有配置工具——从下面挑一个给它绑上，技能和工具都会落到它的工作目录。'))
-      : h('table', { className: 'wb-table' },
+      : h('div', { className: 'wb-table-scroll' }, h('table', { className: 'wb-table' },
           h('thead', null, h('tr', null,
             h('th', null, '工具'), h('th', null, '类型'), h('th', null, '模式'),
             h('th', null, '版本/快照'), h('th', null, '配置态'), h('th', null, '操作'))),
@@ -372,7 +373,7 @@ const DetailTools = ({ WAO, botId }) => {
     actionError != null ? h('div', { className: 'error', style: { marginTop: 12 } }, actionError) : null,
     receipt != null ? h(Receipt, { h, title: receipt.title, receipt: receipt.data }) : null,
     unbindModal,
-    rematModal);
+    rematModal));
 };
 
 // —— 设置 tab（_legacy/bots.js 的编辑表单原样搬移：分组折叠 + sticky 保存栏 +
@@ -834,7 +835,9 @@ export default {
             className: `wb-tab${tab === t ? ' active' : ''}`,
             onClick: () => setTab(t),
           }, TAB_LABEL[t]))),
-        h('div', { style: { marginTop: 14 } },
+        // key=selected：切机器人时整块重挂载——否则引擎会话子视图会残留上一
+        // 台的 session 编号与警告，被误读成新机器人的会话缺失（走查 L14）
+        h('div', { key: selected, style: { marginTop: 14 } },
           tab === 'session' ? h(DetailSession, { WAO, botId: selected, agent: agent ?? { provider: bot.provider } })
           : tab === 'logs' ? h(DetailLogs, { WAO, botId: selected })
           : tab === 'tools' ? h(DetailTools, { WAO, botId: selected })

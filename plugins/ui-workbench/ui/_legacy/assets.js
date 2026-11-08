@@ -265,6 +265,11 @@ export default {
 
     const saveForm = async () => {
       setFormErrors(null);
+      if (form.description.length > DESC_MAX) {
+        // 程序化输入可绕过 maxLength（走查 L13）：提交时兜底拦截，口径与其他字段一致
+        setFormErrors([`备注过长（≤${DESC_MAX} 字）`]);
+        return;
+      }
       const { body, errors } = serializeForm(form);
       if (errors.length > 0) { setFormErrors(errors); return; }
       setSaving(true);
@@ -473,7 +478,7 @@ export default {
             h('p', null, '工具库还是空的——第一个工具可以从一份技能或一句提示词开始。'),
             h('p', { className: 'wb-hint' }, '添加好之后，到工具配置把它共享给机器人。'),
             editor == null ? h('button', { className: 'wb-btn wb-btn-primary', onClick: openNew }, '＋ 添加工具') : null)
-        : h('table', { className: 'wb-table' },
+        : h('div', { className: 'wb-table-scroll' }, h('table', { className: 'wb-table' },
             h('thead', null, h('tr', null,
               h('th', null, '类型'), h('th', null, '工具'), h('th', null, '绑定'),
               h('th', null, '来源'), h('th', null, '更新时间'), h('th', null, '操作'))),
@@ -497,7 +502,7 @@ export default {
                 h('td', null, h('div', { className: 'wb-toolbar' },
                   h('button', { className: 'wb-btn', onClick: () => openEdit(a) }, '编辑'),
                   h('button', { className: 'wb-btn wb-btn-danger', onClick: () => setDeleteFor(a) }, '删除'))));
-            }))));
+            })))));
 
     // —— 装备台：per-bot 绑定面 ————————————————————————————————————————
 
@@ -615,7 +620,7 @@ export default {
         bindings.length === 0
           ? h('div', { className: 'wb-empty' },
               h('p', null, '这个机器人还没有配置工具——从下面挑一个给它绑上，技能和工具都会落到它的工作目录。'))
-          : h('table', { className: 'wb-table' },
+          : h('div', { className: 'wb-table-scroll' }, h('table', { className: 'wb-table' },
               h('thead', null, h('tr', null,
                 h('th', null, '工具'), h('th', null, '类型'), h('th', null, '模式'),
                 h('th', null, '版本/快照'), h('th', null, '配置态'), h('th', null, '操作'))),
@@ -668,7 +673,7 @@ export default {
                 title: '绑定即写盘生效：向这个机器人的工作目录写入工具文件并重建 runner，下一轮对话就能用',
                 onClick: () => void doBind(),
               }, busy ? '配置中…' : '配置')),
-        receipt != null ? h(Receipt, { h, title: receipt.title, receipt: receipt.data }) : null);
+        receipt != null ? h(Receipt, { h, title: receipt.title, receipt: receipt.data }) : null));
     }
 
     // —— 页骨架 ————————————————————————————————————————————————————————

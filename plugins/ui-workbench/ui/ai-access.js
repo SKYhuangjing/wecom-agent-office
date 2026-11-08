@@ -26,6 +26,14 @@ const storedWaoToken = () => {
 
 export const mcpAuth = () => storedWaoToken() !== '';
 
+// API 错误文案的保守本地化（走查 L12）：裸 "not found" 对非技术用户没有
+// 信息量，映射成可行动的说法；其余原样保留（技术原值约定放 tooltip）。
+export const apiErrText = (err) => {
+  const raw = String(err ?? '未知原因');
+  if (/^not found$/i.test(raw)) return 'HTTP 404（端点未注册）';
+  return raw;
+};
+
 // —— 三家 CLI 配置文本（README §3.2 同款）———————————————————————————————
 
 export const claudeMcpJson = (url) => JSON.stringify({

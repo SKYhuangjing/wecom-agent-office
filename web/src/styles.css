@@ -60,6 +60,11 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
+/* 桌面形态：侧栏随滚动钉住（走查 L15）——长页面滚到底也能切页 */
+@media (min-width: 901px) {
+  .sidebar { position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -188,6 +193,8 @@ body {
   align-items: center;
   gap: 7px;
   padding: 5px 12px;
+  white-space: nowrap; /* 走查 L11：窄屏下文字被压成逐字竖排 */
+  flex: none;
   border-radius: 999px;
   border: 1px solid var(--line);
   background: var(--panel);
@@ -321,4 +328,16 @@ body {
   .brand { padding: 0 12px 0 0; margin-bottom: 0; border-bottom: none; }
   .nav-item { flex: none; padding: 6px 10px; }
   .main { padding: 14px 16px 24px; }
+}
+
+/* 手机宽度（走查 L10/L11）：顶栏三个入口要挤进一屏、时钟胶囊去标签 */
+@media (max-width: 480px) {
+  .brand-text { display: none; }
+  .brand { padding: 0 8px 0 0; }
+  .nav-item { padding: 6px 8px; font-size: 12.5px; gap: 6px; }
+  .sidebar { padding: 8px 10px; }
+  .clock-label { display: none; }
+  .clock-item { padding: 4px 8px; font-size: 11.5px; gap: 5px; }
+  .clockbar { padding: 8px 10px; gap: 8px; }
+  .clock-group-left { gap: 5px; }
 }

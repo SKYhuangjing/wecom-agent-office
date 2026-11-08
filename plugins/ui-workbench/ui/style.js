@@ -167,6 +167,23 @@ const CSS = `
 }
 .wb-table th { color: var(--muted); font-weight: 600; background: color-mix(in srgb, var(--line) 25%, var(--panel)); }
 .wb-table td .wb-sub { margin-top: 2px; }
+/* 窄屏表格不挤碎（走查 M5）：列压成逐字竖排/按钮挤出屏——改为容器内横向滚动 */
+.wb-table-scroll { overflow-x: auto; max-width: 980px; }
+.wb-table-scroll .wb-table { min-width: 560px; }
+
+/* 会话历史的迷你 Markdown 渲染（md.js）：覆盖 .wb-turn-assistant 的 pre-wrap */
+.wb-md { white-space: normal; font-size: 13px; }
+.wb-md .wb-md-h { font-weight: 650; margin: 8px 0 4px; }
+.wb-md .wb-md-h1 { font-size: 15px; }
+.wb-md .wb-md-h2 { font-size: 14px; }
+.wb-md .wb-md-h3, .wb-md .wb-md-h4 { font-size: 13px; }
+.wb-md .wb-md-list { margin: 4px 0 4px 18px; padding: 0; }
+.wb-md .wb-md-p { margin: 2px 0; }
+.wb-md .wb-md-code {
+  margin: 6px 0; padding: 8px 10px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere;
+  background: color-mix(in srgb, var(--line) 20%, var(--panel)); border-radius: 8px;
+}
+.wb-md .wb-md-table { margin-top: 8px; font-size: 12.5px; }
 .wb-badge-active { color: var(--ok); border-color: var(--ok); }
 .wb-badge-disabled { color: var(--muted); }
 .wb-badge-failed { color: var(--bad); border-color: var(--bad); }
@@ -271,7 +288,7 @@ const CSS = `
   background: var(--panel); border-top: 1px solid var(--line);
   border-radius: 0 0 12px 12px; display: flex; gap: 10px; justify-content: flex-end;
 }
-.wb-editor { padding-bottom: 0; } /* 让 sticky 栏贴住卡片底 */
+.wb-editor { padding-bottom: 20px; } /* sticky 栏有自己的负 margin 贴底，非 sticky 编辑器保持底边距 */
 
 /* 技能岗位三部门卡片 */
 .wb-dept-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }

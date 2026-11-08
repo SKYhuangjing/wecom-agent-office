@@ -10,8 +10,8 @@ import { ensurePageStyle } from './style.js';
 import assetsPage from './_legacy/assets.js';
 import pluginsPage from './_legacy/plugins.js';
 import {
-  claudeMcpJson, codexConfigToml, consumeSettingsHandoff, copyText, downloadText,
-  mcpAuth, mcpUrl, probeMcp, useMcpStatus, zcodeConfigJson,
+  apiErrText, claudeMcpJson, codexConfigToml, consumeSettingsHandoff, copyText,
+  downloadText, mcpAuth, mcpUrl, probeMcp, useMcpStatus, zcodeConfigJson,
 } from './ai-access.js';
 
 const SECTION_IDS = ['ai', 'assets', 'plugins', 'system'];
@@ -161,7 +161,7 @@ const AiSection = ({ WAO }) => {
           t.dangerous ? h('span', { className: 'ai-tool-danger', title: '危险工具：调用前 Agent 会复述后果并确认' }, '高危') : null,
           h('span', { className: 'ai-tool-desc' }, t.description ?? ''))))
         : h('p', { className: 'wb-hint', style: { margin: '8px 0 0' } },
-          `工具清单来自 /api/mcp（mcp-gateway）——启用 mcp-gateway 插件后可见${error != null ? `（原因：${error}）` : ''}`))
+          `工具清单来自 /api/mcp（mcp-gateway）——启用 mcp-gateway 插件后可见${error != null ? `（原因：${apiErrText(error)}）` : ''}`))
         : null,
       tools != null && tools.some((t) => t.dangerous) && toolsOpen
         ? h('p', { className: 'wb-hint', style: { margin: '8px 0 0' } },
@@ -208,7 +208,7 @@ const AiSection = ({ WAO }) => {
       probe?.ok === false ? h('span', { className: 'ai-probe-bad' }, `✗ 不可达：${probe.error}`) : null),
 
     status == null ? h('p', { className: 'wb-hint', style: { marginTop: 12 } },
-      `MCP 网关状态不可用：${error ?? '未知原因'}——请在「插件」section 确认 mcp-gateway 已启用。`) : null);
+      `MCP 网关控制台端点不可用（${apiErrText(error)}）——请到「插件」标签页确认 mcp-gateway 已启用；若它已在运行，重启 wao 服务后即可恢复。`) : null);
 };
 
 const SystemInfo = ({ WAO }) => {
@@ -261,7 +261,7 @@ const SystemInfo = ({ WAO }) => {
       h('span', { className: 'wb-hint' }, '数据来自 /healthz 与 /api/state（只读）')),
     error != null ? h('div', { className: 'error', style: { marginTop: 12 } }, `读取系统信息失败：${error}`) : null,
     state == null && error == null ? h('p', { className: 'muted' }, '读取系统信息…') : null,
-    state != null ? h('table', { className: 'wb-table' },
+    state != null ? h('div', { className: 'wb-table-scroll' }, h('table', { className: 'wb-table' },
       h('tbody', null,
         row('版本', health?.version != null ? `wao v${health.version}` : '—', '/healthz'),
         row('运行时间', h('span', { className: 'wb-mono' }, uptime), '自服务启动起（实时走秒）'),
@@ -269,10 +269,10 @@ const SystemInfo = ({ WAO }) => {
         row('数据目录', state?.dataDir != null
           ? h('span', { className: 'wb-mono', title: '机器人配置、台账与插件启停表都落在这里' }, state.dataDir)
           : h('span', { className: 'wb-hint' }, '（当前服务版本未通过 API 暴露——升级服务后可见）'), '/api/state'),
-        row('插件', `${counts.active ?? 0} 运行中 · ${counts.disabled ?? 0} 已停用 · ${counts.failed ?? 0} 加载失败（共 ${plugins.length}）`, '启停去「插件」section'),
+        row('插件', `${counts.active ?? 0} 运行中 · ${counts.disabled ?? 0} 已停用 · ${counts.failed ?? 0} 加载失败（共 ${plugins.length}）`, '启停去「插件」标签页'),
         row('页面插件', uiPlugins.length > 0
           ? uiPlugins.map((p) => p?.id).filter(Boolean).join('、')
-          : '（无）', '本控制台的页面来源，内核托管于 /api/ui/<id>/'))) : null);
+          : '（无）', '本控制台的页面来源，内核托管于 /api/ui/<id>/')))) : null);
 };
 
 export default {

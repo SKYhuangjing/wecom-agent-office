@@ -24,6 +24,14 @@ const registerPage = (desc) => {
 };
 const getPage = (id) => pages.get(id) ?? null;
 
+// 旧路由迁移（9→3 页重构）：#/bots 等旧地址映射到新页；未知 hash 此前会
+// 静默渲染首页——URL 与内容/导航高亮错位，旧书签用户会迷路（走查 L9）。
+const LEGACY_ROUTES = {
+  bots: 'robots', session: 'robots', push: 'robots',
+  assets: 'settings', plugins: 'settings',
+  list: 'overview', timeline: 'overview',
+};
+
 // The browser contract every page plugin codes against (DESIGN §9). Mounted
 // before any page module import so a module reading window.WAO at top level
 // (not the contract, but cheap to survive) still sees it.
@@ -156,6 +164,15 @@ const Shell = () => {
 
   const sorted = [...list].sort((a, b) => ((a.order ?? 10) - (b.order ?? 10)) || (a.id < b.id ? -1 : 1));
   const current = sorted.find((p) => p.id === active) ?? sorted[0] ?? null;
+
+  // 失效 hash 统一 replace（不留浏览器历史）：旧路由按映射迁移，其余回首页。
+  // 页面清单异步加载，须等 sources 就位后再判定，避免误伤加载中的深链。
+  useEffect(() => {
+    if (sources.length === 0) return;
+    if (active == null || sorted.some((p) => p.id === active)) return;
+    const to = LEGACY_ROUTES[active] ?? sorted[0]?.id ?? 'overview';
+    location.replace(`#/${to}`);
+  }, [active, sources]);
   // hidden pages stay routable (#/<id>) but never take a nav slot — overview
   // embeds 办公室 3D from the registry, so it must not double-list in nav.
   const navItems = sorted.filter((p) => p.hidden !== true);

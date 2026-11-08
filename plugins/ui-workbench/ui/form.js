@@ -129,7 +129,9 @@ const parseJsonObject = (text) => {
 
 // Form state → the block to submit. Empty optional fields are OMITTED (never
 // silently blanked); invalid JSON is an error that blocks the whole save.
-export function serializeSchema(schema, state) {
+// checkRequired=true 时必填项（required === true）缺值也报错——向导分步校验
+// 用（否则空 cwd/空凭证能一路走到最终提交才被服务端拦，走查 M3）。
+export function serializeSchema(schema, state, { checkRequired = false } = {}) {
   const values = {};
   const errors = [];
   for (const item of Array.isArray(schema) ? schema : []) {
@@ -137,6 +139,7 @@ export function serializeSchema(schema, state) {
     const key = item.key;
     const raw = state?.[key];
     const label = item.label ?? key;
+    let present = true;
     switch (item.type) {
       case 'bool':
         values[key] = raw === true;
@@ -144,11 +147,12 @@ export function serializeSchema(schema, state) {
       case 'list': {
         const lines = String(raw ?? '').split('\n').map((s) => s.trim()).filter((s) => s !== '');
         if (lines.length > 0) values[key] = lines;
+        else present = false;
         break;
       }
       case 'object': {
         const trimmed = String(raw ?? '').trim();
-        if (trimmed === '') break; // absent
+        if (trimmed === '') { present = false; break; } // absent
         const parsed = parseJsonObject(trimmed);
         if (parsed.error != null) { errors.push(`${label}：JSON 解析失败 —— ${parsed.error}`); break; }
         values[key] = parsed.value;
@@ -157,8 +161,12 @@ export function serializeSchema(schema, state) {
       default: { // string / password / enum
         const text = raw ?? '';
         if (text !== '') values[key] = text;
+        else present = false;
         break;
       }
+    }
+    if (checkRequired && item.required === true && !present) {
+      errors.push(`「${label}」为必填项`);
     }
   }
   return { values, errors };

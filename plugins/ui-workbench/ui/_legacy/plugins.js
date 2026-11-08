@@ -160,10 +160,10 @@ export default {
               title: p.status === 'disabled' ? '重新启用并四阶段重载' : undefined,
             }, busyId === p.id ? '处理中…' : '启用')));
 
-    const table = plugins == null || plugins.length === 0 ? null : h('table', { className: 'wb-table' },
+    const table = plugins == null || plugins.length === 0 ? null : h('div', { className: 'wb-table-scroll' }, h('table', { className: 'wb-table' },
       h('thead', null, h('tr', null,
         h('th', null, '插件'), h('th', null, '类型'), h('th', null, '版本'), h('th', null, '状态'), h('th', null, '操作'))),
-      h('tbody', null, plugins.map(pluginRow)));
+      h('tbody', null, plugins.map(pluginRow))));
 
     return h('div', { className: 'page' },
       h('h2', null, '插件管理'),

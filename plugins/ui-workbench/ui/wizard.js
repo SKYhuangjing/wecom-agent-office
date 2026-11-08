@@ -20,6 +20,7 @@ const STEPS = [
   { key: 'channel', title: '通信渠道', sub: '选择机器人接入哪个 IM 平台' },
 ];
 const NAME_MAX = 30;
+const ID_MAX = 64; // 与服务端 BOT_ID_RE（≤64 字符）对齐
 const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 
 // 通信渠道（channel）卡片元数据：/api/ports 的 channels 只有 {id, owner,
@@ -107,14 +108,23 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
   };
 
   // —— 每步校验（拒绝优于静默纠正）———————————————————————————————
+  // 第 1 步的错误按字段就近渲染（M4：整表底部的红字会被误读成 ID 报错），
+  // 且姓名错误只在失焦后才显示——刚打开就报「必填」是过早校验。
+  const [nameTouched, setNameTouched] = useState(false);
+  const [formDirty, setFormDirty] = useState(false); // 动过任意字段：此时禁用的「下一步」需要看得见原因
+  const nameErr = draft.name.trim() === ''
+    ? '姓名必填'
+    : draft.name.length > NAME_MAX ? `姓名过长（≤${NAME_MAX} 字）` : null;
+  const idErr = draft.id.trim() === ''
+    ? '机器人 ID 必填'
+    : (!ID_RE.test(draft.id.trim()) || draft.id.length > ID_MAX)
+      ? `机器人 ID 仅限小写字母/数字/连字符，≤${ID_MAX} 字符，以字母或数字开头`
+      : existingIds.has(draft.id.trim()) ? `机器人 ID 已被占用：${draft.id.trim()}` : null;
   const stepErrors = (which = step) => {
     const errs = [];
     if (which === 0) {
-      if (draft.name.trim() === '') errs.push('姓名必填');
-      else if (draft.name.length > NAME_MAX) errs.push(`姓名过长（≤${NAME_MAX} 字）`);
-      if (draft.id.trim() === '') errs.push('机器人 ID 必填');
-      else if (!ID_RE.test(draft.id.trim())) errs.push('机器人 ID 仅限小写字母/数字/连字符，且以字母或数字开头');
-      else if (existingIds.has(draft.id.trim())) errs.push(`机器人 ID 已被占用：${draft.id.trim()}`);
+      if (nameErr != null) errs.push(nameErr);
+      if (idErr != null) errs.push(idErr);
     }
     if (which === 1 && draft.provider === '') errs.push('请选择一个 Agent 引擎');
     if (which === 2) {
@@ -127,12 +137,12 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
     }
     if (which === 3) {
       const required = (providerSchema ?? []).filter((it) => it?.required === true);
-      const { errors } = serializeSchema(required, draft.providerConfig);
+      const { errors } = serializeSchema(required, draft.providerConfig, { checkRequired: true });
       errs.push(...errors);
     }
     if (which === 4) {
       if (draft.channel === '') errs.push('请选择一个通信渠道');
-      const { errors } = serializeSchema(channelSchema, draft.account);
+      const { errors } = serializeSchema(channelSchema, draft.account, { checkRequired: true });
       errs.push(...errors);
     }
     return errs;
@@ -232,9 +242,11 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
           h('input', {
             className: 'wb-input', value: draft.name, maxLength: NAME_MAX,
             placeholder: '给它起个名字，如「阿澈」',
-            onChange: (e) => setDraft({ ...draft, name: e.target.value }),
+            onChange: (e) => { setFormDirty(true); setDraft({ ...draft, name: e.target.value }); },
+            onBlur: () => setNameTouched(true),
           }),
-          h('span', { className: `wb-counter${draft.name.length > NAME_MAX ? ' over' : ''}` }, `${draft.name.length} / ${NAME_MAX}`)),
+          h('span', { className: `wb-counter${draft.name.length > NAME_MAX ? ' over' : ''}` }, `${draft.name.length} / ${NAME_MAX}`),
+          (nameTouched || formDirty) && nameErr != null ? h('span', { className: 'wb-field-error' }, nameErr) : null),
         h('button', {
           className: 'wb-btn', title: '换一副面孔（会换一个未占用的机器人 ID）',
           onClick: () => setDraft({ ...draft, id: rollBadgeId(existingIds) }),
@@ -243,10 +255,11 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
         h('label', null, '机器人 ID', h('span', { className: 'wb-req' }, ' *'),
           h('span', { className: 'wb-hint', style: { marginLeft: 8 } }, '技术标识 bot id，创建后不可修改，也决定它的长相')),
         h('input', {
-          className: 'wb-input wb-mono', value: draft.id,
+          className: 'wb-input wb-mono', value: draft.id, maxLength: ID_MAX,
           placeholder: '如 hr-mc3f9k', spellCheck: false,
-          onChange: (e) => setDraft({ ...draft, id: e.target.value.toLowerCase() }),
-        })));
+          onChange: (e) => { setFormDirty(true); setDraft({ ...draft, id: e.target.value.toLowerCase() }); },
+        }),
+        idErr != null ? h('span', { className: 'wb-field-error' }, idErr) : null));
   } else if (step === 1) {
     body = h('div', null,
       h('div', { className: 'wb-dept-grid' }, providerCards.length > 0 ? providerCards
@@ -392,8 +405,18 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
         h('span', null, s.title))),
       h('span', { className: 'wb-step-sub' }, STEPS[step].sub)),
     body,
-    errs.length > 0 && step !== STEPS.length - 1 ? h('div', { className: 'wb-field-error' }, errs[0]) : null,
+    // 第 1 步错误已按字段就近渲染；其余步骤保留底部汇总（只显示第一条）
+    errs.length > 0 && step !== 0 && step !== STEPS.length - 1
+      ? h('div', { className: 'wb-field-error' }, errs[0]) : null,
     h('div', { className: 'wb-wizard-nav' },
+      // 取消出口（M2）：向导全程要有明确退路——填过东西时先确认再丢弃
+      h('button', {
+        className: 'wb-btn', onClick: () => {
+          if ((draft.name.trim() !== '' || draft.equip.length > 0)
+            && !window.confirm('放弃创建？已填写的内容不会保存。')) return;
+          onDone();
+        },
+      }, '取消'),
       h('button', { className: 'wb-btn', disabled: step === 0, onClick: () => setStep(step - 1) }, '上一步'),
       step < STEPS.length - 1
         ? h('button', {

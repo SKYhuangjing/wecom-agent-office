@@ -72,7 +72,7 @@ const AiGuideCard = ({ WAO }) => {
     ? (status.sessions > 0
       ? { cls: 'ov-ai-on', text: `✓ ${status.sessions} 个 AI 会话活跃（MCP 网关在线，共 ${status.tools.length} 个工具）` }
       : { cls: 'ov-ai-idle', text: 'MCP 网关在线，还没有 AI 连接——把配置贴进你的 CLI 即可' })
-    : { cls: 'ov-ai-off', text: '状态：未检测到 AI 连接（MCP 网关未启用或不可达——接入方法见「查看完整指南」）' };
+    : { cls: 'ov-ai-off', text: '状态：未检测到 AI 连接（MCP 网关未启用或不可达——接入方法见「去设置页查看」）' };
 
   return h('section', {
     className: 'ov-ai-card',
@@ -87,11 +87,11 @@ const AiGuideCard = ({ WAO }) => {
     h('button', {
       className: 'wb-btn', title: `复制 MCP 配置 JSON（${mcpUrl()}）`,
       onClick: () => void onCopy(),
-    }, copied === 'ok' ? '✓ 已复制' : copied === 'fail' ? '复制失败，请手动选择' : '复制 MCP 配置'),
+    }, copied === 'ok' ? '✓ 已复制' : copied === 'fail' ? '复制失败，去设置页复制' : '复制 MCP 配置'),
     h('button', {
-      className: 'wb-btn', title: '查看三家 CLI 的完整接入指南（设置 → AI 操作）',
+      className: 'wb-btn', title: '跳到设置页的 AI 操作指南（三家 CLI 的接入配置都在那里）',
       onClick: () => goSettingsAi(),
-    }, '查看完整指南')),
+    }, '去设置页查看')),
   h('span', {
     className: `ov-ai-status ${statusLine.cls}`,
     title: `${mcpUrl()}${error != null ? `\n探测原因：${error}` : ''}`,
@@ -225,20 +225,22 @@ export default {
       h('h2', null, '总览'),
       h('p', { className: 'muted' }, `${onDuty.length} 个机器人在线——办公室实时实景，谁在忙什么一眼可见`),
       h('div', { className: 'wb-toolbar' },
-        h('div', { className: 'wb-tabs' },
-          h('button', {
-            className: `wb-tab${view === 'office' ? ' active' : ''}`,
-            title: '办公室 3D 实景（Magpie 引擎）',
-            onClick: () => setView('office'),
-          }, '办公室 3D'),
-          h('button', {
-            className: `wb-tab${view === 'cards' ? ' active' : ''}`,
-            title: '切换到机器人状态卡片列表',
-            onClick: () => setView('cards'),
-          }, '状态卡片')),
-        view === 'cards' ? h('button', {
+      h('div', { className: 'wb-tabs' },
+        h('button', {
+          className: `wb-tab${view === 'office' ? ' active' : ''}`,
+          title: '办公室 3D 实景（Magpie 引擎）',
+          onClick: () => setView('office'),
+        }, '办公室 3D'),
+        h('button', {
+          className: `wb-tab${view === 'cards' ? ' active' : ''}`,
+          title: '切换到机器人状态卡片列表',
+          onClick: () => setView('cards'),
+        }, '状态卡片')),
+        // 创建入口两个视图都要有（走查 L8）：默认 3D 视图里新用户找不到新建按钮
+        h('button', {
           className: 'wb-btn wb-btn-primary', onClick: () => goRobots('new'),
-        }, '＋ 创建机器人') : null),
+          title: '五步创建：基本信息、引擎、工具、工作目录、连接配置',
+        }, '＋ 创建机器人')),
       error != null ? h('div', { className: 'error', style: { marginTop: 12 } },
         bannerText('加载机器人列表失败：', error)) : null,
       h(AiGuideCard, { WAO }),

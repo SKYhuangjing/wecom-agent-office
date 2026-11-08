@@ -5,6 +5,7 @@
 // reachable by typing a sessionId or clicking one on a ledger turn. Export
 // hands the whole bot ledger to the browser as Markdown (GET /api/export).
 import { ensurePageStyle } from '../style.js';
+import { MdText } from '../md.js';
 import { bannerText } from './list.js';
 
 const REASON_LABEL = { completed: '完成', interrupted: '被打断', timeout: '超时', error: '错误' };
@@ -53,7 +54,7 @@ export const TurnCard = ({ h, row, onSession }) => h('div', { key: row.seq, clas
     h('div', { className: 'wb-turn-user' }, row.user || '（空）')),
   h('div', null,
     h('span', { className: 'wb-turn-role' }, '助手：'),
-    h('div', { className: 'wb-turn-assistant' }, row.assistant || '（未完成）')));
+    h('div', { className: 'wb-turn-assistant' }, h(MdText, { h, text: row.assistant || '（未完成）' }))));
 
 export default {
   id: 'session',
