@@ -36,6 +36,8 @@ const CSS = `
 .wb-btn:hover { background: var(--panel-2); border-color: #D4D4D8; }
 .wb-btn-primary { background: var(--ink); color: #FFFFFF; border-color: var(--ink); }
 .wb-btn-primary:hover { background: #26262A; color: #FFFFFF; }
+.wb-btn:active { transform: scale(0.985); }           /* 按压微反馈（shadcn Button 手感） */
+.wb-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .wb-btn-danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 30%, transparent); background: color-mix(in srgb, var(--bad) 6%, var(--panel)); }
 .wb-btn-danger:hover { background: color-mix(in srgb, var(--bad) 12%, var(--panel)); }
 .wb-btn[disabled] { opacity: .5; cursor: not-allowed; pointer-events: none; }
@@ -166,6 +168,8 @@ const CSS = `
   vertical-align: top;
 }
 .wb-table th { color: var(--muted); font-weight: 600; background: color-mix(in srgb, var(--line) 25%, var(--panel)); }
+.wb-table tbody tr { transition: background-color 0.12s ease; }
+.wb-table tbody tr:hover { background: color-mix(in srgb, var(--panel-2) 55%, transparent); }
 .wb-table td .wb-sub { margin-top: 2px; }
 /* 窄屏表格不挤碎（走查 M5）：列压成逐字竖排/按钮挤出屏——改为容器内横向滚动 */
 .wb-table-scroll { overflow-x: auto; max-width: 980px; }

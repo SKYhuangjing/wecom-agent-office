@@ -31,13 +31,23 @@
 
   --r-card: 10px;
   --r-ctl: 8px;
-  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  /* 深色侧栏（IDE 双栏气质：深壳 + 浅画布）——WAO 是管理 CLI Agent 的控制台，
+     深色壳比白侧栏更有工具感，也让白色主内容成为画布 */
+  --side-bg: #0C0C0E;
+  --side-line: #1F1F23;
+  --side-ink: #FAFAFA;
+  --side-muted: #A1A1AA;
+  --side-hover: #18181B;
 }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; min-height: 100%; }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  /* IBM Plex：工程血统字型，拉丁/数字有辨识度；中文回退系统字（PingFang/雅黑）。
+     避开通用 system-ui 观感——数字与 ID 占控制台界面大头，Plex 的字形就是气质 */
+  font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Roboto, sans-serif;
   font-size: 14px;
   line-height: 1.5;
   background-color: var(--bg);
@@ -52,8 +62,8 @@ body {
   width: 228px;
   flex: none;
   padding: 20px 14px;
-  background: var(--panel);
-  border-right: 1px solid var(--line);
+  background: var(--side-bg);
+  border-right: 1px solid var(--side-line);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -65,16 +75,21 @@ body {
 }
 
 /* —— 侧栏 aside 挂载点 + AI 接入小卡（插件经 registerAside 注册）——————— */
-/* margin-top:auto 推到侧栏底部（左下角）；侧栏桌面形态 sticky 100vh，卡片贴角 */
+/* margin-top:auto 推到侧栏底部（左下角）；侧栏桌面形态 sticky 100vh，卡片贴角。
+   深色侧栏上的小卡做成白色浮卡（便签感）：内部继续用浅色 token，可读自洽 */
 .aside-slot {
   margin-top: auto;
   padding-top: 12px;
-  border-top: 1px solid var(--line-subtle);
+  border-top: 1px solid var(--side-line);
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
-.side-ai { display: flex; flex-direction: column; gap: 7px; }
+.side-ai {
+  display: flex; flex-direction: column; gap: 7px;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--r-card); padding: 10px;
+}
 .side-ai-head {
   display: flex; align-items: center; gap: 6px;
   color: var(--ink); font-weight: 600; font-size: 12.5px;
@@ -103,13 +118,13 @@ body {
   gap: 12px;
   padding: 0 8px 18px;
   margin-bottom: 6px;
-  border-bottom: 1px solid var(--line-subtle);
+  border-bottom: 1px solid var(--side-line);
 }
 
 .brand-logo-glyph {
   width: 34px;
   height: 34px;
-  background: var(--ink);
+  background: var(--side-ink);
   border-radius: 9px;
   display: flex;
   align-items: center;
@@ -120,7 +135,7 @@ body {
   width: 18px;
   height: 18px;
   fill: none;
-  stroke: #FFFFFF;
+  stroke: var(--side-bg);
   stroke-width: 2.2;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -131,7 +146,7 @@ body {
   font-weight: 700;
   font-size: 14.5px;
   letter-spacing: -0.02em;
-  color: var(--ink);
+  color: var(--side-ink);
   line-height: 1.2;
   display: flex;
   align-items: center;
@@ -141,14 +156,15 @@ body {
   font-size: 9.5px;
   font-weight: 600;
   padding: 1px 6px;
-  background: #F1F5F9;
-  color: var(--muted);
+  background: var(--side-hover);
+  color: var(--side-muted);
+  border: 1px solid var(--side-line);
   border-radius: 999px;
   text-transform: uppercase;
 }
 .brand-sub {
   font-size: 11.5px;
-  color: var(--muted);
+  color: var(--side-muted);
   margin-top: 2px;
 }
 
@@ -158,20 +174,24 @@ body {
   gap: 10px;
   padding: 8px 12px;
   border-radius: var(--r-ctl);
-  color: var(--muted);
+  color: var(--side-muted);
   font-size: 13.5px;
   font-weight: 500;
   text-decoration: none;
   transition: all 0.16s ease;
 }
 .nav-item:hover {
-  background: var(--panel-2);
-  color: var(--ink);
+  background: var(--side-hover);
+  color: var(--side-ink);
 }
 .nav-item.active {
-  background: var(--ink);
-  color: #FFFFFF;
+  background: var(--side-ink);
+  color: var(--side-bg);
   font-weight: 600;
+}
+.nav-item:focus-visible {
+  outline: 2px solid var(--side-muted);
+  outline-offset: 2px;
 }
 .nav-icon {
   width: 1.4em;
@@ -183,13 +203,33 @@ body {
 }
 .nav-icon-svg { display: block; }
 
-/* —— 主工作区 —— */
+/* —— 主工作区：浅画布 + 极细点阵（console/blueprint 氛围，不扰阅读）—————— */
 .main {
   flex: 1;
   padding: 22px 32px 40px;
   min-width: 0;
   display: flex;
   flex-direction: column;
+  background-image: radial-gradient(circle, rgba(10, 10, 10, 0.05) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+/* —— 页面入场：staggered reveal（一次性 high-impact 动效）——————————————
+   .page 每次 mount（路由切换/首次加载）子元素依次上浮显现；React 每秒重渲染
+   不 remount 元素，动画不会重放。prefers-reduced-motion 时全部关闭。 */
+@keyframes wao-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.page > * { animation: wao-rise 0.32s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.page > *:nth-child(2) { animation-delay: 40ms; }
+.page > *:nth-child(3) { animation-delay: 80ms; }
+.page > *:nth-child(4) { animation-delay: 120ms; }
+.page > *:nth-child(5) { animation-delay: 160ms; }
+.page > *:nth-child(6) { animation-delay: 200ms; }
+.page > *:nth-child(n+7) { animation-delay: 240ms; }
+@media (prefers-reduced-motion: reduce) {
+  .page > * { animation: none; }
 }
 
 /* —— 打卡钟页头（全站顶部控制台状态条） ————————————————————————————— */
