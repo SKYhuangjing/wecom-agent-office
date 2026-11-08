@@ -1,6 +1,6 @@
 # Provider 候选调研 与 CodeBuddy(WorkBuddy CLI)深潜
 
-> 调研日期:2026-11-07｜裁定:**第五 provider(CodeBuddy 接入)暂不启动**(owner 裁定,见 §4)｜
+> 调研日期:2026-11-07(§3.6 补充于 11-08)｜裁定:**第五 provider(CodeBuddy 接入)暂不启动**(owner 裁定,见 §4)｜
 > 关联:[ROADMAP.md](ROADMAP.md) 搁置项｜本文是重启时的完整事实底稿,引用的本机实测均标注来源。
 
 ---
@@ -27,7 +27,7 @@ WAO 现有四家 provider:dsh / claude / codex / pi(复制即契约,契约套件
 | **Gemini CLI**(google) | `-p` + `--output-format stream-json` + `--approval-mode` | `--resume`(新版已补) | 未装 | `GOOGLE_GEMINI_BASE_URL`;走 magpie 需验 openai-compat | 备选 |
 | **Kiro CLI**(AWS,Q CLI 后继) | 官方 headless:`--no-interactive` + `--output-format stream-json` + `KIRO_API_KEY` | 有 | 未装 | magpie 已有 kiro 上游;网关路由待验 | 备选 |
 | **Factory droid** | `droid exec -o stream-json`(**逐字段兼容 claude stream-json**,移植成本最低) | 有 | 未装 | 需 Factory 账号 | 备选 |
-| Cursor CLI | `cursor-agent -p --output-format stream-json` | print 模式下待验 | 未装 | **闭源网关,不支持自定义 baseURL**——与 magpie 模式相抵 | ✗ |
+| Cursor CLI | `-p` + `--output-format stream-json` | `--resume <chat-id>`/`-c`/`agent ls` | 未装 bin,但**本机用过**(~/.cursor/agent-cli-state.json 有 worker 记录含 workbuddy_workspace) | **闭源网关,CLI 无 base URL 覆盖**(论坛确认,IDE 的 OpenAI Base URL 覆盖不作用于 CLI)→ 无法走 magpie;但**订阅池共享**(CLI 用量=Cursor 订阅同一池,无独立付费墙,`agent login` 或 CURSOR_API_KEY 即用)——见 §3.6 | **可接入(不经 magpie)**;2026-02 有 print 模式掉回交互 UI 的 bug 报告,需探针 |
 | GitHub Copilot CLI | `-p` 有;JSON/续会话无文档,2026-10 仍有 headless 中途 exit 0 bug | 弱 | 未装 | GitHub 账号 | ✗ |
 | Crush(charm) | `crush run`(非交互即 yolo);结构化输出仍在 issue 阶段(#1862/#796) | 有 | 未装 | OpenAI 兼容可配 | 观望(输出格式未定型) |
 | Goose(block) | `goose run -t --output-format json` | recipe/session | 未装 | OpenAI 兼容可配 | 观望 |
@@ -70,6 +70,17 @@ WAO 现有四家 provider:dsh / claude / codex / pi(复制即契约,契约套件
 - magpie 的 **workbuddy / workbuddy-ai 上游已是 OAuth 登录态**(`plugin-auth.json`:type oauth + refresh token,`@magpie-community/opencode-workbuddy-auth` 托管、自动刷新)——即 **magpie 侧已"登录"workbuddy,复用现有订阅无需任何新凭证**。
 - `/v1/models` 已列出 `workbuddy/hy3`、`workbuddy/deepseek-v4.1-flash`、`workbuddy-ai/gpt-6-luna` 等(OpenAI 兼容面)。
 - **magpie 没有 cbc 原生协议的入口路由**:`/backend-api/codebuddy`、`/backend-api/workbuddy`、`/v2`、`/codebuddy`、`/workbuddy/v2` 全部 404(codex 有 `/backend-api/codex` 先例,cbc 无对应物)。→ **cbc 无法走 magpie**。
+
+### 3.6 Cursor CLI 补充深潜(2026-11-08,用户问询触发)
+
+CLI 现名 **`agent`**(原 `cursor-agent`),安装 `curl https://cursor.com/install | bash`。
+
+- **接口**(官方 docs):`-p` + `--output-format text|json|stream-json`(事件族 system/init、assistant、tool_call started/completed、result{duration_ms})+ `--stream-partial-output` 增量;`--resume <chat-id>`/`-c`/`agent ls`;`--force`/`--yolo` 免确认;`--mode plan|ask`;`--sandbox`;MCP 经 mcp.json 自动发现;`agent acp` 可作 ACP server。
+- **认证**:`agent login`(浏览器,凭证存本地)或 `CURSOR_API_KEY` env / `--api-key`(cursor.com/settings → Integrations 造 key)——套 WAO apiKeyEnv 注入纪律(codex 同款)。
+- **订阅语义(与 CodeBuddy 的本质区别)**:CLI 用量是 Cursor 订阅的一部分,**编辑器/CLI/Cloud Agents 共享同一用量池**,无独立 CLI 付费墙——有 Cursor 账号(含免费档)即可 login 使用。⚠️ 未证:owner 账号档位(免费限额小,Pro 大池)——本机文件读不出,登录后可知。
+- **magpie 死路(同 CodeBuddy)**:CLI 无 base URL 覆盖——官方论坛确认(2025-09 thread 133409)无 `CURSOR_API_BASE`/`--base-url`;IDE 的 "Override OpenAI Base URL"(Merge.dev/AgentGateway 等网关依赖的入口)只作用于编辑器;也不认 `ANTHROPIC_BASE_URL`。绕法仅 HTTP 代理截流,不建议。
+- **本机痕迹**:Cursor.app 3.29.9 已装;`~/.cursor/agent-cli-state.json` 有跨项目 workerIds(含 workbuddy_workspace)——CLI 曾在此机运行过,即当时已通过认证;cli-config.json(vimMode/permissions)也在。
+- **结论**:**可接入为第五 provider**(engine=agent,直连 cursor.com,凭证 apiKeyEnv,runner 移植自 provider-claude),代价=用量不进 magpie 统一记账;风险=2026 年论坛仍有 print 模式掉回交互 UI 的 bug 报告,探针时验。是否启动待 owner 裁定(roadmap 未列)。
 
 ## 4. 裁定(2026-11-07)
 
