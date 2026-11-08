@@ -6,12 +6,12 @@
 const CSS = `
 .wb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 16px; margin-top: 14px; }
 .wb-card {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-card);
   padding: 16px 18px; display: flex; flex-direction: column; gap: 10px;
-  box-shadow: var(--shadow); transition: all 0.2s ease;
+  transition: border-color 0.2s ease;
 }
 .wb-card:hover {
-  border-color: #CBD5E1; box-shadow: var(--shadow-lift); transform: translateY(-2px);
+  border-color: #D4D4D8;
 }
 .wb-card-head { display: flex; align-items: center; gap: 10px; }
 .wb-name { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; color: var(--ink); }
@@ -29,13 +29,13 @@ const CSS = `
 
 .wb-btn {
   border: 1px solid var(--line); background: var(--panel); color: var(--ink);
-  border-radius: 8px; padding: 5px 14px; cursor: pointer; font: inherit; font-size: 13px; font-weight: 600;
-  box-shadow: var(--shadow-sm); transition: all 0.15s ease;
+  border-radius: var(--r-ctl); padding: 5px 14px; cursor: pointer; font: inherit; font-size: 13px; font-weight: 600;
+  transition: all 0.15s ease;
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
 }
-.wb-btn:hover { background: var(--bg); border-color: #CBD5E1; }
-.wb-btn-primary { background: var(--ink); color: #FFFFFF; border-color: var(--ink); box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12); }
-.wb-btn-primary:hover { background: color-mix(in srgb, var(--ink) 85%, #000000); color: #FFFFFF; }
+.wb-btn:hover { background: var(--panel-2); border-color: #D4D4D8; }
+.wb-btn-primary { background: var(--ink); color: #FFFFFF; border-color: var(--ink); }
+.wb-btn-primary:hover { background: #26262A; color: #FFFFFF; }
 .wb-btn-danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 30%, transparent); background: color-mix(in srgb, var(--bad) 6%, var(--panel)); }
 .wb-btn-danger:hover { background: color-mix(in srgb, var(--bad) 12%, var(--panel)); }
 .wb-btn[disabled] { opacity: .5; cursor: not-allowed; pointer-events: none; }
@@ -59,7 +59,7 @@ const CSS = `
 .wb-switch input:focus-visible + .wb-track { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .wb-crud { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 20px; margin-top: 14px; align-items: start; }
-.wb-side { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 4px; box-shadow: var(--shadow); }
+.wb-side { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-card); padding: 12px; display: flex; flex-direction: column; gap: 4px; }
 .wb-side-item {
   display: flex; justify-content: space-between; align-items: center; gap: 8px;
   padding: 8px 12px; border-radius: 8px; cursor: pointer; border: none; background: none;
@@ -72,7 +72,7 @@ const CSS = `
 .wb-side-item.active .wb-side-id { color: var(--muted-light); }
 .wb-side-item .badge { flex: none; }
 
-.wb-editor { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px 24px; box-shadow: var(--shadow); }
+.wb-editor { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-card); padding: 20px 24px; }
 .wb-editor h3 { margin: 0 0 14px; font-size: 16px; font-weight: 700; color: var(--ink); }
 .wb-form { display: flex; flex-direction: column; gap: 14px; max-width: 660px; }
 .wb-field { display: flex; flex-direction: column; gap: 5px; }
@@ -104,7 +104,7 @@ const CSS = `
 }
 .wb-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .wb-result {
-  border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-top: 12px;
+  border: 1px solid var(--line); border-radius: var(--r-ctl); padding: 12px 14px; margin-top: 12px;
   font-size: 13px; display: flex; flex-direction: column; gap: 6px; max-width: 660px;
 }
 .wb-result-text { overflow-wrap: anywhere; }
@@ -112,11 +112,11 @@ const CSS = `
 .wb-code-ok { color: var(--ok); border-color: var(--ok); }
 .wb-code-bad { color: var(--bad); border-color: var(--bad); }
 .wb-danger {
-  border: 1px dashed var(--bad); border-radius: 10px; padding: 12px 14px;
+  border: 1px dashed var(--bad); border-radius: var(--r-ctl); padding: 12px 14px;
   margin-top: 18px; display: flex; flex-direction: column; gap: 8px; max-width: 660px;
 }
 .wb-empty {
-  background: var(--panel); border: 1px dashed var(--line); border-radius: 12px;
+  background: var(--panel); border: 1px dashed var(--line); border-radius: var(--r-card);
   padding: 40px 20px; text-align: center; color: var(--muted); margin-top: 14px;
 }
 .wb-empty .wb-btn { margin-top: 12px; }
@@ -132,7 +132,7 @@ const CSS = `
 
 .wb-turns { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; max-width: 760px; }
 .wb-turn {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-ctl);
   padding: 10px 14px; display: flex; flex-direction: column; gap: 6px;
 }
 .wb-turn-head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
@@ -193,7 +193,7 @@ const CSS = `
   display: flex; align-items: center; justify-content: center; z-index: 40;
 }
 .wb-modal {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-card);
   padding: 18px 22px; max-width: 480px; display: flex; flex-direction: column; gap: 10px;
   box-shadow: 0 12px 40px rgb(0 0 0 / .25);
 }
@@ -239,7 +239,7 @@ const CSS = `
 
 /* 分组折叠 */
 .wb-group {
-  border: 1px solid var(--line); border-radius: 10px;
+  border: 1px solid var(--line); border-radius: var(--r-ctl);
   margin-bottom: 10px; overflow: hidden; background: var(--panel);
 }
 .wb-group-head {
@@ -294,7 +294,7 @@ const CSS = `
 .wb-dept-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
 .wb-dept-card {
   position: relative; display: flex; flex-direction: column; gap: 6px;
-  border: 1.5px solid var(--line); border-radius: 12px; background: var(--panel);
+  border: 1.5px solid var(--line); border-radius: var(--r-card); background: var(--panel);
   padding: 16px 14px 14px; cursor: pointer; font: inherit; color: var(--ink);
   text-align: left; transition: border-color .12s ease, box-shadow .12s ease;
 }
@@ -316,7 +316,7 @@ const CSS = `
 .wb-wizard-done { display: flex; flex-direction: column; gap: 14px; }
 .wb-badgecard {
   display: flex; gap: 16px; align-items: center;
-  border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: var(--r-card); background: var(--panel);
   box-shadow: var(--shadow); padding: 18px 20px;
 }
 .wb-badgecard-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
@@ -377,7 +377,7 @@ const CSS = `
 .ov-act-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .ov-act-row {
   display: flex; align-items: center; gap: 10px;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-ctl);
   padding: 7px 12px; cursor: pointer; font-size: 12.5px;
   transition: border-color .15s ease;
 }
@@ -391,7 +391,7 @@ const CSS = `
 
 /* 配置块：标题+按钮排 + 等宽代码体 */
 .ai-box {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-card);
   padding: 12px 14px; margin-top: 12px; box-shadow: var(--shadow-sm);
   display: flex; flex-direction: column; gap: 8px;
 }
