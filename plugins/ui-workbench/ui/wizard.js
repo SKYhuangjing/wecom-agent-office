@@ -217,7 +217,6 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
   }
 
   const errs = stepErrors();
-  const canNext = errs.length === 0;
   const providerCards = (ports?.providers ?? []).map((p) => {
     const meta = PROVIDER_META[p.id] ?? providerMeta(p.id);
     const active = draft.provider === p.id;
@@ -405,8 +404,9 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
         h('span', null, s.title))),
       h('span', { className: 'wb-step-sub' }, STEPS[step].sub)),
     body,
-    // 第 1 步错误已按字段就近渲染；其余步骤保留底部汇总（只显示第一条）
-    errs.length > 0 && step !== 0 && step !== STEPS.length - 1
+    // 第 1 步错误已按字段就近渲染；其余步骤保留底部汇总（含最后一步——
+    // 走查 M2：点击被拦截时必须看得见原因，不能只靠禁用）
+    errs.length > 0 && step !== 0
       ? h('div', { className: 'wb-field-error' }, errs[0]) : null,
     h('div', { className: 'wb-wizard-nav' },
       // 取消出口（M2）：向导全程要有明确退路——填过东西时先确认再丢弃
@@ -420,13 +420,25 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
       h('button', { className: 'wb-btn', disabled: step === 0, onClick: () => setStep(step - 1) }, '上一步'),
       step < STEPS.length - 1
         ? h('button', {
+          // 走查 M2：可点击而非禁用——点「下一步」即校验，无效则打开错误
+          // 显示门控并原地不动（第 1 步红字在字段下方、其余步在底部汇总行）
           className: 'wb-btn wb-btn-primary',
-          disabled: !canNext || (ports?.providers?.length ?? 0) === 0 || (ports?.channels?.length ?? 0) === 0,
-          onClick: () => setStep(step + 1),
+          disabled: (ports?.providers?.length ?? 0) === 0 || (ports?.channels?.length ?? 0) === 0,
+          onClick: () => {
+            if (errs.length > 0) {
+              setNameTouched(true);
+              setFormDirty(true);
+              return;
+            }
+            setStep(step + 1);
+          },
         }, '下一步')
         : h('button', {
-          className: 'wb-btn wb-btn-primary', disabled: submitting || errs.length > 0,
-          onClick: () => void submit(),
+          className: 'wb-btn wb-btn-primary', disabled: submitting,
+          onClick: () => {
+            if (errs.length > 0) return; // 底部汇总行已显示原因
+            void submit();
+          },
         }, submitting ? '创建中…' : '创建机器人')));
 };
 

@@ -128,6 +128,7 @@ const Shell = () => {
   const [sources, setSources] = useState([]);
   const [active, setActive] = useState(() => location.hash.slice(2) || null);
   const [asideList, setAsideList] = useState(() => [...asides.values()]);
+  const [pluginsLoaded, setPluginsLoaded] = useState(false); // 全部 uiPlugin import 落定
 
   pushAside = useCallback((desc) => {
     setAsideList((prev) => (prev.some((a) => a.id === desc.id) ? prev : [...prev, desc]));
@@ -172,6 +173,8 @@ const Shell = () => {
         await Promise.all(plugins.map(loadPlugin));
       } catch (err) {
         setError(err?.message ?? String(err));
+      } finally {
+        setPluginsLoaded(true); // 全部 import 落定（含失败）——路由判定开闸
       }
     })();
   }, [loadPlugin]);
@@ -185,13 +188,15 @@ const Shell = () => {
   const current = sorted.find((p) => p.id === active) ?? sorted[0] ?? null;
 
   // 失效 hash 统一 replace（不留浏览器历史）：旧路由按映射迁移，其余回首页。
-  // 页面清单异步加载，须等 sources 就位后再判定，避免误伤加载中的深链。
+  // 冷开竞态（走查两轮发现）：页面注册是渐进的（office3d 先于 workbench），
+  // 部分注册的窗口里判路由会把合法目标（robots）当未知路由链式 fallback——
+  // 必须等全部插件 import 落定后只判一次。
   useEffect(() => {
-    if (sources.length === 0) return;
+    if (!pluginsLoaded) return;
     if (active == null || sorted.some((p) => p.id === active)) return;
     const to = LEGACY_ROUTES[active] ?? sorted[0]?.id ?? 'overview';
     location.replace(`#/${to}`);
-  }, [active, sources]);
+  }, [active, pluginsLoaded]);
   // hidden pages stay routable (#/<id>) but never take a nav slot — overview
   // embeds 办公室 3D from the registry, so it must not double-list in nav.
   const navItems = sorted.filter((p) => p.hidden !== true);

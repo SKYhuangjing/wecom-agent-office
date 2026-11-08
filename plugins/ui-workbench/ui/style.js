@@ -169,7 +169,7 @@ const CSS = `
 }
 .wb-table th { color: var(--muted); font-weight: 600; background: color-mix(in srgb, var(--line) 25%, var(--panel)); }
 .wb-table tbody tr { transition: background-color 0.12s ease; }
-.wb-table tbody tr:hover { background: color-mix(in srgb, var(--panel-2) 55%, transparent); }
+.wb-table tbody tr:hover { background: var(--panel-2); }
 .wb-table td .wb-sub { margin-top: 2px; }
 /* 窄屏表格不挤碎（走查 M5）：列压成逐字竖排/按钮挤出屏——改为容器内横向滚动 */
 .wb-table-scroll { overflow-x: auto; max-width: 980px; }

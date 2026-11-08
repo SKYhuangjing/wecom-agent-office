@@ -111,6 +111,8 @@ body {
   transition: all 0.15s ease; white-space: nowrap;
 }
 .side-ai-btn:hover { background: var(--panel-2); } /* 与 nav-item hover 同款中性反馈 */
+.side-ai-btn:active { transform: scale(0.985); }    /* 按压微反馈（与插件层 wb-btn 同款） */
+.side-ai-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .brand {
   display: flex;
@@ -193,6 +195,7 @@ body {
   outline: 2px solid var(--side-muted);
   outline-offset: 2px;
 }
+.nav-item:active { transform: scale(0.985); }
 .nav-icon {
   width: 1.4em;
   display: inline-flex;
@@ -361,12 +364,12 @@ body {
   border-color: color-mix(in srgb, var(--ok) 30%, transparent);
 }
 .badge-idle {
-  color: var(--muted);
+  color: #52525B; /* 走查 L3：muted 在 panel-2 上 4.31:1 略低于 AA，加深到 7:1 */
   background: var(--panel-2);
   border-color: var(--line);
 }
 .badge-offline {
-  color: var(--muted);
+  color: #52525B;
   background: var(--panel-2);
   border-color: var(--line);
 }

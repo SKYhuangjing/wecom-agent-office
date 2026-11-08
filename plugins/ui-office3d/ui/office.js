@@ -111,7 +111,7 @@ const PAGE_CSS = `
 .of-pop .close:hover { color: #fca5a5; }
 .of-badge { font-size: 12px; padding: 2px 10px; border-radius: 999px; border: 1px solid #334155; }
 .of-badge-w { color: #93c5fd; border-color: #3b82f6; }
-.of-badge-i { color: #94a3b8; border-color: #64748b; }
+.of-badge-i { color: #c2cddc; border-color: #64748b; } /* 走查 L3：#94a3b8 在深底 4.04:1 低于 AA，提亮至 ~6.5:1 */
 .of-badge-o { color: #fca5a5; border-color: #ef4444; }
 .of-err { position: absolute; top: 56px; left: 12px; z-index: 5; max-width: 60%; }
 .of-boot {

@@ -8,12 +8,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>WAO Console</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <!-- 工程血统字型：拉丁/数字用 IBM Plex（Sans + Mono 等宽做时钟/ID/指标），
-       中文回退系统字。media=print onload 技巧使字体不阻塞首屏；CDN 不可达
-       时整栈回退系统字，无破坏。 -->
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
+       中文回退系统字。本地托管（OFL 开源，latin 子集 7 个 woff2）——
+       不依赖外网 CDN，慢网/断网时品牌字体不再静默消失（走查 L1）。 -->
+  <link rel="stylesheet" href="/assets/plex.css">
   <link rel="stylesheet" href="/assets/app.css">
 </head>
 <body>
