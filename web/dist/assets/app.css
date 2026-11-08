@@ -80,14 +80,14 @@ body {
   display: flex; align-items: center; gap: 6px;
   color: var(--ink); font-weight: 600; font-size: 12.5px;
 }
-.side-ai-head svg { color: var(--accent); flex: none; }
+.side-ai-head svg { color: var(--muted); flex: none; } /* 与导航图标同色：侧栏保持中性色系 */
 .side-ai-status {
   display: flex; align-items: center; gap: 6px;
   color: var(--muted); font-size: 11.5px; line-height: 1.4;
 }
 .side-ai-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
 .side-ai-on .side-ai-dot { background: var(--ok); }
-.side-ai-idle .side-ai-dot { background: var(--accent); }
+.side-ai-idle .side-ai-dot { background: var(--ok); opacity: 0.45; } /* 在线待连接：同绿减淡，去蓝 */
 .side-ai-off .side-ai-dot { background: var(--warn); }
 .side-ai-actions { display: flex; gap: 6px; }
 .side-ai-btn {
@@ -96,7 +96,7 @@ body {
   background: var(--panel); color: var(--ink);
   transition: all 0.15s ease; white-space: nowrap;
 }
-.side-ai-btn:hover { background: var(--panel-2); border-color: var(--accent); }
+.side-ai-btn:hover { background: var(--panel-2); } /* 与 nav-item hover 同款中性反馈 */
 
 .brand {
   display: flex;
