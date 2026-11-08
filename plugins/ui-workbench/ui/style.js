@@ -4,35 +4,44 @@
 // prefers-color-scheme with zero extra wiring. Idempotent by <style> id.
 
 const CSS = `
-.wb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; margin-top: 14px; }
+.wb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 16px; margin-top: 14px; }
 .wb-card {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-  padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  padding: 16px 18px; display: flex; flex-direction: column; gap: 10px;
+  box-shadow: var(--shadow); transition: all 0.2s ease;
+}
+.wb-card:hover {
+  border-color: #CBD5E1; box-shadow: var(--shadow-lift); transform: translateY(-2px);
 }
 .wb-card-head { display: flex; align-items: center; gap: 10px; }
-.wb-name { font-weight: 600; font-size: 15px; }
+.wb-name { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; color: var(--ink); }
 .wb-sub { color: var(--muted); font-size: 12px; }
-.wb-progress { color: var(--muted); font-size: 13px; min-height: 20px; overflow-wrap: anywhere; }
+.wb-progress { color: var(--ink); font-size: 13px; min-height: 20px; overflow-wrap: anywhere; background: var(--bg); border-radius: 6px; padding: 6px 10px; border: 1px solid var(--line-subtle); }
 .wb-reason { color: var(--bad); font-size: 12px; overflow-wrap: anywhere; }
 /* P2-4: provider/channel 端口已消失的 bot 卡片角标（title 说明原因） */
 .wb-dot-warn { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--warn); }
 .wb-stats {
-  display: flex; gap: 18px; font-size: 13px; color: var(--muted);
-  border-top: 1px dashed var(--line); padding-top: 8px;
+  display: flex; gap: 18px; font-size: 12.5px; color: var(--muted);
+  border-top: 1px dashed var(--line); padding-top: 10px; font-family: var(--mono);
 }
-.wb-stats b { color: var(--ink); font-weight: 600; }
-.wb-actions { display: flex; gap: 8px; }
+.wb-stats b { color: var(--ink); font-weight: 700; }
+.wb-actions { display: flex; gap: 8px; margin-top: 2px; }
 
 .wb-btn {
   border: 1px solid var(--line); background: var(--panel); color: var(--ink);
-  border-radius: 8px; padding: 4px 12px; cursor: pointer; font: inherit; font-size: 13px;
+  border-radius: 8px; padding: 5px 14px; cursor: pointer; font: inherit; font-size: 13px; font-weight: 600;
+  box-shadow: var(--shadow-sm); transition: all 0.15s ease;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
 }
-.wb-btn:hover { border-color: var(--accent); color: var(--accent); }
-.wb-btn-primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-.wb-btn-primary:hover { color: var(--accent-ink); opacity: .9; }
-.wb-btn-danger { color: var(--bad); border-color: var(--bad); }
-.wb-btn-danger:hover { color: var(--bad); opacity: .8; }
+.wb-btn:hover { background: var(--bg); border-color: #CBD5E1; }
+.wb-btn-primary { background: var(--ink); color: #FFFFFF; border-color: var(--ink); box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12); }
+.wb-btn-primary:hover { background: color-mix(in srgb, var(--ink) 85%, #000000); color: #FFFFFF; }
+.wb-btn-danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 30%, transparent); background: color-mix(in srgb, var(--bad) 6%, var(--panel)); }
+.wb-btn-danger:hover { background: color-mix(in srgb, var(--bad) 12%, var(--panel)); }
 .wb-btn[disabled] { opacity: .5; cursor: not-allowed; pointer-events: none; }
+
+/* 内联 SVG icon（icons.js）：currentColor 描边，颜色完全跟文字 */
+.wic { flex: none; vertical-align: -0.15em; }
 
 .wb-switch { position: relative; display: inline-block; width: 36px; height: 20px; flex: none; cursor: pointer; }
 .wb-switch input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
@@ -43,38 +52,41 @@ const CSS = `
 .wb-switch .wb-track::after {
   content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
   border-radius: 50%; background: var(--panel); transition: left .15s ease;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
 }
 .wb-switch input:checked + .wb-track { background: var(--ok); }
 .wb-switch input:checked + .wb-track::after { left: 18px; }
 .wb-switch input:focus-visible + .wb-track { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-.wb-crud { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 18px; margin-top: 14px; align-items: start; }
-.wb-side { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 4px; }
+.wb-crud { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 20px; margin-top: 14px; align-items: start; }
+.wb-side { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 4px; box-shadow: var(--shadow); }
 .wb-side-item {
   display: flex; justify-content: space-between; align-items: center; gap: 8px;
-  padding: 8px 10px; border-radius: 8px; cursor: pointer; border: none; background: none;
-  color: var(--ink); font: inherit; text-align: left; width: 100%;
+  padding: 8px 12px; border-radius: 8px; cursor: pointer; border: none; background: none;
+  color: var(--ink); font: inherit; text-align: left; width: 100%; transition: all 0.15s ease;
 }
-.wb-side-item:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.wb-side-item.active { background: var(--accent); color: var(--accent-ink); }
+.wb-side-item:hover { background: var(--panel-2); }
+.wb-side-item.active { background: var(--ink); color: #FFFFFF; font-weight: 600; box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12); }
 .wb-side-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wb-side-id { font-size: 11px; color: var(--muted); }
-.wb-side-item.active .wb-side-id { color: var(--accent-ink); opacity: .8; }
+.wb-side-id { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+.wb-side-item.active .wb-side-id { color: var(--muted-light); }
 .wb-side-item .badge { flex: none; }
 
-.wb-editor { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 20px 20px; }
-.wb-editor h3 { margin: 0 0 12px; }
-.wb-form { display: flex; flex-direction: column; gap: 12px; max-width: 660px; }
-.wb-field { display: flex; flex-direction: column; gap: 4px; }
-.wb-field > label { font-size: 13px; color: var(--muted); }
+.wb-editor { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px 24px; box-shadow: var(--shadow); }
+.wb-editor h3 { margin: 0 0 14px; font-size: 16px; font-weight: 700; color: var(--ink); }
+.wb-form { display: flex; flex-direction: column; gap: 14px; max-width: 660px; }
+.wb-field { display: flex; flex-direction: column; gap: 5px; }
+.wb-field > label { font-size: 13px; font-weight: 600; color: var(--ink); }
 .wb-field label .wb-req { color: var(--bad); }
 .wb-input, .wb-select, .wb-textarea {
-  border: 1px solid var(--line); background: var(--bg); color: var(--ink);
-  border-radius: 8px; padding: 6px 10px; font: inherit; font-size: 13px; width: 100%;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  border-radius: 8px; padding: 7px 12px; font: inherit; font-size: 13px; width: 100%;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.02);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-.wb-input:focus, .wb-select:focus, .wb-textarea:focus { outline: none; border-color: var(--accent); }
-.wb-input[readonly] { color: var(--muted); background: color-mix(in srgb, var(--line) 30%, var(--bg)); }
-.wb-textarea { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; min-height: 60px; resize: vertical; }
+.wb-input:focus, .wb-select:focus, .wb-textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent); }
+.wb-input[readonly] { color: var(--muted); background: var(--bg); }
+.wb-textarea { font-family: var(--mono); font-size: 12px; min-height: 70px; resize: vertical; }
 .wb-hint { font-size: 12px; color: var(--muted); }
 .wb-field-error { color: var(--bad); font-size: 12px; }
 .wb-check { display: flex; align-items: center; gap: 8px; font-size: 13px; }
@@ -180,25 +192,15 @@ const CSS = `
 .wb-tl-time { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; flex: none; }
 .wb-tl-kind {
   flex: none; font-size: 11px; border-radius: 999px; padding: 0 8px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line); color: var(--muted);
+  display: inline-flex; align-items: center; gap: 4px;
 }
 .wb-tl-chat {
   flex: none; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--muted); font-size: 11px; font-family: ui-monospace, Menlo, Consolas, monospace;
 }
 .wb-tl-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
-/* kind 分色: run_start 蓝 / step 灰 / tool 紫 / thinking 青 / turn 绿 / run_end 蓝灰 */
-.wb-tl-kind-run_start { color: var(--accent); border-color: var(--accent); }
-.wb-tl-kind-step { color: var(--muted); }
-.wb-tl-kind-tool { color: #7c3aed; border-color: #7c3aed; }
-.wb-tl-kind-thinking { color: #0e7490; border-color: #0e7490; }
-.wb-tl-kind-turn { color: var(--ok); border-color: var(--ok); }
-.wb-tl-kind-run_end { color: #64748b; border-color: #64748b; }
-@media (prefers-color-scheme: dark) {
-  .wb-tl-kind-tool { color: #a78bfa; border-color: #a78bfa; }
-  .wb-tl-kind-thinking { color: #22d3ee; border-color: #22d3ee; }
-  .wb-tl-kind-run_end { color: #94a3b8; border-color: #94a3b8; }
-}
+/* 单色收敛：kind 不再分色——统一 muted 中性 pill，差异靠 icon 形状（timeline.js） */
 
 /* —— 公司比喻重设计 (P2 人事部) ——————————————————————————————————— */
 .wb-mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
@@ -258,7 +260,7 @@ const CSS = `
   font-size: 11px; background: var(--panel-2); border: 1px solid var(--line);
 }
 .wb-step.visited { color: var(--ink); }
-.wb-step.visited .wb-step-num { background: var(--st-idle); border-color: var(--st-idle); color: var(--panel); }
+.wb-step.visited .wb-step-num { background: var(--muted); border-color: var(--muted); color: var(--panel); }
 .wb-step.active { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .wb-step.active .wb-step-num { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .wb-step[disabled] { cursor: not-allowed; opacity: .75; }
@@ -280,10 +282,16 @@ const CSS = `
   text-align: left; transition: border-color .12s ease, box-shadow .12s ease;
 }
 .wb-dept-card:hover { box-shadow: var(--shadow); }
-.wb-dept-card.active { border-color: var(--pv); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pv) 18%, transparent); }
-.wb-dept-bar { position: absolute; top: 0; left: 14px; right: 14px; height: 4px; border-radius: 0 0 4px 4px; background: var(--pv); }
+.wb-dept-card.active { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
+.wb-dept-letter {
+  width: 26px; height: 26px; border-radius: 7px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 12.5px; font-weight: 700; color: var(--muted);
+  background: var(--panel-2); border: 1px solid var(--line);
+}
+.wb-dept-card.active .wb-dept-letter { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
 .wb-dept-name { font-weight: 700; margin-top: 6px; }
-.wb-dept-card.active .wb-dept-name { color: var(--pv); }
+.wb-dept-card.active .wb-dept-name { color: var(--accent); }
 .wb-dept-blurb { font-size: 12.5px; color: var(--muted); line-height: 1.55; }
 .wb-dept-tech { font-size: 11px; color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
 
@@ -314,27 +322,15 @@ const CSS = `
 @keyframes wb-toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
 @media (prefers-reduced-motion: reduce) { .wb-toast { animation: none; } }
 
-/* —— W3 T4: 资产科（类型五色徽章 / 配发·私发徽章 / 回执落盘清单） ————————— */
-.wb-atype-skill { color: var(--accent); border-color: var(--accent); }
-.wb-atype-memory { color: #0e7490; border-color: #0e7490; }
-.wb-atype-mcp { color: #7c3aed; border-color: #7c3aed; }
-.wb-atype-prompt { color: #b45309; border-color: #b45309; }
-.wb-atype-tool { color: #15803d; border-color: #15803d; }
-.wb-bmode-shared { color: var(--accent); border-color: var(--accent); }
-.wb-bmode-exclusive { color: #7c3aed; border-color: #7c3aed; }
+/* —— W3 T4: 资产科（单色收敛：类型/配发方式徽章全中性，靠文字标签区分；
+   语义色只保留 ok（已配置）/ warn（源删除·未安装）——————————————— */
+.wb-tool-ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
 .wb-srcdel { color: var(--warn); border-color: var(--warn); }
 .wb-writes {
   margin: 4px 0 0; padding-left: 18px; max-height: 180px; overflow: auto;
   font-size: 12px; color: var(--muted);
 }
 .wb-writes li { overflow-wrap: anywhere; }
-@media (prefers-color-scheme: dark) {
-  .wb-atype-memory { color: #22d3ee; border-color: #22d3ee; }
-  .wb-atype-mcp { color: #a78bfa; border-color: #a78bfa; }
-  .wb-atype-prompt { color: #fbbf24; border-color: #fbbf24; }
-  .wb-atype-tool { color: #4ade80; border-color: #4ade80; }
-  .wb-bmode-exclusive { color: #a78bfa; border-color: #a78bfa; }
-}
 
 /* —— P5 收口：窄屏（shell 侧栏折顶时，双栏布局也收成单列） ———————————— */
 @media (max-width: 900px) {

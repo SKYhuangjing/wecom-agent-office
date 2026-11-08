@@ -7,8 +7,11 @@
 import { ensurePageStyle } from './style.js';
 import { bannerText } from './list.js';
 import { Avatar, providerMeta } from './hr.js';
+import { IconEl } from './icons.js';
 
 const KIND_LABEL = { run_start: '开始', step: '步骤', tool: '工具', thinking: '思考', turn: '消息', run_end: '结束' };
+// 单色收敛：kind 不再分色，差异靠 icon 形状（无自然映射的 kind 纯文字）。
+const KIND_ICON = { run_start: 'play', tool: 'zap', turn: 'send', run_end: 'check' };
 const WINDOWS = [5, 15, 30]; // minutes
 
 const fmtClock = (at) => (Number.isFinite(at) && at > 0
@@ -18,7 +21,7 @@ const fmtClock = (at) => (Number.isFinite(at) && at > 0
 export default {
   id: 'timeline',
   title: '活动日志',
-  icon: '📜',
+  icon: 'clock',
   order: 7,
   component({ WAO }) {
     const { h, useState, useEffect, useAgents, useTimeline } = WAO;
@@ -71,7 +74,8 @@ export default {
               h('span', {
                 className: `wb-tl-kind wb-tl-kind-${r.kind}`,
                 title: `kind：${r.kind}`,
-              }, KIND_LABEL[r.kind] ?? r.kind),
+              }, KIND_ICON[r.kind] ? h(IconEl, { h, name: KIND_ICON[r.kind], size: 11 }) : null,
+                KIND_LABEL[r.kind] ?? r.kind),
               r.chatKey ? h('span', { className: 'wb-tl-chat', title: '会话对象（群聊/单聊 chatKey）' }, r.chatKey) : null,
               h('span', { className: 'wb-tl-text' }, r.text || '（无文本）'));
           })));

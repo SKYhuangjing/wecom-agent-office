@@ -4,31 +4,33 @@
 // 运维不歧义。
 import { ensurePageStyle } from './style.js';
 
-// 引擎（provider）——唯一 accent 家族，编码真实身份
+// 引擎（provider）——单色收敛：不再有厂商专色，身份靠字母标识（D/C/X/P）
+// + 中性色；color 统一中性灰（化身描边环用）。
 export const PROVIDER_META = {
   dsh: {
-    label: 'DSH 引擎', color: 'var(--pv-dsh)', varName: '--pv-dsh',
+    label: 'DSH 引擎', letter: 'D', color: 'var(--muted)',
     dept: 'DeepSeek 系', tech: 'dsh · DeepSeek Harness',
     blurb: '稳定耐跑：DeepSeek Harness 擅长长任务，日志详尽，适合日常开发与维护。',
   },
   claude: {
-    label: 'Claude 引擎', color: 'var(--pv-claude)', varName: '--pv-claude',
+    label: 'Claude 引擎', letter: 'C', color: 'var(--muted)',
     dept: 'Anthropic 系', tech: 'claude · Claude Code',
     blurb: 'Claude Code 擅长代码理解与重构，适合精修、评审与疑难定位。',
   },
   codex: {
-    label: 'Codex 引擎', color: 'var(--pv-codex)', varName: '--pv-codex',
+    label: 'Codex 引擎', letter: 'X', color: 'var(--muted)',
     dept: 'OpenAI 系', tech: 'codex · OpenAI Codex CLI',
     blurb: 'Codex CLI 适合脚本、批量改动与快速验证。',
   },
   pi: {
-    label: 'pi 引擎', color: 'var(--pv-pi)', varName: '--pv-pi',
+    label: 'pi 引擎', letter: 'P', color: 'var(--muted)',
     dept: '轻量系', tech: 'pi · pi coding agent',
     blurb: 'pi CLI 短平快、会话好续接，网关随配随走，适合轻量任务与自由路由。',
   },
 };
 export const providerMeta = (id) => (PROVIDER_META[id] ?? {
-  label: id ? `${id} 引擎` : '未选择引擎', color: 'var(--pv-unknown)', varName: '--pv-unknown',
+  label: id ? `${id} 引擎` : '未选择引擎',
+  letter: (id?.[0] ?? '?').toUpperCase(), color: 'var(--muted)',
   dept: '外部来源', tech: id ?? '—', blurb: '来自外部的引擎。',
 });
 
@@ -41,7 +43,7 @@ export const statusTitle = (a) => {
   return `状态：${tech}${reason}${duty}`;
 };
 
-// 化身头像：seed=botId，全站同脸；provider 色描边环
+// 化身头像：seed=botId，全站同脸；描边环统一中性色（单色收敛）
 export const Avatar = ({ WAO, seed, size = 40, mood, ring, className = '', title }) => {
   const { h } = WAO;
   return h('span', {

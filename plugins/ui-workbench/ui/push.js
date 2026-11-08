@@ -12,7 +12,7 @@ const MAX_CHARS = 4000;
 export default {
   id: 'push',
   title: '消息推送',
-  icon: '📣',
+  icon: 'send',
   order: 5,
   component({ WAO }) {
     const { h, useState, useEffect, api, useAgents } = WAO;

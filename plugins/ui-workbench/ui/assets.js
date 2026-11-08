@@ -8,6 +8,7 @@
 // =unbind，重新物化=rematerialize，下架=DELETE 资产；技术词（type/mode 原值、
 // 落盘路径）收进 tooltip/副标题——双层语言，运维不歧义。
 import { ensurePageStyle } from './style.js';
+import { IconEl } from './icons.js';
 
 // （词表：skill=技能…；wizard 第 3.5 步复用同一张类型标签表）
 export const TYPE_LABEL = { skill: '技能', memory: '记忆', mcp: 'MCP', prompt: '提示词', tool: '工具' };
@@ -103,9 +104,9 @@ const ModeBadge = ({ h, mode }) => h('span', {
 }, MODE_LABEL[mode] ?? mode);
 
 // 工具装备态徽章（§7.1/§7.2 manifest.tools 经 /api/agents assetTools 回显）：
-// armed/available → 🛠 已装备 <kind> <version>；unavailable → ⚠ 未安装（绑定
+// armed/available → ✓ 已配置 <kind> <version>；unavailable → ⚠ 未安装（绑定
 // 在册、盘面未装备——装好二进制后「重新物化」即可）；无清单条目 → 未物化。
-// 复用既有徽章配色（wb-atype-tool 绿 / wb-srcdel 警示），不新造样式。
+// 徽章配色单色收敛：ok/warn 语义色 + 内联 SVG icon。
 const TOOL_OK_STATES = new Set(['armed', 'available']);
 const ToolBadge = ({ h, entry }) => {
   if (entry == null) {
@@ -116,14 +117,14 @@ const ToolBadge = ({ h, entry }) => {
   }
   if (TOOL_OK_STATES.has(entry.state)) {
     return h('span', {
-      className: 'badge wb-atype-tool',
+      className: 'badge wb-tool-ok',
       title: `manifest.tools state: ${entry.state}——工具已落到工作目录生效`,
-    }, `🛠 已配置 ${entry.version ?? entry.kind}`);
+    }, h(IconEl, { h, name: 'check', size: 11 }), `已配置 ${entry.version ?? entry.kind}`);
   }
   return h('span', {
     className: 'badge wb-srcdel',
     title: `manifest.tools state: ${entry.state ?? 'unavailable'}（unavailable）——${entry.kind} 二进制不在本机，绑定保留但盘面未配置；安装 ${entry.kind} 后点「重新物化」即可配置`,
-  }, '⚠ 未安装');
+  }, h(IconEl, { h, name: 'alert', size: 11 }), '未安装');
 };
 
 // 操作回执（bind/unbind/rematerialize 共用形状 §3.2）：rematerialized/failed/
@@ -164,7 +165,7 @@ const Receipt = ({ h, title, receipt }) => {
 export default {
   id: 'assets',
   title: '工具库',
-  icon: '📦',
+  icon: 'package',
   order: 3,
   component({ WAO }) {
     const { h, useState, useEffect, api, useAgents } = WAO;

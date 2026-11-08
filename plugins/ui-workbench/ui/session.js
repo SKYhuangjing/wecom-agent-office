@@ -58,7 +58,7 @@ const TurnCard = ({ h, row, onSession }) => h('div', { key: row.seq, className: 
 export default {
   id: 'session',
   title: '会话历史',
-  icon: '🗄️',
+  icon: 'database',
   order: 4,
   component({ WAO }) {
     const { h, useState, useEffect, api, useAgents } = WAO;

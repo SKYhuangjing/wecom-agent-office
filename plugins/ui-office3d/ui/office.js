@@ -147,7 +147,7 @@ function hintFor(dim) {
 export default {
   id: 'office3d',
   title: '办公室',
-  icon: '▣',
+  icon: 'building',
   order: 5,
   component({ WAO }) {
     ensureStyle();

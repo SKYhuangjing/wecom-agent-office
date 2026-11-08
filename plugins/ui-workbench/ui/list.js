@@ -75,7 +75,7 @@ const WorkbenchInner = ({ WAO, retry }) => {
           className: `badge badge-${status}`,
           title: statusTitle(a),
         }, STATUS_LABEL[status] ?? status);
-        return h('div', { key: a.id, className: 'wb-card', style: { '--pv': `var(${meta.varName})` } },
+        return h('div', { key: a.id, className: 'wb-card' },
           h('div', { className: 'wb-card-head' },
             h(Avatar, {
               WAO, seed: a.id, size: 42, ring: meta.color, mood: off ? 'sleep' : 'neutral',
@@ -121,7 +121,7 @@ const WorkbenchInner = ({ WAO, retry }) => {
 export default {
   id: 'workbench',
   title: '今日工作',
-  icon: '📋',
+  icon: 'list',
   order: 1,
   component({ WAO }) {
     const { h, useState } = WAO;

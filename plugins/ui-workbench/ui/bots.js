@@ -43,7 +43,7 @@ const Group = ({ WAO, title, sub, open, onToggle, children }) => {
 export default {
   id: 'bots',
   title: '机器人管理',
-  icon: '🪪',
+  icon: 'bot',
   order: 2,
   component({ WAO }) {
     const { h, useState, useEffect, api, useAgents } = WAO;
@@ -196,7 +196,6 @@ export default {
       return h('button', {
         key: bot.id,
         className: `wb-side-item${selected === bot.id ? ' active' : ''}`,
-        style: { '--pv': `var(${meta.varName})` },
         onClick: () => setSelected(bot.id),
         title: statusTitle({ ...agent, status, enabled: bot.enabled }),
       },
@@ -234,7 +233,7 @@ export default {
       const meta = providerMeta(draft.provider);
       const joined = fmtDate(storedBot?.createdAt);
       const dutyOn = draft.enabled !== false;
-      editor = h('div', { className: 'wb-editor', style: { '--pv': `var(${meta.varName})` } },
+      editor = h('div', { className: 'wb-editor' },
         h('div', { className: 'wb-file-head' },
           h(Avatar, { WAO, seed: draft.id, size: 52, ring: meta.color }),
           h('div', { style: { flex: 1, minWidth: 0 } },

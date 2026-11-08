@@ -10,6 +10,7 @@
 import { Avatar, PROVIDER_META, providerMeta, rollBadgeId, fmtDate, ensurePageStyle } from './hr.js';
 import { fieldsFromSchema, SchemaFields, serializeSchema } from './form.js';
 import { TYPE_LABEL } from './assets.js';
+import { IconEl } from './icons.js';
 
 const STEPS = [
   { key: 'card', title: '基本信息', sub: '机器人叫什么、头像长什么样' },
@@ -26,14 +27,14 @@ const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 // 原文（双层语言：技术词收进副标题，运维不歧义）。
 const CHANNEL_META = {
   wecom: {
-    label: '企业微信', color: '#0082EF', tech: 'wecom · 企业微信机器人',
+    label: '企业微信', letter: '企', tech: 'wecom · 企业微信机器人',
     blurb: '企微群里 @ 它或私聊它都能对话——填上机器人凭证，连接即配置完成。',
     // R4: 凭证零指路——拿到 Bot ID / Secret 的路径写在这里，别让维护者猜。
     guide: '凭证获取：在企微管理后台 → 应用管理 → 智能机器人 中创建 API 模式机器人，获取 Bot ID 和 Secret。',
   },
 };
 const channelMeta = (id) => (CHANNEL_META[id] ?? {
-  label: id || '未选渠道', color: 'var(--pv-unknown)', tech: id ?? '—',
+  label: id || '未选渠道', letter: (id?.[0] ?? '?').toUpperCase(), tech: id ?? '—',
   blurb: '来自外部的通信渠道。',
 });
 
@@ -41,12 +42,12 @@ const channelMeta = (id) => (CHANNEL_META[id] ?? {
 // 其余类型（memory/prompt/…）退回资产科口径 TYPE_LABEL + 通用图标——分组覆盖
 // 全部在册类型，不静默漏掉谁。
 const EQUIP_PACKS = [
-  { type: 'skill', icon: '📘', label: '技能' },
-  { type: 'mcp', icon: '🔌', label: '工具连接' },
-  { type: 'tool', icon: '🛠️', label: '效率工具' },
+  { type: 'skill', icon: 'book', label: '技能' },
+  { type: 'mcp', icon: 'zap', label: '工具连接' },
+  { type: 'tool', icon: 'settings', label: '效率工具' },
 ];
 const packMeta = (type) => EQUIP_PACKS.find((p) => p.type === type)
-  ?? { type, icon: '📦', label: TYPE_LABEL[type] ?? type };
+  ?? { type, icon: 'package', label: TYPE_LABEL[type] ?? type };
 
 const errorLines = (message) => String(message ?? '').split('; ').filter((s) => s.trim() !== '');
 
@@ -213,10 +214,9 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
     return h('button', {
       key: p.id,
       className: `wb-dept-card${active ? ' active' : ''}`,
-      style: { '--pv': `var(${meta.varName})` },
       onClick: () => pickProvider(p.id),
     },
-      h('span', { className: 'wb-dept-bar' }),
+      h('span', { className: 'wb-dept-letter', 'aria-hidden': 'true' }, meta.letter),
       h('span', { className: 'wb-dept-name' }, meta.label),
       h('span', { className: 'wb-dept-blurb' }, meta.blurb),
       h('span', { className: 'wb-dept-tech' }, meta.tech));
@@ -226,7 +226,7 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
   if (step === 0) {
     body = h('div', { className: 'wb-form', style: { maxWidth: 520 } },
       h('div', { className: 'wb-wizard-card-row' },
-        h(Avatar, { WAO, seed: draft.id || 'preview', size: 88, ring: 'var(--pv-unknown)', title: '这副面孔由机器人 ID 决定，跟着它一生' }),
+        h(Avatar, { WAO, seed: draft.id || 'preview', size: 88, ring: 'var(--muted)', title: '这副面孔由机器人 ID 决定，跟着它一生' }),
         h('div', { className: 'wb-field', style: { flex: 1 } },
           h('label', null, '姓名', h('span', { className: 'wb-req' }, ' *')),
           h('input', {
@@ -238,7 +238,7 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
         h('button', {
           className: 'wb-btn', title: '换一副面孔（会换一个未占用的机器人 ID）',
           onClick: () => setDraft({ ...draft, id: rollBadgeId(existingIds) }),
-        }, '🎲 换一副面孔')),
+        }, '换一副面孔')),
       h('div', { className: 'wb-field' },
         h('label', null, '机器人 ID', h('span', { className: 'wb-req' }, ' *'),
           h('span', { className: 'wb-hint', style: { marginLeft: 8 } }, '技术标识 bot id，创建后不可修改，也决定它的长相')),
@@ -291,7 +291,9 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
                       key: g.type, className: 'wb-btn',
                       onClick: () => togglePack(g.type),
                       title: allOn ? `取消整包：${g.label}（${g.list.length} 件）` : `一键勾选全部${g.label}（${g.list.length} 件）`,
-                    }, `${allOn ? '✓ ' : ''}${g.icon} ${g.label} · ${g.list.length} 件`);
+                    }, allOn ? '已全选，点击收起整包' : `一键勾选全部${g.label}（${g.list.length} 件）`,
+                    h(IconEl, { h, name: allOn ? 'check' : g.icon, size: 13 }),
+                    `${g.label} · ${g.list.length} 件`);
                   }))) : null,
               h('div', { className: 'wb-group open' },
                 h('div', { className: 'wb-group-body' },
@@ -354,10 +356,9 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
       return h('button', {
         key: c.id,
         className: `wb-dept-card${active ? ' active' : ''}`,
-        style: { '--pv': meta.color },
         onClick: () => pickChannel(c.id),
       },
-        h('span', { className: 'wb-dept-bar' }),
+        h('span', { className: 'wb-dept-letter', 'aria-hidden': 'true' }, meta.letter),
         h('span', { className: 'wb-dept-name' }, meta.label),
         h('span', { className: 'wb-dept-blurb' }, meta.blurb),
         h('span', { className: 'wb-dept-tech' }, meta.tech));

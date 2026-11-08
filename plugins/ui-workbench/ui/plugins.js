@@ -38,7 +38,7 @@ const affectedBots = (plugin, agents, ownedPorts) => {
 export default {
   id: 'plugins',
   title: '插件管理',
-  icon: '🧰',
+  icon: 'plug',
   order: 6,
   component({ WAO }) {
     const { h, useState, useEffect, api, useAgents } = WAO;

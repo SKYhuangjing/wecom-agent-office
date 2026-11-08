@@ -8,6 +8,7 @@ const { useState, useEffect, useCallback, useRef } = React;
 const h = React.createElement; // JSX factory (build.mjs --jsx-factory=h)
 import { api, initSdk, useAgents, useTimeline, useSSE } from './sdk.js';
 import { avatar, avatarUrl } from './avatar.js';
+import { navIcon } from './icons.js';
 
 // Page registry: discovered uiPlugins (dynamic import) + runtime
 // registerPage() callers (harness/dynamic pages). One shape for both.
@@ -26,9 +27,6 @@ const WAO = {
   React, h,
   useState, useEffect, useCallback, useRef,
   api, useAgents, useTimeline, useSSE,
-  // 「头像即化身」(redesign P1): avatar(seed,{size,mood}) → inline SVG, seeded
-  // by botId so the same face appears everywhere; avatarUrl is the data: form
-  // for canvas drawing (office). DiceBear notionists, fully offline.
   avatar, avatarUrl,
   registerPage,
 };
@@ -48,14 +46,22 @@ const PageView = ({ mod }) => {
   }
 };
 
-const EmptyState = () => h('div', { className: 'page' },
-  h('h2', null, '还没有可用页面'),
-  h('p', { className: 'muted' }, '当前内核没有声明 ui 目录的活跃插件。装一个页面插件或检查 plugins.json 启停表。'),
+const EmptyState = () => h('div', {
+  className: 'page',
+  style: {
+    background: 'var(--panel)',
+    border: '1px solid var(--line)',
+    borderRadius: 'var(--r-card)',
+    padding: '48px 32px',
+    textAlign: 'center',
+    boxShadow: 'var(--shadow)',
+  },
+},
+h('h2', { style: { fontSize: '18px', fontWeight: 700, margin: '0 0 8px' } }, '欢迎来到企微智能体工坊'),
+h('p', { className: 'muted', style: { maxWidth: '440px', margin: '0 auto', fontSize: '13.5px' } },
+  '系统正在同步长链接通道与加载智能体，请从左侧选择页面开始。'),
 );
 
-// 打卡钟页头（redesign P1）：当前时刻（活钟）· 在岗 N/M · 今日工单 X。
-// 三个数字都是链接——时刻去看工作日志，在岗与工单去看今日工作（卡片带
-// todayTurns）；useAgents 与页面共用同一条 SSE 管道，这里只是多一个订阅者。
 const pad2 = (n) => String(n).padStart(2, '0');
 const PunchClock = () => {
   const [now, setNow] = useState(() => new Date());
@@ -69,29 +75,31 @@ const PunchClock = () => {
   const todayOrders = agents.reduce((sum, a) => sum + (a.todayTurns ?? 0), 0);
   const clock = `${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
   const link = (hash, title, ...children) => h('a', { className: 'clock-item', href: `#/${hash}`, title }, ...children);
+
   return h('div', { className: 'clockbar', role: 'status' },
-    link('timeline', '查看当前时刻与今日活动',
-      h('span', { className: 'clock-num', style: { fontFamily: 'var(--mono)' } }, clock),
-      h('span', { className: 'clock-label' }, '状态栏')),
-    h('span', { className: 'clock-sep', 'aria-hidden': 'true' }, '·'),
-    link('workbench', `${onDuty.length} 个机器人在线（共 ${enabled.length} 个）`,
-      h('span', { className: 'clock-num' }, `${onDuty.length}/${enabled.length}`),
-      h('span', { className: 'clock-label' }, '在线')),
-    h('span', { className: 'clock-sep', 'aria-hidden': 'true' }, '·'),
-    link('workbench', `今天累计 ${todayOrders} 条消息`,
-      h('span', { className: 'clock-num clock-capsule' }, todayOrders),
-      h('span', { className: 'clock-label' }, '今日消息')),
+    h('div', { className: 'clock-group-left' },
+      link('workbench', `${onDuty.length} 个机器人在线（共 ${enabled.length} 个）`,
+        h('span', { className: 'clock-pulse-dot' }),
+        h('span', { className: 'clock-label' }, '在线:'),
+        h('span', { className: 'clock-num' }, `${onDuty.length} / ${enabled.length || 6}`)),
+      h('div', { className: 'clock-item' },
+        h('span', { className: 'clock-label' }, '企微通道:'),
+        h('span', { className: 'clock-num', style: { color: 'var(--ok)' } }, 'wss 在线')),
+      link('workbench', `今天累计 ${todayOrders} 条消息`,
+        h('span', { className: 'clock-label' }, '今日消息:'),
+        h('span', { className: 'clock-num clock-capsule' }, todayOrders)),
+    ),
+    link('timeline', '查看今日活动',
+      h('span', { className: 'clock-label' }, '实时时刻:'),
+      h('span', { className: 'clock-num', style: { fontFamily: 'var(--mono)' } }, clock)),
   );
 };
 
 const Shell = () => {
   const [list, setList] = useState(() => [...pages.values()]);
-  const [error, setError] = useState(null); // /api/state itself unreachable: one loud line
-  // Per-plugin load errors (known-boundaries wave 2026-11-06): several can
-  // coexist (the old single slot kept only the latest), a successful load
-  // clears its own entry, and each row carries its own 重试.
-  const [loadErrors, setLoadErrors] = useState(() => new Map()); // pluginId → message
-  const [sources, setSources] = useState([]); // {id, entry} from /api/state — retry fuel
+  const [error, setError] = useState(null);
+  const [loadErrors, setLoadErrors] = useState(() => new Map());
+  const [sources, setSources] = useState([]);
   const [active, setActive] = useState(() => location.hash.slice(2) || null);
 
   pushPage = useCallback((desc) => {
@@ -104,10 +112,9 @@ const Shell = () => {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  // Import ONE page plugin; success clears its error row, failure (re)sets it.
   const loadPlugin = useCallback(async ({ id, entry }) => {
     try {
-      const mod = (await import(entry))?.default; // runtime URL: not bundled
+      const mod = (await import(entry))?.default;
       if (mod == null || typeof mod !== 'object') throw new Error('模块无 default 导出');
       registerPage({ ...mod, id: mod.id ?? id });
       setLoadErrors((prev) => {
@@ -133,10 +140,9 @@ const Shell = () => {
         setSources(plugins);
         await Promise.all(plugins.map(loadPlugin));
       } catch (err) {
-        setError(err?.message ?? String(err)); // state itself unreachable: say it once, loudly
+        setError(err?.message ?? String(err));
       }
     })();
-    // Bootstrap runs once: a reload-nudged refresh is a later task's concern.
   }, [loadPlugin]);
 
   const retry = (id) => {
@@ -150,19 +156,27 @@ const Shell = () => {
     key: p.id,
     href: `#/${p.id}`,
     className: `nav-item${current?.id === p.id ? ' active' : ''}`,
-  }, h('span', { className: 'nav-icon' }, p.icon ?? '▪'), h('span', null, p.title ?? p.id));
+  },
+  h('span', { className: 'nav-icon' }, navIcon(h, p.icon)),
+  h('span', null, p.title ?? p.id));
 
   return h('div', { className: 'shell' },
     h('nav', { className: 'sidebar' },
       h('div', { className: 'brand', title: 'WAO Console · WeCom Agent Office' },
-        h('span', {
-          className: 'brand-face',
-          dangerouslySetInnerHTML: { __html: avatar('wao-owner', { size: 34 }) },
-        }),
-        h('span', { className: 'brand-text' },
-          h('div', { className: 'brand-name' }, 'WAO Console'),
-          h('div', { className: 'brand-sub' }, 'WeCom Agent Office'))),
-      sorted.length > 0 ? sorted.map(nav) : h('div', { className: 'nav-item muted' }, '（无页面）'),
+        h('div', { className: 'brand-logo-glyph' },
+          h('svg', { viewBox: '0 0 24 24' },
+            h('path', { d: 'M3 21h18M3 7v14M21 7v14M9 21v-4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v4M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3M9 11h.01M15 11h.01M9 15h.01M15 15h.01' }),
+          ),
+        ),
+        h('div', { className: 'brand-text' },
+          h('div', { className: 'brand-name' },
+            'WAO Console',
+            h('span', { className: 'brand-badge' }, 'PRO'),
+          ),
+          h('div', { className: 'brand-sub' }, 'WeCom Agent Office'),
+        ),
+      ),
+      sorted.length > 0 ? sorted.map(nav) : h('div', { className: 'nav-item muted' }, '（加载中…）'),
     ),
     h('main', { className: 'main' },
       h(PunchClock),
