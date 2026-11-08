@@ -49,7 +49,7 @@ const PageView = ({ mod }) => {
 };
 
 const EmptyState = () => h('div', { className: 'page' },
-  h('h2', null, '公司还没有开门'),
+  h('h2', null, '还没有可用页面'),
   h('p', { className: 'muted' }, '当前内核没有声明 ui 目录的活跃插件。装一个页面插件或检查 plugins.json 启停表。'),
 );
 
@@ -70,17 +70,17 @@ const PunchClock = () => {
   const clock = `${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
   const link = (hash, title, ...children) => h('a', { className: 'clock-item', href: `#/${hash}`, title }, ...children);
   return h('div', { className: 'clockbar', role: 'status' },
-    link('timeline', '去看看大家今天做了什么',
+    link('timeline', '查看当前时刻与今日活动',
       h('span', { className: 'clock-num', style: { fontFamily: 'var(--mono)' } }, clock),
-      h('span', { className: 'clock-label' }, '打卡钟')),
+      h('span', { className: 'clock-label' }, '状态栏')),
     h('span', { className: 'clock-sep', 'aria-hidden': 'true' }, '·'),
-    link('workbench', `${onDuty.length} 位同事在岗（共 ${enabled.length} 位在职）`,
+    link('workbench', `${onDuty.length} 个机器人在线（共 ${enabled.length} 个）`,
       h('span', { className: 'clock-num' }, `${onDuty.length}/${enabled.length}`),
-      h('span', { className: 'clock-label' }, '在岗')),
+      h('span', { className: 'clock-label' }, '在线')),
     h('span', { className: 'clock-sep', 'aria-hidden': 'true' }, '·'),
-    link('workbench', `今天累计 ${todayOrders} 张工单`,
+    link('workbench', `今天累计 ${todayOrders} 条消息`,
       h('span', { className: 'clock-num clock-capsule' }, todayOrders),
-      h('span', { className: 'clock-label' }, '今日工单')),
+      h('span', { className: 'clock-label' }, '今日消息')),
   );
 };
 
@@ -154,14 +154,14 @@ const Shell = () => {
 
   return h('div', { className: 'shell' },
     h('nav', { className: 'sidebar' },
-      h('div', { className: 'brand', title: 'WAO Console · 一家你独自经营的公司' },
+      h('div', { className: 'brand', title: 'WAO Console · WeCom Agent Office' },
         h('span', {
           className: 'brand-face',
           dangerouslySetInnerHTML: { __html: avatar('wao-owner', { size: 34 }) },
         }),
         h('span', { className: 'brand-text' },
-          h('div', { className: 'brand-name' }, '一人公司'),
-          h('div', { className: 'brand-sub' }, 'WAO Console'))),
+          h('div', { className: 'brand-name' }, 'WAO Console'),
+          h('div', { className: 'brand-sub' }, 'WeCom Agent Office'))),
       sorted.length > 0 ? sorted.map(nav) : h('div', { className: 'nav-item muted' }, '（无页面）'),
     ),
     h('main', { className: 'main' },

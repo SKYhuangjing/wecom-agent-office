@@ -95,7 +95,7 @@ const checkText = (value, where, { max, required = false, label = '' } = {}, err
   // at the registry door. :v\d+ (not just :v1) so a forward-version marker
   // line is refused by the same rule.
   if (/wao:assets:[^\n]*:v\d+/.test(value)) {
-    errors.push(`${where} 含 wao 资产标记行模式（wao:assets:…:vN）——会与物化标记节自造漂移，请移除`);
+    errors.push(`${where} 含 wao 工具标记行模式（wao:assets:…:vN）——会与物化标记节自造漂移，请移除`);
     return errors;
   }
   if (max !== undefined && value.length > max) {
@@ -303,7 +303,7 @@ export function validateAsset(asset, { others = [] } = {}) {
   if (errors.length === 0) {
     for (const other of others) {
       if (isObject(other) && other !== asset && other.type === asset.type && other.name === asset.name) {
-        errors.push(`同名资产已存在：${asset.type}/${asset.name}（类型内唯一，重名请换名）`);
+        errors.push(`同名工具已存在：${asset.type}/${asset.name}（类型内唯一，重名请换名）`);
         break;
       }
     }
@@ -475,7 +475,7 @@ export function checkBindConflicts(assets, bindings) {
     if (e.mode !== 'shared') continue;
     const key = `${e.type}\u0000${e.name}`;
     if (sharedGroups.has(key)) {
-      errors.push(`同名${TYPE_LABEL[e.type] ?? e.type}已配发，先卸载或改私发：${e.name}`);
+      errors.push(`同名${TYPE_LABEL[e.type] ?? e.type}已共享绑定，先解绑或改独立：${e.name}`);
     } else sharedGroups.set(key, e);
   }
   // 两个 mcp 资产含同 serverId → 拒绑，指名冲突 server（物化名 wao-<serverId>，
@@ -486,7 +486,7 @@ export function checkBindConflicts(assets, bindings) {
     if (entry.type !== 'mcp' || !isObject(entry.content?.servers)) continue;
     for (const serverId of Object.keys(entry.content.servers)) {
       if (serverOwner.has(serverId)) {
-        errors.push(`MCP server 冲突：${serverId}（物化名 wao-${serverId}）已由资产 ${serverOwner.get(serverId)} 配发，请先解绑或移除该 server`);
+        errors.push(`MCP server 冲突：${serverId}（物化名 wao-${serverId}）已由工具 ${serverOwner.get(serverId)} 共享绑定，请先解绑或移除该 server`);
       } else serverOwner.set(serverId, entry.name);
     }
   }
@@ -530,16 +530,16 @@ export function noopMaterializer() {
         // installed package) stays refused, mirroring the real materializer.
         for (const serverId of Object.keys(asset?.content?.servers ?? {})) {
           if (!/^[A-Za-z0-9_-]{1,32}$/.test(serverId)) {
-            errors.push(`dsh 岗位的 MCP serverId ${serverId} 超出 dsh-mcp-client serverName 上限 32 字符——请缩短后绑定（超长名会被 dsh 配置校验拒绝，MCP 工具静默不出现）`);
+            errors.push(`dsh 引擎的 MCP serverId ${serverId} 超出 dsh-mcp-client serverName 上限 32 字符——请缩短后绑定（超长名会被 dsh 配置校验拒绝，MCP 工具静默不出现）`);
           }
         }
       }
       if (provider === 'dsh' && asset?.type === 'tool' && asset?.content?.kind === 'rtk') {
-        errors.push('dsh 岗位不支持 rtk 工具资产（rtk 支持列表不含 dsh）');
+        errors.push('dsh 引擎不支持 rtk 工具（rtk 支持列表不含 dsh）');
       }
       // §7.1 硬红线同真物化器：pi 的装备面含 WAO 默认目录（per-bot 命名空间）。
       if (asset?.type === 'tool' && asset?.content?.kind === 'rtk' && provider !== 'dsh' && provider !== 'pi' && dedicatedDirOf(bot) === undefined) {
-        errors.push('rtk 工具资产要求 bot 配置专属目录（claudeConfigDir/codexHome/piAgentDir 之一）——共享用户主目录绝不动用户自己的 settings/hooks');
+        errors.push('rtk 工具要求 bot 配置专属目录（claudeConfigDir/codexHome/piAgentDir 之一）——共享用户主目录绝不动用户自己的 settings/hooks');
       }
       return errors;
     },
@@ -618,15 +618,15 @@ export async function bindAsset(state, botId, { assetId, mode } = {}) {
   if (bot == null) throw fail(404, 'bot not found');
   const asset = findAsset(state, assetId);
   if (asset == null) throw fail(404, 'asset not found');
-  if (mode !== 'shared' && mode !== 'exclusive') throw fail(400, 'mode 必须是 shared（配发）或 exclusive（私发）');
+  if (mode !== 'shared' && mode !== 'exclusive') throw fail(400, 'mode 必须是 shared（共享）或 exclusive（独立）');
   const bindings = Array.isArray(bot.assets) ? bot.assets : [];
   if (bindings.some((b) => isObject(b) && b.assetId === assetId)) {
-    throw fail(400, `资产 ${assetId}（${asset.name}）已绑定到该 bot，请先解绑`);
+    throw fail(400, `工具 ${assetId}（${asset.name}）已绑定到该 bot，请先解绑`);
   }
   // §8.1 MCP 写面分级兜底: Agent-created assets are exclusive-only (their
   // blast radius stays pinned to single-bot snapshots).
   if (asset.origin === 'mcp' && mode !== 'exclusive') {
-    throw fail(400, 'Agent 创建的资产仅可私发（exclusive）绑定');
+    throw fail(400, 'Agent 创建的工具仅可独立（exclusive）绑定');
   }
   const binding = { assetId, mode };
   if (mode === 'exclusive') {
@@ -646,10 +646,10 @@ export async function bindAsset(state, botId, { assetId, mode } = {}) {
   if (supportErrors.length > 0) throw fail(400, supportErrors.join('; '), supportErrors);
   const { plan } = buildPlan(state.assetsDoc.assets, { assets: projected });
   for (const foreign of await state.materializer.detectForeignTargets(bot, plan)) {
-    throw fail(400, `目标已有非 WAO 技能：${foreign.path}；请改资产名或先移除该技能`);
+    throw fail(400, `目标已有非 WAO 技能：${foreign.path}；请改工具名或先移除该技能`);
   }
   for (const conflict of await state.materializer.detectFileConflicts(bot, plan, state.doc.bots)) {
-    throw fail(400, `与 bot ${conflict.botId} 的资产目标文件冲突：${conflict.path}；同目录 bot 请改用专属 config 目录或先解绑`);
+    throw fail(400, `与 bot ${conflict.botId} 的工具目标文件冲突：${conflict.path}；同目录 bot 请改用专属 config 目录或先解绑`);
   }
   // Commit: binding into the bot record (bots.json is the binding store, §2.2).
   bot.assets = projected;
@@ -679,7 +679,7 @@ export async function bindAsset(state, botId, { assetId, mode } = {}) {
     binding: { assetId, mode, name: asset.name, type: asset.type, origin: asset.origin ?? 'operator' },
     ...receipt,
     warnings,
-    ...(suppressed.length > 0 ? { suppressed, suppressedNote: '被私发副本压制（同名单资产存在私发副本，配发条目暂不生效）' } : {}),
+    ...(suppressed.length > 0 ? { suppressed, suppressedNote: '被独立副本压制（同名单工具存在独立副本，共享条目暂不生效）' } : {}),
   };
 }
 
@@ -688,7 +688,7 @@ export async function unbindAsset(state, botId, assetId) {
   if (bot == null) throw fail(404, 'bot not found');
   const bindings = Array.isArray(bot.assets) ? bot.assets : [];
   const index = bindings.findIndex((b) => isObject(b) && b.assetId === assetId);
-  if (index < 0) throw fail(404, `资产 ${assetId} 未绑定到 bot ${botId}`);
+  if (index < 0) throw fail(404, `工具 ${assetId} 未绑定到 bot ${botId}`);
   const [removedBinding] = bindings.splice(index, 1);
   bot.assets = bindings;
   saveBots(state.botsFile, state.doc);

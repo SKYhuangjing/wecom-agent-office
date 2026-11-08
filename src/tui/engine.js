@@ -43,7 +43,7 @@ const backToDashboard = (state, extra = {}) => {
 const selectedAgent = (state) => (state.agents.length === 0
   ? null : state.agents[Math.min(Math.max(0, state.selectedIdx), state.agents.length - 1)]);
 const noEmployees = (state) => ({
-  state: { ...state, notice: { text: '公司还没有员工——按 n 办理入职', kind: 'error' } },
+  state: { ...state, notice: { text: '还没有机器人——按 n 创建机器人', kind: 'error' } },
   effects: [],
 });
 
@@ -94,7 +94,7 @@ export function handleKey(state = {}, ev = {}, deps = {}) {
         state: {
           ...st, mode: 'confirm', notice: null,
           confirm: {
-            text: `确认将 ${sel.name} ${goingOff ? '调休' : '返岗'}？(y/n)`,
+            text: `确认将 ${sel.name} ${goingOff ? '暂停' : '启用'}？(y/n)`,
             kind: 'toggle',
             payload: { botId: sel.id, name: sel.name, toEnabled: !goingOff },
           },
@@ -109,7 +109,7 @@ export function handleKey(state = {}, ev = {}, deps = {}) {
           ...st, mode: 'input', notice: null,
           input: {
             kind: 'test',
-            prompt: `岗前测试 · ${sel.name}——测试问题（空=默认探针「回复：收到」）：`,
+            prompt: `测试运行 · ${sel.name}——测试问题（空=默认探针「回复：收到」）：`,
             value: '', secret: false, botId: sel.id, name: sel.name, err: null,
           },
         },
@@ -159,13 +159,13 @@ export function handleKey(state = {}, ev = {}, deps = {}) {
       }
       if (input.kind === 'bcast-content') {
         if (value.trim() === '') {
-          return { state: { ...st, input: { ...input, err: '广播内容不能为空' } }, effects: [] };
+          return { state: { ...st, input: { ...input, err: '消息内容不能为空' } }, effects: [] };
         }
         return {
           state: {
             ...st, mode: 'confirm', input: null,
             confirm: {
-              text: '将真实发送到该员工的渠道会话，确认？(y/n)',
+              text: '将真实发送到该机器人的渠道会话，确认？(y/n)',
               kind: 'send',
               payload: { botId: input.botId, name: input.name, chatKey: input.chatKey, content: value },
             },
@@ -203,7 +203,7 @@ export function handleKey(state = {}, ev = {}, deps = {}) {
             ...st, mode: 'input', pick: null,
             input: {
               kind: 'bcast-content',
-              prompt: `广播到 ${chosen.value}——内容：`,
+              prompt: `推送到 ${chosen.value}——内容：`,
               value: '', secret: false, botId: pick.botId, name: pick.name, chatKey: chosen.value, err: null,
             },
           },
@@ -257,7 +257,7 @@ export function handleKey(state = {}, ev = {}, deps = {}) {
     if (enter) {
       const value = String(w.fields[field] ?? '').trim();
       if (field !== 'secret' && value === '') {
-        const label = { name: '姓名', cwd: '工位目录', botId: '机器人 ID' }[field] ?? '该字段';
+        const label = { name: '姓名', cwd: '工作目录', botId: '机器人 ID' }[field] ?? '该字段';
         return { state: { ...st, wizard: { ...w, err: `${label}不能为空` } }, effects: [] };
       }
       if (field === 'name' && value.length > 30) {
@@ -292,8 +292,8 @@ export function handleKey(state = {}, ev = {}, deps = {}) {
 // API's own message (透传), success as a green notice / result window /
 // pick list / wizard per effect type.
 const OP_LABELS = {
-  toggle: '调休/返岗', send: '广播', createBot: '入职', test: '岗前测试',
-  ledger: '会话查询', ports: '岗位查询', openUrl: '打开浏览器',
+  toggle: '暂停/启用', send: '推送', createBot: '创建机器人', test: '测试运行',
+  ledger: '会话查询', ports: '引擎查询', openUrl: '打开浏览器',
 };
 export function applyResult(state = {}, effect = {}, result = {}, deps = {}) {
   const st = { ...DEFAULT_STATE, ...state };
@@ -312,7 +312,7 @@ export function applyResult(state = {}, effect = {}, result = {}, deps = {}) {
     case 'toggle': {
       const on = data?.bot?.enabled !== false;
       return noticeState(
-        on ? `🔋 已返岗：${effect.name}（恢复上岗）` : `🌴 已调休：${effect.name}（在途工作收尾后下线）`,
+        on ? `▶️ 已启用：${effect.name}（恢复上线）` : `⏸️ 已暂停：${effect.name}（在途消息收尾后离线）`,
         'ok',
       );
     }
@@ -321,7 +321,7 @@ export function applyResult(state = {}, effect = {}, result = {}, deps = {}) {
         ...backToDashboard(st),
         mode: 'result',
         result: {
-          title: `岗前测试 · ${effect.name}`,
+          title: `测试运行 · ${effect.name}`,
           code: data?.code ?? 'error',
           finalText: data?.finalText ?? '',
           sessionId: data?.sessionId ?? null,
@@ -331,15 +331,15 @@ export function applyResult(state = {}, effect = {}, result = {}, deps = {}) {
         },
       };
     case 'send':
-      return noticeState(`📢 已广播：${effect.name} → ${effect.chatKey}`, 'ok');
+      return noticeState(`📢 已推送：${effect.name} → ${effect.chatKey}`, 'ok');
     case 'createBot': {
-      // 门禁警示同步到回执（评审 W2 T3 #3）：TUI 向导恒以 allowedUsers: []
-      // 入职——按服务端返回核对，空门禁必须与摘要页同文案警示。
+      // 允许用户警示同步到回执（评审 W2 T3 #3）：TUI 向导恒以 allowedUsers: []
+      // 创建——按服务端返回核对，空名单必须与摘要页同文案警示。
       const gateOpen = (Array.isArray(data?.bot?.allowedUsers) ? data.bot.allowedUsers : []).length === 0;
       return noticeState(
-        `🎉 已入职：${data?.bot?.name ?? '?'}（工牌号 ${data?.bot?.id ?? '?'}，调休态）`
-        + `${gateOpen ? '——门禁：未配置=接受任何企微用户发消息' : ''}`
-        + '——到 Web 人事部完善资料，或选中按空格返岗',
+        `🎉 已创建：${data?.bot?.name ?? '?'}（机器人 ID ${data?.bot?.id ?? '?'}，暂停态）`
+        + `${gateOpen ? '——允许用户：未配置=接受任何企微用户发消息' : ''}`
+        + '——到 Web 机器人管理完善资料，或选中按空格启用',
         'ok',
       );
     }
@@ -349,19 +349,19 @@ export function applyResult(state = {}, effect = {}, result = {}, deps = {}) {
       for (const r of rows) {
         if (typeof r?.chatKey === 'string' && r.chatKey !== '') counts.set(r.chatKey, (counts.get(r.chatKey) ?? 0) + 1);
       }
-      if (counts.size === 0) return noticeState(`${effect.name} 还没有会话记录——没有可广播的目标`, 'error');
+      if (counts.size === 0) return noticeState(`${effect.name} 还没有会话记录——没有可推送的目标`, 'error');
       const items = [...counts.entries()].map(([k, n]) => ({ label: `${k}（${n} 轮）`, value: k }));
       return {
         ...backToDashboard(st),
         mode: 'pick',
-        pick: { kind: 'bcast-chat', title: `广播 · 选择目标会话（${effect.name}）`, items, idx: 0, botId: effect.botId, name: effect.name },
+        pick: { kind: 'bcast-chat', title: `推送 · 选择目标会话（${effect.name}）`, items, idx: 0, botId: effect.botId, name: effect.name },
       };
     }
     case 'ports': {
       const channels = Array.isArray(data?.channels) ? data.channels : [];
       const providers = Array.isArray(data?.providers) ? data.providers : [];
-      if (providers.length === 0) return noticeState('没有在册岗位（先启用 provider 插件）——无法办理入职', 'error');
-      if (channels.length === 0) return noticeState('没有在册通道（先启用 channel 插件）——无法办理入职', 'error');
+      if (providers.length === 0) return noticeState('没有可用引擎（先启用 provider 插件）——无法创建机器人', 'error');
+      if (channels.length === 0) return noticeState('没有可用渠道（先启用 channel 插件）——无法创建机器人', 'error');
       const channel = channels[0]; // Web 人事部同款默认：第一个通道
       const genId = deps.genId ?? genBadgeId;
       return {

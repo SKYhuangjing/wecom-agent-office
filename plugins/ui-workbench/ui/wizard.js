@@ -12,10 +12,10 @@ import { fieldsFromSchema, SchemaFields, serializeSchema } from './form.js';
 import { TYPE_LABEL } from './assets.js';
 
 const STEPS = [
-  { key: 'card', title: '名片', sub: '先认识一下：叫什么、长什么样' },
-  { key: 'dept', title: '技能岗位', sub: '它会哪家手艺？' },
-  { key: 'equip', title: '配发装备', sub: '至少配发一件——推荐装备包可一键整包带走' },
-  { key: 'desk', title: '工位与权限', sub: '在哪个目录干活、听谁的' },
+  { key: 'card', title: '基本信息', sub: '机器人叫什么、头像长什么样' },
+  { key: 'dept', title: 'Agent 引擎', sub: '选择驱动它的引擎（provider）' },
+  { key: 'equip', title: '配置工具', sub: '至少配置一件——推荐工具包可一键整包勾选' },
+  { key: 'desk', title: '工作目录与权限', sub: '在哪个目录工作、允许谁使用' },
   { key: 'channel', title: '通信渠道', sub: '选择机器人接入哪个 IM 平台' },
 ];
 const NAME_MAX = 30;
@@ -27,14 +27,14 @@ const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 const CHANNEL_META = {
   wecom: {
     label: '企业微信', color: '#0082EF', tech: 'wecom · 企业微信机器人',
-    blurb: '公司群里 @ 它或私聊它都能接单——填上机器人凭证，工牌就激活了。',
+    blurb: '企微群里 @ 它或私聊它都能对话——填上机器人凭证，连接即配置完成。',
     // R4: 凭证零指路——拿到 Bot ID / Secret 的路径写在这里，别让维护者猜。
     guide: '凭证获取：在企微管理后台 → 应用管理 → 智能机器人 中创建 API 模式机器人，获取 Bot ID 和 Secret。',
   },
 };
 const channelMeta = (id) => (CHANNEL_META[id] ?? {
   label: id || '未选渠道', color: 'var(--pv-unknown)', tech: id ?? '—',
-  blurb: '来自外部部门的通信渠道。',
+  blurb: '来自外部的通信渠道。',
 });
 
 // 推荐装备包（v2）：按资产类型分组一键整包勾选。前三类是主力装备（产品口径）；
@@ -43,7 +43,7 @@ const channelMeta = (id) => (CHANNEL_META[id] ?? {
 const EQUIP_PACKS = [
   { type: 'skill', icon: '📘', label: '技能' },
   { type: 'mcp', icon: '🔌', label: '工具连接' },
-  { type: 'tool', icon: '🛠️', label: '效率装备' },
+  { type: 'tool', icon: '🛠️', label: '效率工具' },
 ];
 const packMeta = (type) => EQUIP_PACKS.find((p) => p.type === type)
   ?? { type, icon: '📦', label: TYPE_LABEL[type] ?? type };
@@ -111,17 +111,17 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
     if (which === 0) {
       if (draft.name.trim() === '') errs.push('姓名必填');
       else if (draft.name.length > NAME_MAX) errs.push(`姓名过长（≤${NAME_MAX} 字）`);
-      if (draft.id.trim() === '') errs.push('工牌号必填');
-      else if (!ID_RE.test(draft.id.trim())) errs.push('工牌号仅限小写字母/数字/连字符，且以字母或数字开头');
-      else if (existingIds.has(draft.id.trim())) errs.push(`工牌号已被占用：${draft.id.trim()}`);
+      if (draft.id.trim() === '') errs.push('机器人 ID 必填');
+      else if (!ID_RE.test(draft.id.trim())) errs.push('机器人 ID 仅限小写字母/数字/连字符，且以字母或数字开头');
+      else if (existingIds.has(draft.id.trim())) errs.push(`机器人 ID 已被占用：${draft.id.trim()}`);
     }
-    if (which === 1 && draft.provider === '') errs.push('请选择一个技能岗位');
+    if (which === 1 && draft.provider === '') errs.push('请选择一个 Agent 引擎');
     if (which === 2) {
       // v2 必选：至少一件。两种「无装备可配」放行——公司一件资产都没登记过
       // （新部署；资产面故障同样回空清单，不能拦入职），或所选岗位不支持装
       // 备（整面已禁勾，不能卡死入职）。
       if (assets != null && assets.length > 0 && providerSupportsAssets && draft.equip.length === 0) {
-        errs.push('请至少配发一件装备——新同事不能什么都不会');
+        errs.push('请至少配置一件工具——新机器人不能什么都不会');
       }
     }
     if (which === 3) {
@@ -184,25 +184,25 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
           h('div', { className: 'wb-badgecard-name' }, done.name || done.id),
           h('div', { className: 'wb-sub' }, `${meta.label} · ${meta.dept}`),
           h('div', { className: 'wb-badgecard-rows' },
-            h('div', null, h('span', { className: 'wb-sub' }, '工牌号 '), h('span', { className: 'wb-mono' }, done.id)),
-            h('div', null, h('span', { className: 'wb-sub' }, '入职日期 '), h('span', null, joined ?? '今天')),
-            h('div', null, h('span', { className: 'wb-sub' }, '状态 '), h('span', null, '已上岗，工牌激活成功'))),
+            h('div', null, h('span', { className: 'wb-sub' }, '机器人 ID '), h('span', { className: 'wb-mono' }, done.id)),
+            h('div', null, h('span', { className: 'wb-sub' }, '创建日期 '), h('span', null, joined ?? '今天')),
+            h('div', null, h('span', { className: 'wb-sub' }, '状态 '), h('span', null, '已启用，连接配置成功'))),
           h('div', { className: 'wb-hint' },
-            done.createdAt == null ? '（老数据没有入职日期记录，从今天开始记）' : null))),
+            done.createdAt == null ? '（老数据没有创建日期记录，从今天开始记）' : null))),
       bindFailures.length > 0 ? h('div', { className: 'wb-notice' },
-        h('div', null, `${bindFailures.length} 件装备未配成——同事已入职，可稍后到资产科装备台补配：`),
+        h('div', null, `${bindFailures.length} 件工具未配置成功——机器人已创建，可稍后到工具库的「工具配置」补配：`),
         h('ul', { className: 'wb-offboard-list' }, bindFailures.map((f, i) => h('li', { key: i }, f)))) : null,
       draft.equip.length > 0 && bindFailures.length === 0
-        ? h('p', { className: 'wb-hint' }, `已随入职配发 ${draft.equip.length} 件装备（${draft.equipMode === 'exclusive' ? '私发' : '配发'}）。`)
+        ? h('p', { className: 'wb-hint' }, `已随创建配置 ${draft.equip.length} 件工具（${draft.equipMode === 'exclusive' ? '独立' : '共享'}）。`)
         : null,
       h('div', { className: 'wb-toolbar' },
-        h('a', { className: 'wb-btn wb-btn-primary', href: '#/office3d' }, '去办公室看看'),
-        h('button', { className: 'wb-btn', onClick: () => onOpenFile(done.id) }, '查看员工档案'),
+        h('a', { className: 'wb-btn wb-btn-primary', href: '#/office3d' }, '去办公室 3D 看看'),
+        h('button', { className: 'wb-btn', onClick: () => onOpenFile(done.id) }, '查看机器人配置'),
         h('button', {
           className: 'wb-btn', onClick: () => { onDone(); },
-        }, '回人事部')),
+        }, '回机器人管理')),
       h('p', { className: 'wb-hint' },
-        '它已经在办公室里了——若渠道凭证有误，它会先显示休假并在原因里说明，改好凭证即可返岗。'));
+        '它已经创建完成——若渠道凭证有误，它会先显示离线并在原因里说明，改好凭证即可启用。'));
   }
 
   const errs = stepErrors();
@@ -226,21 +226,21 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
   if (step === 0) {
     body = h('div', { className: 'wb-form', style: { maxWidth: 520 } },
       h('div', { className: 'wb-wizard-card-row' },
-        h(Avatar, { WAO, seed: draft.id || 'preview', size: 88, ring: 'var(--pv-unknown)', title: '这副面孔由工牌号决定，跟着它一生' }),
+        h(Avatar, { WAO, seed: draft.id || 'preview', size: 88, ring: 'var(--pv-unknown)', title: '这副面孔由机器人 ID 决定，跟着它一生' }),
         h('div', { className: 'wb-field', style: { flex: 1 } },
           h('label', null, '姓名', h('span', { className: 'wb-req' }, ' *')),
           h('input', {
             className: 'wb-input', value: draft.name, maxLength: NAME_MAX,
-            placeholder: '同事们怎么称呼它，如「阿澈」',
+            placeholder: '给它起个名字，如「阿澈」',
             onChange: (e) => setDraft({ ...draft, name: e.target.value }),
           }),
           h('span', { className: `wb-counter${draft.name.length > NAME_MAX ? ' over' : ''}` }, `${draft.name.length} / ${NAME_MAX}`)),
         h('button', {
-          className: 'wb-btn', title: '换一副面孔（会换一个未占用的工牌号）',
+          className: 'wb-btn', title: '换一副面孔（会换一个未占用的机器人 ID）',
           onClick: () => setDraft({ ...draft, id: rollBadgeId(existingIds) }),
         }, '🎲 换一副面孔')),
       h('div', { className: 'wb-field' },
-        h('label', null, '工牌号', h('span', { className: 'wb-req' }, ' *'),
+        h('label', null, '机器人 ID', h('span', { className: 'wb-req' }, ' *'),
           h('span', { className: 'wb-hint', style: { marginLeft: 8 } }, '技术标识 bot id，创建后不可修改，也决定它的长相')),
         h('input', {
           className: 'wb-input wb-mono', value: draft.id,
@@ -250,8 +250,8 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
   } else if (step === 1) {
     body = h('div', null,
       h('div', { className: 'wb-dept-grid' }, providerCards.length > 0 ? providerCards
-        : h('div', { className: 'wb-notice' }, '没有可用的技能岗位（provider 插件）——请先到后勤部门启用至少一个岗位部门。')),
-      h('p', { className: 'wb-hint' }, '岗位=provider：决定它用什么工具干活。入职后可转岗（历史对话仅文本问答对迁移）。'));
+        : h('div', { className: 'wb-notice' }, '没有可用的 Agent 引擎（provider 插件）——请先到插件管理启用至少一个引擎插件。')),
+      h('p', { className: 'wb-hint' }, '引擎=provider：决定它用什么工具干活。创建后可更换引擎（历史对话仅文本问答对迁移）。'));
   } else if (step === 2) {
     // 第 3 步（v2 必选）：配发装备。推荐装备包按类型分组一键整包勾选，逐件
     // 清单仍可精挑（默认配发·跟源更新，与装备台口径一致）。至少一件才能下一
@@ -275,15 +275,15 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
     const mcpOnly = (a) => a.origin === 'mcp'; // Agent 自建资产仅可私发
     body = h('div', { className: 'wb-form', style: { maxWidth: 620 } },
       assets == null
-        ? h('p', { className: 'muted' }, '盘点资产清单中…')
+        ? h('p', { className: 'muted' }, '读取工具清单中…')
         : assets.length === 0
           ? h('div', { className: 'wb-notice' },
-              '平台暂无可配装备，可直接入职，之后到资产科登记')
+              '平台暂无可配置的工具，可直接创建，之后到工具库添加')
           : h('div', null,
               !providerSupportsAssets ? h('div', { className: 'wb-notice', style: { marginBottom: 8 } },
-                `该岗位暂不支持装备（${draft.provider} 未实现资产物化）——这步先过，入职后转岗或到资产科处理。`) : null,
+                `该引擎暂不支持工具配置（${draft.provider} 未实现工具物化）——这步先过，创建后更换引擎或到工具库处理。`) : null,
               providerSupportsAssets ? h('div', { className: 'wb-field' },
-                h('label', null, '推荐装备包', h('span', { className: 'wb-hint', style: { marginLeft: 8 } }, '按类型一键整包勾选 / 收起')),
+                h('label', null, '推荐工具包', h('span', { className: 'wb-hint', style: { marginLeft: 8 } }, '按类型一键整包勾选 / 收起')),
                 h('div', { className: 'wb-toolbar', style: { flexWrap: 'wrap' } },
                   packGroups.map((g) => {
                     const allOn = g.list.every((a) => draft.equip.includes(a.id));
@@ -299,7 +299,7 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
                     const disabled = !providerSupportsAssets;
                     return h('label', {
                       key: a.id, className: 'wb-check', style: { alignItems: 'flex-start', ...(disabled ? { opacity: 0.55 } : {}) },
-                      title: disabled ? '该岗位暂不支持装备'
+                      title: disabled ? '该引擎暂不支持工具配置'
                         : `${a.type} · ${a.name}${a.description ? ` · ${a.description}` : ''}`,
                     },
                       h('input', {
@@ -309,20 +309,20 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
                       h('span', null,
                         h('span', { className: `badge wb-atype-${a.type}` }, TYPE_LABEL[a.type] ?? a.type), ' ',
                         h('span', { className: 'wb-mono' }, a.name),
-                        disabled ? h('span', { className: 'wb-hint' }, '（该岗位暂不支持装备）')
-                          : mcpOnly(a) ? h('span', { className: 'wb-hint' }, '（Agent 自建·仅可私发）') : null,
+                        disabled ? h('span', { className: 'wb-hint' }, '（该引擎暂不支持工具配置）')
+                          : mcpOnly(a) ? h('span', { className: 'wb-hint' }, '（Agent 自建·仅可独立）') : null,
                         a.description ? h('div', { className: 'wb-hint' }, a.description) : null));
                   })),
                 h('div', { className: 'wb-field', style: { maxWidth: 360 } },
-                  h('label', null, '配发方式', h('span', { className: 'wb-hint', style: { marginLeft: 8 } }, '对上面勾选的每件资产生效（Agent 自建资产固定私发）')),
+                  h('label', null, '绑定方式', h('span', { className: 'wb-hint', style: { marginLeft: 8 } }, '对上面勾选的每件工具生效（Agent 自建工具固定独立）')),
                   h('select', {
                     className: 'wb-select', value: draft.equipMode,
                     onChange: (e) => setDraft((d) => ({ ...d, equipMode: e.target.value })),
                   },
-                    h('option', { value: 'shared' }, '配发（默认·跟源更新）'),
-                    h('option', { value: 'exclusive' }, '私发（快照独立，不随源改动漂移）')))),
+                    h('option', { value: 'shared' }, '共享（默认·跟源更新）'),
+                    h('option', { value: 'exclusive' }, '独立（快照隔离，不随源改动漂移）')))),
               h('p', { className: 'wb-hint' },
-                '装备会写进它的工位（技能文件/配置/钩子），下一轮接单即可用；至少配发一件——整包配发后仍可逐件微调。')));
+                '工具会写进它的工作目录（技能文件/配置/钩子），下一轮对话即可用；至少配置一件——整包勾选后仍可逐件微调。')));
   } else if (step === 3) {
     const required = (providerSchema ?? []).filter((it) => it?.required === true);
     const hasCwd = (providerSchema ?? []).some((it) => it?.key === 'cwd');
@@ -334,15 +334,15 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
       // R4: cwd 缺失会让 spawn 报 ENOENT、看着像 CLI 没装——前端先说清楚：
       // 目录要已存在（后端提交时也会校验并拒绝）。
       hasCwd ? h('p', { className: 'wb-hint' },
-        '工作目录（cwd）确认目录已存在——wao 不会替你创建；目录缺失时办理入职会被拒绝（工作目录不存在：<路径>）。') : null,
+        '工作目录（cwd）确认目录已存在——wao 不会替你创建；目录缺失时创建机器人会被拒绝（工作目录不存在：<路径>）。') : null,
       h('div', { className: 'wb-field' },
-        h('label', null, '门禁名单（allowedUsers）', h('span', { className: 'wb-hint', style: { marginLeft: 8 } }, '每行一个企微 userid；留空＝公司群里所有人都可以找它')),
+        h('label', null, '允许用户（allowedUsers）', h('span', { className: 'wb-hint', style: { marginLeft: 8 } }, '每行一个企微 userid；留空＝企微群里所有人都可以找它')),
         h('textarea', {
           className: 'wb-textarea', rows: 3, value: draft.allowedUsers,
           placeholder: '每行一个 userid，如\nzhangsan\nlisi',
           onChange: (e) => setDraft({ ...draft, allowedUsers: e.target.value }),
         })),
-      h('p', { className: 'wb-hint' }, '其余岗位参数按默认值入职，之后可在员工档案里细调。'));
+      h('p', { className: 'wb-hint' }, '其余引擎参数按默认值创建，之后可在机器人配置里细调。'));
   } else {
     // 第 5 步（v2 渠道化）：先选 IM 渠道（卡片，同技能岗位样式），选中后在其
     // 下方按该渠道 accountSchema 动态渲染凭证字段（/api/ports channels——目前
@@ -365,17 +365,17 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
     const chosen = channelMeta(draft.channel);
     body = h('div', { className: 'wb-form', style: { maxWidth: 560 } },
       h('div', { className: 'wb-dept-grid' }, channelCards.length > 0 ? channelCards
-        : h('div', { className: 'wb-notice' }, '没有可用的通信渠道（channel 插件）——请先到后勤部门启用至少一个渠道。')),
+        : h('div', { className: 'wb-notice' }, '没有可用的通信渠道（channel 插件）——请先到插件管理启用至少一个渠道。')),
       channels.length > 1 ? h('p', { className: 'wb-hint' }, '换渠道会按新渠道的凭证表单重新填写。') : null,
       draft.channel !== '' ? h('p', { className: 'wb-hint' },
-        `${chosen.label}机器人凭证（channel-${draft.channel} 账号）——这是它的工牌，刷开${chosen.label}的门。`) : null,
+        `${chosen.label}机器人凭证（channel-${draft.channel} 账号）——填好凭证即可连接${chosen.label}。`) : null,
       draft.channel !== '' && chosen.guide != null ? h('p', { className: 'wb-hint' }, chosen.guide) : null,
       draft.channel !== '' ? h(SchemaFields, {
         WAO, schema: channelSchema, state: draft.account, editingExisting: false,
         onChange: (account) => setDraft({ ...draft, account }),
       }) : null,
       submitErrors != null ? h('div', { className: 'wb-error-box' },
-        h('div', null, '办理入职未通过：'),
+        h('div', null, '创建机器人未通过：'),
         h('ul', null, submitErrors.map((e, i) => h('li', { key: i }, e)))) : null);
   }
 
@@ -403,7 +403,7 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
         : h('button', {
           className: 'wb-btn wb-btn-primary', disabled: submitting || errs.length > 0,
           onClick: () => void submit(),
-        }, submitting ? '办理中…' : '办理入职')));
+        }, submitting ? '创建中…' : '创建机器人')));
 };
 
 export default Wizard;

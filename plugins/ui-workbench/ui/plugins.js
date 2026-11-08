@@ -8,7 +8,7 @@
 import { ensurePageStyle } from './style.js';
 
 const STATUS_LABEL = { active: '运行中', disabled: '已停用', failed: '加载失败' };
-const TYPE_LABEL = { core: '内核', channel: '渠道', provider: '岗位部门', ui: '门面', middleware: '中间件', progressor: '进度器' };
+const TYPE_LABEL = { core: '内核', channel: '渠道', provider: '引擎插件', ui: '页面', middleware: '中间件', progressor: '进度器' };
 
 // pluginId → { channels: [portId], providers: [portId] } from /api/ports
 // owners. A null owner falls back to the port id itself (older data).
@@ -37,7 +37,7 @@ const affectedBots = (plugin, agents, ownedPorts) => {
 
 export default {
   id: 'plugins',
-  title: '后勤部门',
+  title: '插件管理',
   icon: '🧰',
   order: 6,
   component({ WAO }) {
@@ -111,7 +111,7 @@ export default {
     };
 
     if (plugins == null && error == null) {
-      return h('div', { className: 'page' }, h('h2', null, '后勤部门'), h('p', { className: 'muted' }, '点名中…'));
+      return h('div', { className: 'page' }, h('h2', null, '插件管理'), h('p', { className: 'muted' }, '读取中…'));
     }
 
     const askDisable = (plugin) => setConfirm({ kind: 'disable', plugin });
@@ -121,20 +121,20 @@ export default {
       h('div', { className: 'wb-modal', onClick: (e) => e.stopPropagation() },
         confirm.kind === 'disable'
           ? h('div', null,
-              h('h3', null, `让 ${confirm.plugin.id}${confirm.plugin.name ? `（${confirm.plugin.name}）` : ''} 休假？`),
+              h('h3', null, `停用 ${confirm.plugin.id}${confirm.plugin.name ? `（${confirm.plugin.name}）` : ''}？`),
               affected.length > 0
                 ? h('div', { className: 'wb-notice' },
-                    `这个${TYPE_LABEL[confirm.plugin.type] ?? confirm.plugin.type}支撑着 ${affected.length} 位同事的岗位（${affected.map((a) => a.name ?? a.id).join('、')}）——停用后他们会立即离岗，手上在跑的活会以维护说明收尾。`)
-                : h('p', { className: 'wb-hint' }, '停用会走四阶段部门重组：先让在跑的活收尾，再卸载这个部门。当前没有同事直接依赖它。'))
+                    `这个${TYPE_LABEL[confirm.plugin.type] ?? confirm.plugin.type}支撑着 ${affected.length} 个机器人（${affected.map((a) => a.name ?? a.id).join('、')}）——停用后它们会立即离线，手上在跑的活会以维护说明收尾。`)
+                : h('p', { className: 'wb-hint' }, '停用会走四阶段重载：先让在跑的活收尾，再卸载这个插件。当前没有机器人直接依赖它。'))
           : h('div', null,
-              h('h3', null, '部门重组？'),
-              h('div', { className: 'wb-notice' }, '重组会中断正在运行的工单（用户会收到维护提示），随后全部部门按依赖顺序重新开张。')),
+              h('h3', null, '重新加载全部插件？'),
+              h('div', { className: 'wb-notice' }, '重载会中断正在运行的消息（用户会收到维护提示），随后全部插件按依赖顺序重新加载。')),
         h('div', { className: 'wb-toolbar' },
           h('button', {
             className: 'wb-btn wb-btn-primary',
             disabled: busyId != null || reloading,
             onClick: () => (confirm.kind === 'disable' ? void act(confirm.plugin, 'disable') : void doReload()),
-          }, busyId != null || reloading ? '执行中…' : confirm.kind === 'disable' ? '确认停用' : '确认重组'),
+          }, busyId != null || reloading ? '执行中…' : confirm.kind === 'disable' ? '确认停用' : '确认重载'),
           h('button', { className: 'wb-btn', disabled: busyId != null || reloading, onClick: () => setConfirm(null) }, '取消'))));
 
     const pluginRow = (p) => h('tr', { key: p.id },
@@ -157,25 +157,25 @@ export default {
           : h('button', {
               className: 'wb-btn', disabled: busyId === p.id,
               onClick: () => void act(p, 'enable'),
-              title: p.status === 'disabled' ? '重新启用并四阶段部门重组' : undefined,
+              title: p.status === 'disabled' ? '重新启用并四阶段重载' : undefined,
             }, busyId === p.id ? '处理中…' : '启用')));
 
     const table = plugins == null || plugins.length === 0 ? null : h('table', { className: 'wb-table' },
       h('thead', null, h('tr', null,
-        h('th', null, '部门'), h('th', null, '类型'), h('th', null, '版本'), h('th', null, '状态'), h('th', null, '操作'))),
+        h('th', null, '插件'), h('th', null, '类型'), h('th', null, '版本'), h('th', null, '状态'), h('th', null, '操作'))),
       h('tbody', null, plugins.map(pluginRow)));
 
     return h('div', { className: 'page' },
-      h('h2', null, '后勤部门'),
-      h('p', { className: 'muted' }, '公司的水电班底：渠道、岗位部门、门面都在这张表上'),
+      h('h2', null, '插件管理'),
+      h('p', { className: 'muted' }, '系统的基础组件：渠道、引擎、页面都在这张表上'),
       h('div', { className: 'wb-toolbar' },
         h('button', { className: 'wb-btn', disabled: reloading, onClick: () => setConfirm({ kind: 'reload' }) },
-          reloading ? '重组中…' : '部门重组'),
+          reloading ? '重载中…' : '重新加载'),
         h('button', { className: 'wb-btn', disabled: reloading, onClick: () => void refresh() }, '刷新')),
-      h('p', { className: 'wb-hint' }, '启停即时生效（写 plugins.json 并触发四阶段重组）；停用岗位/渠道部门会带走依赖它的同事。'),
+      h('p', { className: 'wb-hint' }, '启停即时生效（写 plugins.json 并触发四阶段重载）；停用引擎/渠道插件会带走依赖它的机器人。'),
       error != null ? h('div', { className: 'error', style: { marginTop: 12 } }, error) : null,
       table == null && error == null
-        ? h('div', { className: 'wb-empty' }, h('p', null, '一间没有后勤的公司跑不起来——检查插件目录与 plugins.json 启停表。'))
+        ? h('div', { className: 'wb-empty' }, h('p', null, '一个插件都没有——检查插件目录与 plugins.json 启停表。'))
         : table,
       modal);
   },

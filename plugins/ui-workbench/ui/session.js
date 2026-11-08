@@ -45,9 +45,9 @@ const TurnCard = ({ h, row, onSession }) => h('div', { key: row.seq, className: 
     row.provider ? h('span', null, row.provider) : null,
     row.sessionId ? h('button', {
       className: 'wb-chip',
-      title: '调阅这张工单所属的原生档案（provider session）',
+      title: '查看这条消息所属的引擎会话（provider session）',
       onClick: () => onSession(row.sessionId),
-    }, `原生档案 ${row.sessionId}`) : null),
+    }, `引擎会话 ${row.sessionId}`) : null),
   h('div', null,
     h('span', { className: 'wb-turn-role' }, '用户：'),
     h('div', { className: 'wb-turn-user' }, row.user || '（空）')),
@@ -57,7 +57,7 @@ const TurnCard = ({ h, row, onSession }) => h('div', { key: row.seq, className: 
 
 export default {
   id: 'session',
-  title: '工作档案室',
+  title: '会话历史',
   icon: '🗄️',
   order: 4,
   component({ WAO }) {
@@ -153,13 +153,13 @@ export default {
 
     if (agentsError != null) {
       return h('div', { className: 'page' },
-        h('h2', null, '工作档案室'),
-        h('div', { className: 'error' }, bannerText('加载同事列表失败：', agentsError)));
+        h('h2', null, '会话历史'),
+        h('div', { className: 'error' }, bannerText('加载机器人列表失败：', agentsError)));
     }
     if (agents.length === 0) {
       return h('div', { className: 'page' },
-        h('h2', null, '工作档案室'),
-        h('div', { className: 'wb-empty' }, h('p', null, '档案柜还是空的——去人事部办一位同事入职，它的第一张工单就会存进这里。')));
+        h('h2', null, '会话历史'),
+        h('div', { className: 'wb-empty' }, h('p', null, '还没有会话记录——去机器人管理创建一个机器人，它的第一条消息就会存进这里。')));
     }
 
     const agent = agents.find((a) => a.id === botId) ?? null;
@@ -177,42 +177,42 @@ export default {
     if (view === 'ledger') {
       body = h('div', null,
         h('div', { className: 'wb-field', style: { maxWidth: 560 } },
-          h('label', null, '与谁的往来', h('span', { className: 'wb-hint', style: { marginLeft: 8 } }, '部门群/同事 chatKey，按最近活跃排序')),
+          h('label', null, '与谁的往来', h('span', { className: 'wb-hint', style: { marginLeft: 8 } }, '群聊/单聊 chatKey，按最近活跃排序')),
           chats.length === 0
-            ? h('div', { className: 'wb-hint' }, loading ? '翻档案中…' : '这位同事还没有档案——部门群里来过第一句话后才会立卷。')
+            ? h('div', { className: 'wb-hint' }, loading ? '读取中…' : '这个机器人还没有会话记录——群里来过第一句话后才会产生记录。')
             : h('select', {
               className: 'wb-select', value: chatKey, onChange: (e) => setChatKey(e.target.value),
             }, chats.map((c) => h('option', { key: c.chatKey, value: c.chatKey },
               `${c.chatKey}（${c.count} 轮）`)))),
         chatRows.length === 0
-          ? (chats.length === 0 ? null : h('div', { className: 'wb-empty' }, h('p', null, '这一卷档案还没有工单。')))
+          ? (chats.length === 0 ? null : h('div', { className: 'wb-empty' }, h('p', null, '这个会话还没有消息记录。')))
           : h('div', { className: 'wb-turns' }, chatRows.map((r) => h(TurnCard, { key: r.seq, h, row: r, onSession: openNative }))));
     } else {
       body = h('div', null,
         h('div', { className: 'wb-toolbar' },
           h('input', {
             className: 'wb-input', style: { maxWidth: 420, fontFamily: 'ui-monospace, Menlo, Consolas, monospace' },
-            value: sessionId, placeholder: '原生档案编号（provider session id）',
+            value: sessionId, placeholder: '引擎会话编号（provider session id）',
             onChange: (e) => setSessionId(e.target.value),
             onKeyDown: (e) => { if (e.key === 'Enter') void loadNative(sessionId.trim()); },
           }),
           h('button', {
             className: 'wb-btn wb-btn-primary', disabled: nativeLoading || sessionId.trim() === '',
             onClick: () => void loadNative(sessionId.trim()),
-          }, nativeLoading ? '调档中…' : '调阅档案')),
-        h('p', { className: 'wb-hint' }, '编号可在工作档案里点某张工单的「原生档案」带入；调阅的是 provider 本地会话文件（最近若干轮）。'),
-        nativeError != null ? h('div', { className: 'error', style: { marginTop: 12 } }, `调阅原生档案失败：${nativeError}`) : null,
+          }, nativeLoading ? '读取中…' : '查看会话')),
+        h('p', { className: 'wb-hint' }, '编号可在会话历史里点某条消息的「引擎会话」带入；查看的是 provider 本地会话文件（最近若干轮）。'),
+        nativeError != null ? h('div', { className: 'error', style: { marginTop: 12 } }, `查看引擎会话失败：${nativeError}`) : null,
         native != null ? h('div', { className: 'wb-turns' },
-          native.truncated ? h('div', { className: 'wb-truncated-note' }, '这份档案较厚，只展示了最近的部分。') : null,
+          native.truncated ? h('div', { className: 'wb-truncated-note' }, '这份会话较长，只展示了最近的部分。') : null,
           native.warnings.map((w, i) => h('div', { key: i, className: 'wb-truncated-note' }, `警告：${humanizeWarning(w)}`)),
           native.turns.length === 0 && native.warnings.length === 0
-            ? h('div', { className: 'wb-empty' }, h('p', null, '这份档案里没有可读的记录。'))
+            ? h('div', { className: 'wb-empty' }, h('p', null, '这份会话里没有可读的记录。'))
             : native.turns.map(nativeTurn)) : null);
     }
 
     return h('div', { className: 'page' },
-      h('h2', null, '工作档案室'),
-      h('p', { className: 'muted' }, '每位同事经手的工单与往来记录，按部门群/同事归档'),
+      h('h2', null, '会话历史'),
+      h('p', { className: 'muted' }, '每个机器人的消息与会话记录，按群聊/单聊归档'),
       h('div', { className: 'wb-toolbar' },
         h('select', {
           className: 'wb-select', style: { width: 'auto' }, value: botId ?? '',
@@ -222,17 +222,17 @@ export default {
         h('div', { className: 'wb-tabs' },
           h('button', {
             className: `wb-tab${view === 'ledger' ? ' active' : ''}`, onClick: () => setView('ledger'),
-          }, '工作档案'),
+          }, '会话历史'),
           h('button', {
             className: `wb-tab${view === 'native' ? ' active' : ''}`, onClick: () => setView('native'),
-          }, '原生档案')),
+          }, '引擎会话')),
         agent != null ? h('a', {
           className: 'wb-btn', href: `/api/export?bot=${encodeURIComponent(botId)}`,
-          download: `${botId}-ledger.md`, title: '下载这位同事的全部工作档案（台账 Markdown）',
-        }, '导出工作档案') : null),
-      agent?.provider != null ? h('p', { className: 'wb-hint' }, `当前岗位：${agent.provider}（转岗后，同一往来的原生档案按各自岗位分开保存）`) : null,
+          download: `${botId}-ledger.md`, title: '下载这个机器人的全部会话历史（台账 Markdown）',
+        }, '导出会话历史') : null),
+      agent?.provider != null ? h('p', { className: 'wb-hint' }, `当前引擎：${agent.provider}（更换引擎后，同一会话的引擎会话按各自引擎分开保存）`) : null,
       loadError != null ? h('div', { className: 'error', style: { marginTop: 12 } },
-        `调档失败：${loadError} `,
+        `读取失败：${loadError} `,
         h('button', { className: 'wb-btn', onClick: () => void reload() }, '重试')) : null,
       body);
   },

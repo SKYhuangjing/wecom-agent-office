@@ -857,7 +857,7 @@ async function updateAssetOp(state, id, patchBody, { mcpFace = false } = {}) {
   // §8.1 MCP 写面分级: the Agent face is read-only towards 配发 assets —
   // shared-pool changes belong to the console/REST.
   if (mcpFace && asset.origin !== 'mcp') {
-    throw httpError(403, '共享（配发）资产的改动请走控制台/REST（本写面仅允许改动 Agent 自建资产）');
+    throw httpError(403, '共享（shared）工具的改动请走控制台/REST（本写面仅允许改动 Agent 自建工具）');
   }
   for (const k of SERVER_SET_FIELDS) {
     if (patchBody[k] !== undefined) throw httpError(400, `${k} is set by the server, not accepted`);
@@ -865,7 +865,7 @@ async function updateAssetOp(state, id, patchBody, { mcpFace = false } = {}) {
   // Type is the binding contract (provider×type support, materialization
   // targets) — retyping a bound asset is refused, not remapped.
   if (patchBody.type !== undefined && patchBody.type !== asset.type) {
-    throw httpError(400, '资产类型不可变更（type immutable）');
+    throw httpError(400, '工具类型不可变更（type immutable）');
   }
   if (patchBody.content !== undefined && !isObject(patchBody.content)) {
     throw httpError(400, 'content must be a JSON object');
@@ -883,7 +883,7 @@ async function updateAssetOp(state, id, patchBody, { mcpFace = false } = {}) {
   // cross-bot conflict matrix ever seeing it. Unbind shared first.
   if (botsBoundTo(state, id, 'shared').length > 0
     && structuralKeysOf(asset.type, asset.content).join('\u0000') !== structuralKeysOf(merged.type, merged.content).join('\u0000')) {
-    throw httpError(400, '该资产有配发绑定，改名需先解绑（避免跨员工文件冲突）');
+    throw httpError(400, '该工具有共享绑定，改名需先解绑（避免跨机器人文件冲突）');
   }
   const errors = validateAsset(merged, { others: state.assetsDoc.assets.filter((a) => a !== asset) });
   if (errors.length > 0) {
@@ -905,7 +905,7 @@ async function deleteAssetOp(state, id, { mcpFace = false } = {}) {
   const asset = findAsset(state, id);
   if (asset == null) throw httpError(404, 'asset not found');
   if (mcpFace && asset.origin !== 'mcp') {
-    throw httpError(403, '共享（配发）资产的删除请走控制台/REST（本写面仅允许删除 Agent 自建资产）');
+    throw httpError(403, '共享（shared）工具的删除请走控制台/REST（本写面仅允许删除 Agent 自建工具）');
   }
   // §3.2 DELETE row: shared bindings go (and their bots rematerialize the
   // cleanup); exclusive bindings KEEP their snapshots and keep working.
@@ -930,7 +930,7 @@ async function deleteAssetOp(state, id, { mcpFace = false } = {}) {
     removedBindings,
     keptExclusive,
     ...receipt,
-    ...(keptExclusive > 0 ? { note: `源资产已删除，${keptExclusive} 个私发（exclusive）副本仍生效（快照保留在各自 bot 记录中）` } : {}),
+    ...(keptExclusive > 0 ? { note: `源工具已删除，${keptExclusive} 个独立（exclusive）副本仍生效（快照保留在各自 bot 记录中）` } : {}),
   };
 }
 

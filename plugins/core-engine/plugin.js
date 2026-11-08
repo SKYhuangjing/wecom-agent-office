@@ -272,7 +272,7 @@ export default {
         const hasChannel = ports?.getChannel?.(bot.channel) != null;
         const hasProvider = ports?.getProvider?.(bot.provider) != null;
         if (adapters.has(bot.id) && (!hasChannel || !hasProvider)) {
-          detach(bot.id, !hasChannel ? `channel ${bot.channel} 已禁用` : `provider ${bot.provider} 已禁用`);
+          detach(bot.id, !hasChannel ? `渠道 ${bot.channel} 已停用` : `引擎 ${bot.provider} 已停用`);
         } else if (!adapters.has(bot.id) && hasChannel && hasProvider) {
           attach(bot);
         }

@@ -31,18 +31,18 @@ const agent = (over = {}) => ({
   ...over,
 });
 
-test('computeFrame: 顶栏打卡钟 — 活钟 · 在岗 N/M · 今日工单 X', () => {
+test('computeFrame: 顶栏状态栏 — 活钟 · 在线 N/M · 今日消息 X', () => {
   const frame = computeFrame({
     agents: [agent({ todayTurns: 3 }), agent({ id: 'a2', name: 'Sky 分身 2', todayTurns: 2 })],
     now: NOW, connected: true, selectedIdx: 0, logTail: [],
   });
   assert.equal(frame.length, 24);
-  assert.equal(strip(frame[0]), 'WAO 公司 │ ⏰ 14:23:05 │ 在岗 2/2 │ 今日工单 5');
+  assert.equal(strip(frame[0]), 'WAO Console │ ⏰ 14:23:05 │ 在线 2/2 │ 今日消息 5');
 });
 
-test('computeFrame: 空名册提示办理入职', () => {
+test('computeFrame: 空名册提示创建机器人', () => {
   const frame = computeFrame({ agents: [], now: NOW, connected: true, logTail: [] });
-  assert.ok(frameText(frame).includes('公司还没有员工——按 n 办理入职'));
+  assert.ok(frameText(frame).includes('还没有机器人——按 n 创建机器人'));
 });
 
 test('computeFrame: 工作中员工卡 — 状态青色 + 进度行 + 已用时 + 今日轮数', () => {
@@ -60,7 +60,7 @@ test('computeFrame: 工作中员工卡 — 状态青色 + 进度行 + 已用时 
   assert.ok(frame[2].includes('\x1b[36'), 'working card carries cyan');
 });
 
-test('computeFrame: 待命绿色 / 休假灰色带原因 / 停用=调休', () => {
+test('computeFrame: 待命绿色 / 离线灰色带原因 / 停用=暂停', () => {
   const frame = computeFrame({
     agents: [
       agent({ id: 'a1', name: '甲', status: 'idle' }),
@@ -71,10 +71,10 @@ test('computeFrame: 待命绿色 / 休假灰色带原因 / 停用=调休', () =>
   });
   assert.ok(frameText(frame).includes('[待命]'));
   assert.ok(frame[2].includes('\x1b[32m'), 'idle carries green');
-  assert.ok(frameText(frame).includes('[休假·凭证无效]'));
+  assert.ok(frameText(frame).includes('[离线·凭证无效]'));
   assert.ok(frame[3].includes('\x1b[90'), 'offline carries gray (reversed)');
-  assert.ok(frameText(frame).includes('[调休]'));
-  assert.ok(frame[4].includes('\x1b[90m'), '调休 carries gray');
+  assert.ok(frameText(frame).includes('[暂停]'));
+  assert.ok(frame[4].includes('\x1b[90m'), '暂停 carries gray');
 });
 
 // v2 终审 Minor: 员工卡消费 /api/agents 的 assetWarnings（⚠ + 首条 title，黄）
@@ -159,7 +159,7 @@ test('computeFrame: 名册超出屏高 → 溢出行；帧恒等于 height 行',
     logTail: ['tail-A', 'tail-B', 'tail-C', 'tail-D', 'tail-E'],
   });
   assert.equal(frame.length, 24);
-  assert.ok(frameText(frame).includes('还有 15 位员工未显示'));
+  assert.ok(frameText(frame).includes('还有 15 个机器人未显示'));
 });
 
 test('computeFrame: 日志尾随窗只取最后 5 行（灰）', () => {
@@ -184,7 +184,7 @@ test('computeFrame: 日志不可达 → 日志需本机；可达无输出 → �
 test('computeFrame: 键位栏是最后一行（T2 接行为的渲染占位）', () => {
   const frame = computeFrame({ agents: [agent()], now: NOW, connected: true, logTail: ['x'] });
   assert.equal(frame[frame.length - 1], KEYBAR);
-  assert.equal(strip(frame[23]), '↑↓选择 空格:调休/返岗 t:岗前测试 b:广播 l:日志 n:入职 e:浏览器 q:退出');
+  assert.equal(strip(frame[23]), '↑↓选择 空格:暂停/启用 t:测试运行 b:推送 l:日志 n:创建 e:浏览器 q:退出');
 });
 
 test('makeLogTailer: 首拉取尾部、增量、轮转回卷、不可达为 null', () => {
@@ -247,7 +247,7 @@ test('computeFrame: 数据源字符串进帧前统一清洗（名字/日志/fina
   const res = computeFrame({
     agents: [agent()], now: NOW, connected: true, mode: 'result',
     result: {
-      title: '岗前测试 · 甲', code: 'timeout', finalText: `红\x1b[31msecret${evil}`,
+      title: '测试运行 · 甲', code: 'timeout', finalText: `红\x1b[31msecret${evil}`,
       sessionId: 's1', events: 2, errorText: `boom${evil}`, scroll: 0,
     },
   });
@@ -308,8 +308,8 @@ test('attachTUI: 进备用屏渲染 → q 退出还原终端、停轮询', async
   const painted = stream.__out.join('');
   assert.ok(painted.includes('\x1b[?1049h'), 'enters the alternate screen');
   assert.ok(painted.includes('\x1b[?25l'), 'hides the cursor');
-  assert.ok(painted.includes('WAO 公司'), 'renders the dashboard');
-  assert.ok(painted.includes('在岗 1/1'));
+  assert.ok(painted.includes('WAO Console'), 'renders the dashboard');
+  assert.ok(painted.includes('在线 1/1'));
   assert.ok(painted.includes('日志需本机'), 'unreachable data dir narrated');
   assert.ok(fetches >= 1, 'first fetch is immediate');
 

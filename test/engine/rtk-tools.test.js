@@ -92,7 +92,7 @@ test('state armed (main path): dry-run prefix check → real init → readback e
   const mat = matOver(stubProvider(rtkWrite(cfgDir)), join(sc, 'data'), FAKE_RTK);
   try {
     const r = await mat.materialize(bot, [RTK_ENTRY]);
-    assert.ok(r.notes.some((n) => /rtk 已装备（fake-rtk 9\.9\.9，flavor claude，主路径）/.test(n.detail)), 'armed note names version+flavor');
+    assert.ok(r.notes.some((n) => /rtk 已配置（fake-rtk 9\.9\.9，flavor claude，主路径）/.test(n.detail)), 'armed note names version+flavor');
     const settings = JSON.parse(readFileSync(join(cfgDir, 'settings.json'), 'utf8'));
     assert.deepEqual(settings.hooks.PreToolUse, [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'rtk hook claude' }] }], 'rtk hook entry present (V5 shape)');
     assert.ok(existsSync(join(cfgDir, 'RTK.md')), 'RTK.md created');

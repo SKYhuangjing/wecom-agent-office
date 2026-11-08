@@ -310,7 +310,7 @@ test('DELETE /api/assets/:id: shared bindings swept + rematerialized, exclusive 
   assert.equal(body.removedBindings, 1);
   assert.equal(body.keptExclusive, 1);
   assert.deepEqual(body.rematerialized, ['ab2']);
-  assert.match(body.note, /私发（exclusive）副本仍生效/);
+  assert.match(body.note, /独立（exclusive）副本仍生效/);
   assert.equal((await get(`/api/assets/${id}`)).status, 404, 'asset gone from the registry');
   const bots = loadBots(join(dataDir, 'bots.json'));
   assert.equal(bots.bots.find((b) => b.id === 'ab2').assets.length, 0, 'shared binding removed');
@@ -334,7 +334,7 @@ test('PATCH immutability guard (v2 终审 Important): shared-bound structural ke
   assert.equal((await post('/api/bots/ab1/assets', { assetId: sk.id, mode: 'shared' })).status, 200);
   const rename = await patch(`/api/assets/${sk.id}`, { content: { name: 'guard-skill-2', description: 'd', body: 'B' } });
   assert.equal(rename.status, 400);
-  assert.match((await rename.json()).error, /该资产有配发绑定，改名需先解绑（避免跨员工文件冲突）/);
+  assert.match((await rename.json()).error, /该工具有共享绑定，改名需先解绑（避免跨机器人文件冲突）/);
   assert.equal(loadAssets(join(dataDir, 'assets.json')).assets.find((a) => a.id === sk.id).content.name, 'guard-skill', 'registry keeps the structural key');
   // same structural key, body edit → still the eager fan-out path (200)
   const bodyEdit = await patch(`/api/assets/${sk.id}`, { content: { name: 'guard-skill', description: 'd', body: 'B2' } });
@@ -352,7 +352,7 @@ test('PATCH immutability guard (v2 终审 Important): shared-bound structural ke
   await post('/api/bots/ab1/assets', { assetId: mc.id, mode: 'shared' });
   const serverRename = await patch(`/api/assets/${mc.id}`, { content: { servers: { beta: { command: 'node' } } } });
   assert.equal(serverRename.status, 400);
-  assert.match((await serverRename.json()).error, /该资产有配发绑定，改名需先解绑/);
+  assert.match((await serverRename.json()).error, /该工具有共享绑定，改名需先解绑/);
   // same serverId, edited args → allowed (no structural change)
   assert.equal((await patch(`/api/assets/${mc.id}`, { content: { servers: { alpha: { command: 'node', args: ['x'] } } } })).status, 200);
   await del(`/api/bots/ab1/assets/${mc.id}`);
@@ -398,10 +398,10 @@ test('dual-source: companyOps enforces the §8.1 MCP write-face grading; REST st
   const opAsset = (await (await post('/api/assets', { type: 'prompt', name: 'operator-made', content: { text: 'O1' } })).json()).asset;
   const refused = await ops.updateAsset(opAsset.id, { content: { text: 'hack' } }).catch((e) => e);
   assert.equal(refused.status, 403);
-  assert.match(refused.message, /共享（配发）资产的改动请走控制台\/REST/);
+  assert.match(refused.message, /共享（shared）工具的改动请走控制台\/REST/);
   const refusedDel = await ops.deleteAsset(opAsset.id).catch((e) => e);
   assert.equal(refusedDel.status, 403);
-  assert.match(refusedDel.message, /共享（配发）资产的删除请走控制台\/REST/);
+  assert.match(refusedDel.message, /共享（shared）工具的删除请走控制台\/REST/);
   // Agent-made assets ARE editable on this face; REST may edit them too
   const upd = await ops.updateAsset(agentAsset.id, { content: { text: 'A2' } });
   assert.equal(upd.asset.version, 2);
@@ -411,7 +411,7 @@ test('dual-source: companyOps enforces the §8.1 MCP write-face grading; REST st
   // so the refusal is face-independent (§2.3 bottom row)
   await assert.rejects(
     ops.bindAsset('ab1', { assetId: agentAsset.id, mode: 'shared' }),
-    /Agent 创建的资产仅可私发（exclusive）绑定/,
+    /Agent 创建的工具仅可独立（exclusive）绑定/,
   );
   assert.equal((await post('/api/bots/ab1/assets', { assetId: agentAsset.id, mode: 'shared' })).status, 400);
   const bound = await ops.bindAsset('ab1', { assetId: agentAsset.id, mode: 'exclusive' });

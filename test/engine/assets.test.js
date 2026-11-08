@@ -412,7 +412,7 @@ test('noopMaterializer.checkBind: dsh×mcp bound but >32-char serverId refused, 
   const longId = { type: 'mcp', name: 'c2', content: { servers: { ['a'.repeat(33)]: { command: 'x' } } } };
   assert.ok(m.checkBind(dsh, longId).some((e) => /上限 32 字符/), 'dsh serverName cap (SERVER_NAME_PATTERN) refused');
   const rtkAsset = { type: 'tool', name: 'rtk', content: { kind: 'rtk' } };
-  assert.ok(m.checkBind(dsh, rtkAsset).some((e) => /dsh 岗位不支持 rtk/), 'rtk does not support dsh (F27)');
+  assert.ok(m.checkBind(dsh, rtkAsset).some((e) => /dsh 引擎不支持 rtk/), 'rtk does not support dsh (F27)');
   const claudeShared = { id: 'c1', provider: 'claude', providerConfig: { cwd: '/tmp' } };
   assert.ok(m.checkBind(claudeShared, rtkAsset).some((e) => /专属目录/), 'rtk hard line: never touch a shared home dir (§7.1)');
   const claudeDedicated = { id: 'c2', provider: 'claude', providerConfig: { cwd: '/tmp', claudeConfigDir: '/tmp/c2-claude' } };
@@ -478,21 +478,21 @@ test('bindAsset: unknown bot / asset → 404; bad mode / duplicate binding / age
   assert.match(dup.message, /已绑定.*先解绑/);
   const agentShared = await bindAsset(state, 'b1', { assetId: 'ast-ag', mode: 'shared' }).catch((e) => e);
   assert.equal(agentShared.status, 400);
-  assert.match(agentShared.message, /Agent 创建的资产仅可私发（exclusive）绑定/);
+  assert.match(agentShared.message, /Agent 创建的工具仅可独立（exclusive）绑定/);
 });
 
-test('bindAsset: same (type,name) second shared → 400 「已配发，先卸载或改私发」; exclusive shadows shared with receipt note', async () => {
+test('bindAsset: same (type,name) second shared → 400 「已共享绑定，先解绑或改独立」; exclusive shadows shared with receipt note', async () => {
   const sameName = { ...SKILL_B, name: SKILL_A.name, content: { ...SKILL_B.content, name: SKILL_A.name } };
   const state = mkState({ bots: [{ ...BOT }], assets: [SKILL_A, sameName] });
   await bindAsset(state, 'b1', { assetId: 'ast-s1', mode: 'shared' });
   const dup = await bindAsset(state, 'b1', { assetId: 'ast-s9', mode: 'shared' }).catch((e) => e);
   assert.equal(dup.status, 400);
-  assert.match(dup.message, /同名技能已配发，先卸载或改私发/);
+  assert.match(dup.message, /同名技能已共享绑定，先解绑或改独立/);
   // exclusive + shared coexist: allowed, shared is suppressed (§2.3 row 2)
   const r = await bindAsset(state, 'b1', { assetId: 'ast-s9', mode: 'exclusive' });
   assert.equal(r.ok, true);
   assert.deepEqual(r.suppressed.map((s) => s.assetId), ['ast-s1']);
-  assert.match(r.suppressedNote, /被私发副本压制/);
+  assert.match(r.suppressedNote, /被独立副本压制/);
 });
 
 test('bindAsset: exclusive takes a full content snapshot stamped with version/time', async () => {
@@ -535,7 +535,7 @@ test('bindAsset: materializer hooks (provider support / foreign guard / cross-bo
   state.materializer = { ...base, detectFileConflicts: () => [{ botId: 'other', path: '/tmp/shared/SKILL.md' }] };
   const r3 = await bindAsset(state, 'b1', { assetId: 'ast-s1', mode: 'shared' }).catch((e) => e);
   assert.equal(r3.status, 400);
-  assert.match(r3.message, /与 bot other 的资产目标文件冲突：\/tmp\/shared\/SKILL.md/);
+  assert.match(r3.message, /与 bot other 的工具目标文件冲突：\/tmp\/shared\/SKILL.md/);
   // v2 终审 Minor: same-root bots without manifests are an advisory (bind
   // succeeds), not a refusal — the receipt tells the operator to
   // rematerialize them so the real manifest-diff scan can run on re-bind.

@@ -204,18 +204,18 @@ test('tools/list: the 19-tool roster with Chinese descriptions and object schema
   // descriptions so a bare client relays states verbatim; offboard's fact
   // sheet covers re-hire; get_employee describes the real masking presentation
   // (secret-class keys omitted outright — not echoed as `__MASKED__`).
-  const lexicon = /状态四档：working=工作中\/idle=待命\/offline=离线\(休假\)\/enabled:false=休假\(调休\)；转述时用此词表/;
+  const lexicon = /状态四档：working=工作中\/idle=待命\/offline=离线\/enabled:false=暂停\(已停用\)；转述时用此词表/;
   for (const name of ['list_employees', 'get_employee', 'company_state']) {
     assert.match(tools.find((t) => t.name === name).description, lexicon);
   }
-  assert.match(tools.find((t) => t.name === 'offboard').description, /同工牌号可重新 hire（历史台账不自动接续）/);
+  assert.match(tools.find((t) => t.name === 'offboard').description, /同一机器人 ID 可重新 hire（历史台账不自动接续）/);
   assert.match(tools.find((t) => t.name === 'get_employee').description, /敏感值不回显（secret 类键整体省略）/);
 });
 
 test('hire → appears in list_employees → get_employee detail is secret-free', async () => {
   const hired = await call('hire', { bot: BOT_M1 });
   assert.equal(hired.isError, undefined);
-  assert.match(hired.content[0].text, /入职完成：测试员工（工牌号 m1）/);
+  assert.match(hired.content[0].text, /创建完成：测试员工（机器人 ID m1）/);
   assert.equal(hired.structuredContent.bot.account.secret, undefined, 'hire echo strips account.secret');
   assert.equal(hired.structuredContent.bot.providerConfig.extra.OPENAI_API_KEY, '__MASKED__', 'object-field credential is masked');
 
@@ -223,11 +223,11 @@ test('hire → appears in list_employees → get_employee detail is secret-free'
   const m1 = roster.structuredContent.agents.find((a) => a.id === 'm1');
   assert.ok(m1, 'm1 on the roster');
   assert.equal(m1.status, 'idle');
-  assert.match(roster.content[0].text, /m1（测试员工）｜待命｜岗位 fakeprov/);
+  assert.match(roster.content[0].text, /m1（测试员工）｜待命｜引擎 fakeprov/);
 
   const detail = await call('get_employee', { botId: 'm1' });
-  assert.match(detail.content[0].text, /测试员工（工牌号 m1）/);
-  assert.match(detail.content[0].text, /门禁名单：不限制/);
+  assert.match(detail.content[0].text, /测试员工（机器人 ID m1）/);
+  assert.match(detail.content[0].text, /允许用户：不限制/);
   assert.equal(detail.structuredContent.employee.bot.account.secret, undefined);
   assert.equal(detail.structuredContent.employee.bot.providerConfig.extra.HUB_TOKEN, '__MASKED__');
   assert.equal(detail.structuredContent.employee.bot.providerConfig.extra.note, 'keep');
@@ -249,7 +249,7 @@ test('hire validation errors pass through as isError results (400 semantics) wit
   assert.match(dup.content[0].text, /bot id already exists: m1/);
   // the hint enriches unknown-port failures with what IS available
   const unknownPort = await call('hire', { bot: { ...BOT_M1, id: 'bad2', channel: 'nope', providerConfig: { cwd: '/tmp' } } });
-  assert.ok(unknownPort.structuredContent.errors.some((e) => /当前在册通道端口.*fakechan/.test(e)), JSON.stringify(unknownPort.structuredContent.errors));
+  assert.ok(unknownPort.structuredContent.errors.some((e) => /当前可用渠道.*fakechan/.test(e)), JSON.stringify(unknownPort.structuredContent.errors));
 });
 
 test('probation_test: custom prompt reaches the runner; sessionId passthrough; unknown bot 404', async () => {
@@ -278,16 +278,16 @@ test('update_employee: patch semantics keep blank passwords and apply config edi
   assert.equal(r.structuredContent.bot.providerConfig.extra.OPENAI_API_KEY, '__MASKED__', 'echo stays masked');
 });
 
-test('set_duty toggles 调休/返岗; broadcast while off-duty is a 409 isError', async () => {
+test('set_duty toggles 暂停/启用; broadcast while off-duty is a 409 isError', async () => {
   const off = await call('set_duty', { botId: 'm1' });
-  assert.match(off.content[0].text, /调休：测试员工/);
+  assert.match(off.content[0].text, /已暂停：测试员工/);
   let roster = await call('list_employees');
-  assert.match(roster.content[0].text, /m1（测试员工）｜休假/);
+  assert.match(roster.content[0].text, /m1（测试员工）｜暂停/);
   const offlinePush = await call('broadcast', { botId: 'm1', chatKey: 'fake:group:g1', content: '不该发出' });
   assert.equal(offlinePush.isError, true);
   assert.equal(offlinePush.structuredContent.status, 409);
   const on = await call('set_duty', { botId: 'm1' });
-  assert.match(on.content[0].text, /返岗：测试员工/);
+  assert.match(on.content[0].text, /已启用：测试员工/);
   roster = await call('list_employees');
   assert.match(roster.content[0].text, /m1（测试员工）｜待命/);
 });
@@ -326,20 +326,20 @@ test('list_departments and company_state summarize the live registry', async () 
     { id: provFake.id, type: provFake.type, version: provFake.version, status: provFake.status },
     { id: 'provider-fake', type: 'provider', version: '0.1.0', status: 'active' },
   );
-  assert.match(depts.content[0].text, /provider-fake（Fake Provider）｜provider｜v0\.1\.0｜在役/);
+  assert.match(depts.content[0].text, /provider-fake（Fake Provider）｜provider｜v0\.1\.0｜启用/);
 
   const st = await call('company_state');
   assert.ok(Number.isFinite(st.structuredContent.uptimeSec));
-  assert.match(st.content[0].text, /部门：在役 \d+／停用 \d+／故障 \d+/);
-  assert.match(st.content[0].text, /员工：在册 1 人（工作中 0／待命 1／离线 0／休假 0）/);
+  assert.match(st.content[0].text, /插件：启用 \d+／停用 \d+／故障 \d+/);
+  assert.match(st.content[0].text, /机器人：共 1 个（工作中 0／待命 1／离线 0／暂停 0）/);
 });
 
 test('department_toggle: disable takes the employee offline (reload), session rebuilds, enable restores', async () => {
   // dangerous copy + impact list computed BEFORE the flip
   const off = await call('department_toggle', { departmentId: 'provider-fake', enabled: false });
   assert.equal(off.isError, undefined);
-  assert.match(off.content[0].text, /部门停用：provider-fake/);
-  assert.match(off.content[0].text, /影响 1 名员工下线：m1（测试员工）/);
+  assert.match(off.content[0].text, /插件已停用：provider-fake/);
+  assert.match(off.content[0].text, /影响 1 个机器人离线：m1（测试员工）/);
   assert.deepEqual(off.structuredContent.affectedEmployees, ['m1']);
 
   // The four-phase reload rebuilt the gateway: the old session is stale.
@@ -357,10 +357,10 @@ test('department_toggle: disable takes the employee offline (reload), session re
   // offline employees now land in their OWN bucket — the summary line no
   // longer drops them (text and structuredContent stay consistent)
   const stOffline = await call('company_state');
-  assert.match(stOffline.content[0].text, /员工：在册 1 人（工作中 0／待命 0／离线 1／休假 0）/, 'offline employee counted in the summary');
+  assert.match(stOffline.content[0].text, /机器人：共 1 个（工作中 0／待命 0／离线 1／暂停 0）/, 'offline bot counted in the summary');
 
   const on = await call('department_toggle', { departmentId: 'provider-fake', enabled: true });
-  assert.match(on.content[0].text, /部门恢复：provider-fake 已启用/);
+  assert.match(on.content[0].text, /插件已启用：provider-fake/);
   sessionId = await initSession();
   const back = await call('list_employees');
   assert.equal(back.structuredContent.agents.find((a) => a.id === 'm1').status, 'idle', 'reconcile re-attached the employee');
@@ -382,15 +382,15 @@ test('offboard: exit-interview consequence copy; second call is a 404 isError', 
   const r = await call('offboard', { botId: 'm1' });
   assert.equal(r.isError, undefined);
   const text = r.content[0].text;
-  assert.match(text, /离职手续已办结：测试员工（工牌号 m1）/);
-  assert.match(text, /在途工作已收尾/);
-  assert.match(text, /工位已清理/);
-  assert.match(text, /档案留存/);
-  assert.match(text, /可重新入职/);
+  assert.match(text, /已删除：测试员工（机器人 ID m1）/);
+  assert.match(text, /在途消息已收尾/);
+  assert.match(text, /工作目录已清理/);
+  assert.match(text, /会话历史留存/);
+  assert.match(text, /可重新创建/);
   assert.equal(loadBots(join(dataDir, 'bots.json')).bots.some((b) => b.id === 'm1'), false, 'bot removed from bots.json');
   const roster = await call('list_employees');
   assert.equal(roster.structuredContent.agents.length, 0);
-  assert.match(roster.content[0].text, /公司当前没有在册员工/);
+  assert.match(roster.content[0].text, /当前没有机器人/);
   // timeline all-hands stream still carries the retired employee's events
   const tl = await call('work_timeline', { windowMin: 30 });
   assert.ok(tl.structuredContent.events.some((e) => e.botId === 'm1'), 'timeline history survives offboarding');
@@ -405,22 +405,22 @@ test('department_toggle impact counts only on-duty employees; an off-duty hire i
   // disable copy must say 0, not 1.
   const rehired = await call('hire', { bot: BOT_M1 });
   assert.equal(rehired.isError, undefined);
-  assert.match(rehired.content[0].text, /入职完成：测试员工（工牌号 m1）/);
+  assert.match(rehired.content[0].text, /创建完成：测试员工（机器人 ID m1）/);
   const off = await call('set_duty', { botId: 'm1' });
-  assert.match(off.content[0].text, /调休：测试员工/);
+  assert.match(off.content[0].text, /已暂停：测试员工/);
 
   const flip = await call('department_toggle', { departmentId: 'provider-fake', enabled: false });
   assert.equal(flip.isError, undefined);
-  assert.match(flip.content[0].text, /影响 0 名员工下线/, 'off-duty employee not miscounted');
+  assert.match(flip.content[0].text, /影响 0 个机器人离线/, 'off-duty bot not miscounted');
   assert.deepEqual(flip.structuredContent.affectedEmployees, []);
   sessionId = await initSession();
 
   const on = await call('department_toggle', { departmentId: 'provider-fake', enabled: true });
-  assert.match(on.content[0].text, /部门恢复：provider-fake 已启用/);
+  assert.match(on.content[0].text, /插件已启用：provider-fake/);
   sessionId = await initSession();
 
   const back = await call('set_duty', { botId: 'm1' });
-  assert.match(back.content[0].text, /返岗：测试员工/);
+  assert.match(back.content[0].text, /已启用：测试员工/);
   // restore the journey's end state (empty roster) for the tests that follow
   const exit = await call('offboard', { botId: 'm1' });
   assert.equal(exit.isError, undefined);
@@ -431,7 +431,7 @@ test('department_toggle without the engine service: impact honestly unknown, the
   // affected" from a tally it could not run.
   const offEngine = await call('department_toggle', { departmentId: 'core-engine', enabled: false });
   assert.equal(offEngine.isError, undefined);
-  assert.match(offEngine.content[0].text, /部门停用：core-engine/);
+  assert.match(offEngine.content[0].text, /插件已停用：core-engine/);
   sessionId = await initSession();
 
   const flip = await call('department_toggle', { departmentId: 'provider-fake', enabled: false });
@@ -441,15 +441,15 @@ test('department_toggle without the engine service: impact honestly unknown, the
   sessionId = await initSession();
 
   const onProv = await call('department_toggle', { departmentId: 'provider-fake', enabled: true });
-  assert.match(onProv.content[0].text, /部门恢复：provider-fake 已启用/);
+  assert.match(onProv.content[0].text, /插件已启用：provider-fake/);
   sessionId = await initSession();
   const onEngine = await call('department_toggle', { departmentId: 'core-engine', enabled: true });
-  assert.match(onEngine.content[0].text, /部门恢复：core-engine 已启用/);
+  assert.match(onEngine.content[0].text, /插件已启用：core-engine/);
   sessionId = await initSession();
 
   // engine back behind the tools: companyOps answers again
   const st = await call('company_state');
-  assert.match(st.content[0].text, /员工：在册 0 人（工作中 0／待命 0／离线 0／休假 0）/);
+  assert.match(st.content[0].text, /机器人：共 0 个（工作中 0／待命 0／离线 0／暂停 0）/);
 });
 
 test('dirty arguments: schema violations are isError results, unknown/malformed tool names are -32602', async () => {
@@ -503,7 +503,7 @@ test('asset tools (W3 T1): grading enforced, danger copy in receipts, masking on
     asset: { type: 'mcp', name: 'agent-mcp', content: { servers: { probe: { command: 'node', env: { TOKEN: SECRET_MCP_ENV } } } } },
   });
   assert.equal(created.isError, undefined);
-  assert.match(created.content[0].text, /资产已登记：agent-mcp（mcp，id ast-/);
+  assert.match(created.content[0].text, /工具已添加：agent-mcp（mcp，id ast-/);
   const asset = created.structuredContent.asset;
   assert.equal(asset.origin, 'mcp');
   assert.equal(asset.content.servers.probe.env.TOKEN, '__MASKED__', 'position masking on the MCP tool face');
@@ -512,13 +512,13 @@ test('asset tools (W3 T1): grading enforced, danger copy in receipts, masking on
   // the consequence copy and a REAL materialization receipt (W3 T2)
   const sharedRefused = await call('bind_asset', { botId: 'am1', assetId: asset.id, mode: 'shared' });
   assert.equal(sharedRefused.isError, true);
-  assert.match(sharedRefused.structuredContent.error, /Agent 创建的资产仅可私发（exclusive）绑定/);
+  assert.match(sharedRefused.structuredContent.error, /Agent 创建的工具仅可独立（exclusive）绑定/);
   const bound = await call('bind_asset', { botId: 'am1', assetId: asset.id, mode: 'exclusive' });
   assert.equal(bound.isError, undefined);
   assert.match(bound.content[0].text, /将向 bot 磁盘写入技能\/配置文件并重建 runner，下一轮生效/);
   assert.ok(bound.structuredContent.receipt.writes.some((w) => /mcp--agent-mcp\.md$/.test(w.path)), 'real pipeline wrote the product file');
 
-  // update/delete grading: operator (配发) assets are read-only here — an
+  // update/delete grading: operator (shared) assets are read-only here — an
   // operator asset enters via the REST face
   const rest = await fetch(`${base()}/api/assets`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
@@ -528,10 +528,10 @@ test('asset tools (W3 T1): grading enforced, danger copy in receipts, masking on
   const operatorAsset = (await rest.json()).asset;
   const refused = await call('update_asset', { assetId: operatorAsset.id, patch: { content: { text: 'X' } } });
   assert.equal(refused.isError, true);
-  assert.match(refused.structuredContent.error, /共享（配发）资产的改动请走控制台\/REST/);
+  assert.match(refused.structuredContent.error, /共享（shared）工具的改动请走控制台\/REST/);
   const refusedDel = await call('delete_asset', { assetId: operatorAsset.id });
   assert.equal(refusedDel.isError, true);
-  assert.match(refusedDel.structuredContent.error, /共享（配发）资产的删除请走控制台\/REST/);
+  assert.match(refusedDel.structuredContent.error, /共享（shared）工具的删除请走控制台\/REST/);
 
   // own asset: masked round-trip update keeps the stored secret on disk
   const upd = await call('update_asset', {
@@ -550,10 +550,10 @@ test('asset tools (W3 T1): grading enforced, danger copy in receipts, masking on
   assert.match(remat.content[0].text, /已重物化：am1/);
   const un = await call('unbind_asset', { botId: 'am1', assetId: asset.id });
   assert.equal(un.isError, undefined);
-  assert.match(un.content[0].text, /私发（exclusive）副本内容随卸载丢失/);
+  assert.match(un.content[0].text, /独立（exclusive）副本内容随卸载丢失/);
   const gone = await call('delete_asset', { assetId: asset.id });
   assert.equal(gone.isError, undefined);
-  assert.match(gone.content[0].text, /资产已删除：/);
+  assert.match(gone.content[0].text, /工具已删除：/);
   await call('offboard', { botId: 'am1' });
 });
 
@@ -571,7 +571,7 @@ test('agents-face asset warning rides list_employees (W3 T1 review): memory on a
   const roster = await call('list_employees');
   const am2 = roster.structuredContent.agents.find((a) => a.id === 'am2');
   assert.deepEqual(am2.assetWarnings, ['memory 共享 cwd：跨会话记忆可能被同目录其他会话互见']);
-  assert.match(roster.content[0].text, /资产警示：memory 共享 cwd：跨会话记忆可能被同目录其他会话互见/);
+  assert.match(roster.content[0].text, /工具警示：memory 共享 cwd：跨会话记忆可能被同目录其他会话互见/);
 
   // the REST face (/api/agents) agrees — one botRow, two faces
   const restAgents = await (await fetch(`${base()}/api/agents`)).json();

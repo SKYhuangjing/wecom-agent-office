@@ -75,7 +75,7 @@ test('REAL rtk claude flavor: equip writes the V5 hook entry + RTK.md into $CLAU
     const bot = { id: 'rc-b1', provider: 'claude', providerConfig: { cwd: join(sc, 'cwd'), claudeConfigDir: cfgDir } };
 
     const r1 = await mat.materialize(bot, [RTK_ASSET_CLAUDE]);
-    assert.ok(r1.notes.some((n) => /rtk 已装备（rtk \d+\.\d+\.\d+，flavor claude，主路径）/.test(n.detail)), `armed note: ${JSON.stringify(r1.notes)}`);
+    assert.ok(r1.notes.some((n) => /rtk 已配置（rtk \d+\.\d+\.\d+，flavor claude，主路径）/.test(n.detail)), `armed note: ${JSON.stringify(r1.notes)}`);
     const settings = JSON.parse(readFileSync(join(cfgDir, 'settings.json'), 'utf8'));
     assert.deepEqual(settings.hooks.PreToolUse, [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'rtk hook claude' }] }], 'V5-verified hook entry shape');
     assert.ok(existsSync(join(cfgDir, 'RTK.md')), 'RTK.md guidance file');

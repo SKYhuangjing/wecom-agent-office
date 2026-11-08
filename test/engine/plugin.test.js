@@ -618,7 +618,7 @@ test('reconcile (direct): plugin/lifecycle with a changed port registry detaches
   kernel.events.emit('plugin/lifecycle', {});
   let agents = await agentsOf();
   assert.equal(agents[0].status, 'offline');
-  assert.equal(agents[0].reason, 'provider fakeprov 已禁用', 'DESIGN §2.5 wording');
+  assert.equal(agents[0].reason, '引擎 fakeprov 已停用', 'DESIGN §2.5 wording');
 
   // Port restored (fresh runner is minted from the port impl at attach)
   reg.provider.set('fakeprov', entry);

@@ -8,7 +8,7 @@ import { ensurePageStyle } from './style.js';
 import { bannerText } from './list.js';
 import { Avatar, providerMeta } from './hr.js';
 
-const KIND_LABEL = { run_start: '开工', step: '步骤', tool: '工具', thinking: '思考', turn: '工单', run_end: '收工' };
+const KIND_LABEL = { run_start: '开始', step: '步骤', tool: '工具', thinking: '思考', turn: '消息', run_end: '结束' };
 const WINDOWS = [5, 15, 30]; // minutes
 
 const fmtClock = (at) => (Number.isFinite(at) && at > 0
@@ -17,7 +17,7 @@ const fmtClock = (at) => (Number.isFinite(at) && at > 0
 
 export default {
   id: 'timeline',
-  title: '工作日志',
+  title: '活动日志',
   icon: '📜',
   order: 7,
   component({ WAO }) {
@@ -36,25 +36,25 @@ export default {
     const newestFirst = [...rows].reverse();
 
     return h('div', { className: 'page' },
-      h('h2', null, '工作日志'),
+      h('h2', null, '活动日志'),
       h('div', { className: 'wb-toolbar' },
         h('select', {
           className: 'wb-select', style: { width: 'auto' }, value: botId,
           onChange: (e) => setBotId(e.target.value),
         },
-          h('option', { value: '' }, '全部同事'),
+          h('option', { value: '' }, '全部机器人'),
           agents.map((a) => h('option', { key: a.id, value: a.id }, a.name ?? a.id))),
         h('select', {
           className: 'wb-select', style: { width: 'auto' }, value: String(windowMin),
           onChange: (e) => setWindowMin(Number(e.target.value)),
         }, WINDOWS.map((w) => h('option', { key: w, value: String(w) }, `最近 ${w} 分钟`))),
         h('span', { className: 'wb-hint' }, `${rows.length} 条记录，每 5 秒自动刷新`)),
-      agentsError != null ? h('div', { className: 'error', style: { marginTop: 12 } }, bannerText('加载同事列表失败：', agentsError)) : null,
-      error != null ? h('div', { className: 'error', style: { marginTop: 12 } }, bannerText('加载工作日志失败：', error)) : null,
+      agentsError != null ? h('div', { className: 'error', style: { marginTop: 12 } }, bannerText('加载机器人列表失败：', agentsError)) : null,
+      error != null ? h('div', { className: 'error', style: { marginTop: 12 } }, bannerText('加载活动日志失败：', error)) : null,
       newestFirst.length === 0 && error == null
         ? h('div', { className: 'wb-empty' },
-            h('p', null, '这个时间窗里静悄悄——大家可能在待命，或者忙起来的记录已滑出所选窗口。'),
-            h('p', null, '日志从公司开门时记起（重启后从零开始）——更早的工单去工作档案室查。'))
+            h('p', null, '这个时间窗里没有活动——机器人可能在待命，或者新的记录已滑出所选窗口。'),
+            h('p', null, '日志从服务启动时记起（重启后从零开始）——更早的消息去会话历史查。'))
         : h('ul', { className: 'wb-tl' }, newestFirst.map((r, i) => {
             const a = agents.find((x) => x.id === r.botId);
             const meta = providerMeta(a?.provider ?? r.botId);
@@ -72,7 +72,7 @@ export default {
                 className: `wb-tl-kind wb-tl-kind-${r.kind}`,
                 title: `kind：${r.kind}`,
               }, KIND_LABEL[r.kind] ?? r.kind),
-              r.chatKey ? h('span', { className: 'wb-tl-chat', title: '往来对象（部门群/同事 chatKey）' }, r.chatKey) : null,
+              r.chatKey ? h('span', { className: 'wb-tl-chat', title: '会话对象（群聊/单聊 chatKey）' }, r.chatKey) : null,
               h('span', { className: 'wb-tl-text' }, r.text || '（无文本）'));
           })));
   },

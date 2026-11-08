@@ -63,9 +63,9 @@ node src/index.js version   # → 0.1.0   (拼错命令会被拒绝, 不会猜)
 
 **企微凭证获取**（第一次接入必读）：在**企微管理后台 → 应用管理 → 智能机器人**中创建
 **API 模式**机器人，获取 **Bot ID** 和 **Secret**——这两个值填进 bot 记录的
-`account.botId` / `account.secret`（Web 入职向导第 5 步「通信渠道」的凭证表单，或
+`account.botId` / `account.secret`（Web 创建向导第 5 步「通信渠道」的凭证表单，或
 `POST /api/bots`）。WebSocket 地址留默认（官方 `wss://openws.work.weixin.qq.com`）即可。
-凭证填错不致命：bot 会显示「休假」并在原因里带出鉴权错误，改对凭证即返岗。
+凭证填错不致命：bot 会显示「离线」并在原因里带出鉴权错误，改对凭证即恢复上线。
 
 | 环境变量 | 作用 | 默认 |
 |---|---|---|
@@ -96,11 +96,11 @@ ANSI），`q`/Ctrl-C 完整还原终端。终端帧样例：`test/tui/shots/`（
 
 | 键 | 作用 |
 |---|---|
-| `↑↓` / 空格 | 选员工 / 调休·返岗确认（y 执行 n 取消） |
-| `t` | 岗前测试（默认探针「回复：收到」，结果窗 ↑↓ 滚动、esc 关闭） |
-| `b` | 广播：从台账选目标会话 → 输入内容 → y 二次确认 → `POST /api/send` |
+| `↑↓` / 空格 | 选机器人 / 暂停·启用确认（y 执行 n 取消） |
+| `t` | 测试运行（默认探针「回复：收到」，结果窗 ↑↓ 滚动、esc 关闭） |
+| `b` | 推送：从台账选目标会话 → 输入内容 → y 二次确认 → `POST /api/send` |
 | `l` | 日志窗 5 行 ↔ 半屏切换 |
-| `n` | 简版入职向导（姓名→岗位→cwd→botId→Secret→摘要 y，落库 `enabled:false` 调休态） |
+| `n` | 简版创建向导（姓名→引擎→cwd→botId→Secret→摘要 y，落库 `enabled:false` 暂停态） |
 | `e` | 打开 Web 控制台（失败降级为可复制 URL 的通知行） |
 | `q` / Ctrl-C | 退出（还原终端） |
 
@@ -210,8 +210,8 @@ Windows 上优先用 dsh/codex（提示词走 stdin）或把人设写成单行�
 ### 3.2 MCP 接入（AI Agent 直连操作公司）
 
 `mcp-gateway` 插件（默认装载，可在 `data/plugins.json` 停用）把公司操作面以 MCP 最小子集暴露在
-`POST http://127.0.0.1:8792/mcp`，claude / codex / ZCode 等 Agent CLI 可直连做巡检、入职、
-调休、广播、部门启停、资产配发（公司话词表见 §4.2；Agent 侧快捷 skill 见 `docs/skills/wao-company.md`）。
+`POST http://127.0.0.1:8792/mcp`，claude / codex / ZCode 等 Agent CLI 可直连做巡检、创建机器人、
+暂停启用、消息推送、插件启停、工具共享（标准术语词表见 §4.2；Agent 侧快捷 skill 见 `docs/skills/wao-company.md`）。
 协议是 streamable HTTP 传输的无 SSE 半边：JSON-RPC 2.0 单请求，方法仅
 `initialize` / `tools/list` / `tools/call` / `notifications/*`（含 `notifications/initialized`，
 一律 HTTP 202 空体）；GET `/mcp` 答 405（SSE 推送二期）；`DELETE /mcp` 显式终结会话（幂等 202）。
@@ -287,22 +287,22 @@ curl -si -X POST localhost:8792/mcp -H 'content-type: application/json' \
 
 | 工具 | 一句话 | 危险 |
 |---|---|---|
-| `list_employees` | 在岗名册（状态/离线原因/工作汇报/工单数） | |
-| `get_employee` | 单员工详情（配置摘要无 secret） | |
-| `hire` | 办入职（全字段档案） | |
-| `update_employee` | 档案更新（patch；密码留空＝保留） | |
-| `offboard` | 办离职（删除；台账与时间线历史保留） | ⚠️ |
-| `set_duty` | 调休 ↔ 返岗 | |
-| `probation_test` | 岗前测试（成功判据看 result.code，勿只看 isError） | |
-| `broadcast` | 广播（真实送达企微，无法撤回） | ⚠️ |
-| `list_departments` | 部门（插件）清单 | |
-| `department_toggle` | 部门启停（四阶段重组；重建 MCP 会话） | ⚠️ |
-| `work_log` | 工作档案（台账轮次） | |
-| `work_timeline` | 工作日志（时间线事件流） | |
-| `company_state` | 公司状态摘要 | |
-| `create_asset` | 登记资产（五类 skill/memory/mcp/prompt/tool；Agent 自建仅可私发 exclusive 绑定） | |
-| `update_asset` | 更新资产（version 自增；配发绑定扇出重物化；仅 Agent 自建资产可改，配发池走控制台/REST） | |
-| `delete_asset` | 删除资产（配发绑定解绑＋清理；私发副本保留生效；仅 Agent 自建资产可删） | ⚠️ |
+| `list_employees` | 机器人清单（状态/离线原因/运行进度/消息数） | |
+| `get_employee` | 单机器人详情（配置摘要无 secret） | |
+| `hire` | 创建机器人（全字段记录） | |
+| `update_employee` | 配置更新（patch；密码留空＝保留） | |
+| `offboard` | 删除（台账与时间线历史保留） | ⚠️ |
+| `set_duty` | 暂停 ↔ 启用 | |
+| `probation_test` | 测试运行（成功判据看 result.code，勿只看 isError） | |
+| `broadcast` | 消息推送（真实送达企微，无法撤回） | ⚠️ |
+| `list_departments` | 插件清单 | |
+| `department_toggle` | 插件启停（四阶段重载；重建 MCP 会话） | ⚠️ |
+| `work_log` | 会话历史（台账轮次） | |
+| `work_timeline` | 活动日志（时间线事件流） | |
+| `company_state` | 系统状态摘要 | |
+| `create_asset` | 添加工具（五类 skill/memory/mcp/prompt/tool；Agent 自建仅可独立 exclusive 绑定） | |
+| `update_asset` | 更新工具（version 自增；共享绑定扇出重物化；仅 Agent 自建工具可改，共享池走控制台/REST） | |
+| `delete_asset` | 删除工具（共享绑定解绑＋清理；独立副本保留生效；仅 Agent 自建工具可删） | ⚠️ |
 | `bind_asset` | 绑定资产到 bot（配发 shared 跟源／私发 exclusive 快照） | ⚠️ |
 | `unbind_asset` | 解绑（删除盘上产物；私发副本内容随卸载丢失） | ⚠️ |
 | `rematerialize` | 强制重物化（确定性/幂等；漂移修复与失败重试） | ⚠️ |
@@ -368,46 +368,46 @@ curl -si -X POST localhost:8792/mcp -H 'content-type: application/json' \
   单张手工截图时深色可加 `--force-dark-mode`；模板页 demo 需 `WAO_PLUGINS_PATH`
   指向 `plugins/_template`（脚本已自动带上）。
 
-### 4.2 公司话 UI（company-metaphor 重设计）
+### 4.2 标准 UI 术语（2026-11-08 由公司隐喻还原）
 
-产品比喻是「**一家你独自经营的公司**」：你雇的每位同事是一个 bot。UI 主层一律
-公司话，技术词收进 tooltip / 副标题（双层语言，运维不歧义）；后果说明保持诚实
-（如「转岗仅文本问答对迁移」这类事实不减，只换语气）。
+产品用**标准产品术语**：管理的每个对象是一个机器人（bot）。UI 主层一律标准
+术语，技术词收进 tooltip / 副标题（双层语言，运维不歧义）；后果说明保持诚实
+（如「更换引擎仅文本问答对迁移」这类事实不减，只换语气）。
 
-**公司话 ↔ 技术词对照表**：
+**标准术语 ↔ 技术词对照表**：
 
-| 公司话 | 技术词 |
+| 标准术语 | 技术词 |
 |---|---|
-| 入职 / 办理入职 | 新建 bot（POST /api/bots） |
-| 离职 / 办结离职手续 | 删除 bot（DELETE /api/bots/:id） |
-| 调休 / 返岗 | 停用 / 启用（toggle，enabled=false/true） |
-| 技能岗位 / 岗位部门（DSH·Claude·Codex·Pi 工程师） | provider（dsh / claude / codex / pi） |
-| 工位 | 工作目录 cwd |
-| 门禁名单 | allowedUsers |
-| 工牌激活 / 工牌凭证 | 填企微机器人凭证（channel account） |
-| 岗前测试 | 试跑（POST /api/bots/:id/test） |
-| 工单 | 一轮对话（ledger turn） |
-| 工作汇报 | 进度行（progress.line） |
-| 工作汇报风格（拟人播报 / 详细汇报） | progressStyle（polite / cot；2026-11-06 起默认 polite——企微进度行不露思维链/工具内容，只播报一句「思考中…请稍等」） |
+| 创建机器人 | 新建 bot（POST /api/bots） |
+| 删除 | 删除 bot（DELETE /api/bots/:id） |
+| 暂停 / 启用 | 停用 / 启用（toggle，enabled=false/true） |
+| Agent 引擎（DSH·Claude·Codex·Pi 引擎） | provider（dsh / claude / codex / pi） |
+| 工作目录 | cwd |
+| 允许用户 | allowedUsers |
+| 连接配置 / 机器人凭证 | 填企微机器人凭证（channel account） |
+| 测试运行 | 试跑（POST /api/bots/:id/test） |
+| 消息 | 一轮对话（ledger turn） |
+| 运行进度 | 进度行（progress.line） |
+| 进度风格（拟人播报 / 详细汇报） | progressStyle（polite / cot；2026-11-06 起默认 polite——企微进度行不露思维链/工具内容，只播报一句「思考中…请稍等」） |
 | 播报文案 | progressText（拟人播报模板；占位符 {bot}=名字 {dots}=呼吸点 {elapsed}=已用时 {step}=步数，≤120 字） |
-| 工作日志 | 时间线（/api/timeline） |
-| 工作档案 / 原生档案 | 台账 ledger / provider 原生会话 |
-| 广播站 / 播音员 | 服务端主动推送 / 发送者 bot |
-| 后勤部门 / 部门重组 | 插件 / 四阶段重载（reload） |
-| 资产科 / 资产清单 / 装备台 | 资产注册表（/api/assets）/ per-bot 绑定面（/api/bots/:id/assets） |
-| 配发 / 私发 | 绑定模式 mode:'shared'（跟源更新）/ 'exclusive'（快照独立，不随源改动漂移） |
-| 卸下装备 / 下架资产 | 解绑（DELETE /api/bots/:id/assets/:id）/ 删除资产（DELETE /api/assets/:id） |
+| 活动日志 | 时间线（/api/timeline） |
+| 会话历史 / 引擎会话 | 台账 ledger / provider 原生会话 |
+| 消息推送 / 发送方 | 服务端主动推送 / 发送者 bot |
+| 插件管理 / 重新加载 | 插件 / 四阶段重载（reload） |
+| 工具库 / 工具清单 / 工具配置 | 资产注册表（/api/assets）/ per-bot 绑定面（/api/bots/:id/assets） |
+| 共享 / 独立 | 绑定模式 mode:'shared'（跟源更新）/ 'exclusive'（快照隔离，不随源改动漂移） |
+| 移除 / 删除工具 | 解绑（DELETE /api/bots/:id/assets/:id）/ 删除资产（DELETE /api/assets/:id） |
 | 重新物化 | rematerialize（POST /api/bots/:id/rematerialize-assets，按当前绑定重写盘面） |
-| 状态：工作中 / 待命 / 休假 | working / idle / offline(+disabled) |
-| 工牌号 | bot id（同时是化身 seed——同 id 全站同脸） |
+| 状态：工作中 / 待命 / 离线 / 暂停 | working / idle / offline(+disabled) |
+| 机器人 ID | bot id（同时是化身 seed——同 id 全站同脸） |
 
-**文案原则**：① 主层公司话、技术词进 tooltip/副标题；② 状态词只用
-工作中/待命/休假三档，原因（reason）照实说；③ 危险操作（办离职、部门重组）
-必须列后果清单并要求显式确认（离职输姓名）；④ 「真实送达企微」「仅文本问答对
+**文案原则**：① 主层标准术语、技术词进 tooltip/副标题；② 状态词只用
+工作中/待命/离线/暂停四档，原因（reason）照实说；③ 危险操作（删除、重载）
+必须列后果清单并要求显式确认（删除输入名称）；④ 「真实送达企微」「仅文本问答对
 迁移」「不进引擎链、不记台账」这类后果/边界说明一个字不减。化身（DiceBear
 notionists，CC0，全离线打包进 shell）由 `WAO.avatar(botId,{size,mood})` 出内联
-SVG，同一工牌号在办公室/卡片/列表/日志行/工牌上都是同一张脸；打卡钟页头（活钟 ·
-在岗 N/M · 今日工单 X）全站可见。可达性：全站 focus-visible 焦点环、
+SVG，同一机器人 ID 在办公室 3D/卡片/列表/日志行/工牌上都是同一张脸；状态栏页头
+（活钟 · 在线 N/M · 今日消息 X）全站可见。可达性：全站 focus-visible 焦点环、
 prefers-reduced-motion 全关动画（画布动画由 ofscene 的 reduced 标志接管）、
 ≤900px 侧栏折顶。
 

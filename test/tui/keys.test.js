@@ -51,7 +51,7 @@ test('空格→y：确认行→执行 toggle；成功绿字/失败红字透传 r
   assert.equal(pressed.state.mode, 'confirm');
   assert.equal(pressed.effects.length, 0, '确认前不产生副作用');
   const text = frameText(pressed.state);
-  assert.ok(text.includes('确认将 主号机器人 调休？(y/n)'), 'confirm row copy');
+  assert.ok(text.includes('确认将 主号机器人 暂停？(y/n)'), 'confirm row copy');
   assert.ok(frameRaw(pressed.state).includes('1;33'), 'confirm row is highlighted');
 
   const yes = handleKey(pressed.state, ch('y'), DEPS);
@@ -60,23 +60,23 @@ test('空格→y：确认行→执行 toggle；成功绿字/失败红字透传 r
 
   const okState = applyResult(yes.state, yes.effects[0], { ok: true, data: { bot: { enabled: false } } });
   assert.equal(okState.notice.kind, 'ok');
-  assert.ok(okState.notice.text.includes('已调休：主号机器人'));
+  assert.ok(okState.notice.text.includes('已暂停：主号机器人'));
   assert.ok(frameRaw(okState).includes('\x1b[32'), 'success notice is green');
 
   const failState = applyResult(yes.state, yes.effects[0], { ok: false, error: 'bot not found', status: 404 });
   assert.equal(failState.notice.kind, 'error');
-  assert.ok(failState.notice.text.includes('调休/返岗失败：bot not found'), 'API reason relayed');
+  assert.ok(failState.notice.text.includes('暂停/启用失败：bot not found'), 'API reason relayed');
   assert.ok(frameRaw(failState).includes('\x1b[31'), 'failure notice is red');
 });
 
-test('空格→y：调休态员工走返岗文案；n 取消不产生副作用', () => {
+test('空格→y：暂停态机器人走启用文案；n 取消不产生副作用', () => {
   const off = baseState([agent({ enabled: false })]);
   const confirm = drive(off, [SPACE]).state;
-  assert.ok(frameText(confirm).includes('确认将 主号机器人 返岗？(y/n)'));
+  assert.ok(frameText(confirm).includes('确认将 主号机器人 启用？(y/n)'));
   const yes = handleKey(confirm, ch('y'), DEPS);
   assert.equal(yes.effects[0].toEnabled, true);
   const back = applyResult(yes.state, yes.effects[0], { ok: true, data: { bot: { enabled: true } } });
-  assert.ok(back.notice.text.includes('已返岗：主号机器人'));
+  assert.ok(back.notice.text.includes('已启用：主号机器人'));
 
   const no = handleKey(confirm, ch('n'), DEPS);
   assert.deepEqual(no.effects, []);
@@ -92,7 +92,7 @@ test('t→输入行→回车：默认探针与自定义 prompt；输入期间键
   assert.equal(t.state.mode, 'input');
   assert.equal(t.state.input.kind, 'test');
   const text = frameText(t.state);
-  assert.ok(text.includes('岗前测试 · 主号机器人——测试问题'), 'input prompt row');
+  assert.ok(text.includes('测试运行 · 主号机器人——测试问题'), 'input prompt row');
   assert.ok(text.includes('▌'), 'caret visible');
 
   // 输入模式吞掉一切其他键位（q 不退出、b 不广播、空格不调休）
@@ -124,7 +124,7 @@ test('t 结果窗：code/finalText/sessionId 全展示；失败带原因；长�
   });
   assert.equal(done.mode, 'result');
   const text = frameText(done);
-  assert.ok(text.includes('岗前测试 · 主号机器人'));
+  assert.ok(text.includes('测试运行 · 主号机器人'));
   assert.ok(text.includes('code: completed  ✅ 通过'));
   assert.ok(text.includes('等于 2'));
   assert.ok(text.includes('会话：sess-abc'));
@@ -158,7 +158,7 @@ test('t 结果窗：code/finalText/sessionId 全展示；失败带原因；长�
   assert.equal(closedByEnter.state.mode, 'dashboard');
 });
 
-test('b 广播链：台账枚举会话→选会话→内容→真实发送确认→执行', () => {
+test('b 推送链：台账枚举会话→选会话→内容→真实发送确认→执行', () => {
   const st0 = baseState([agent()]);
   const started = handleKey(st0, ch('b'), DEPS);
   assert.deepEqual(started.effects, [{ type: 'ledger', botId: 'a1', name: '主号机器人' }]);
@@ -175,33 +175,33 @@ test('b 广播链：台账枚举会话→选会话→内容→真实发送确认
   const pickText = frameText(picked);
   assert.ok(pickText.includes('wecom:group:1（2 轮）'), 'chat list with turn counts');
   assert.ok(pickText.includes('wecom:group:2（1 轮）'));
-  assert.ok(pickText.includes('广播 · 选择目标会话'));
+  assert.ok(pickText.includes('推送 · 选择目标会话'));
 
   // ↓ 选中第二个会话 → 回车 → 内容输入
   const toContent = drive(picked, [DOWN, ENTER], DEPS);
   assert.equal(toContent.state.mode, 'input');
   assert.equal(toContent.state.input.chatKey, 'wecom:group:2');
-  assert.ok(frameText(toContent.state).includes('广播到 wecom:group:2——内容'));
+  assert.ok(frameText(toContent.state).includes('推送到 wecom:group:2——内容'));
 
   const typed = drive(toContent.state, [...type('通知：明早十点例会')], DEPS);
   const emptyFlow = drive(toContent.state, [ENTER], DEPS); // 内容必填
   assert.equal(emptyFlow.state.mode, 'input');
-  assert.equal(emptyFlow.state.input.err, '广播内容不能为空');
+  assert.equal(emptyFlow.state.input.err, '消息内容不能为空');
   assert.deepEqual(emptyFlow.effects, []);
 
   const confirm = handleKey(typed.state, ENTER, DEPS);
   assert.equal(confirm.state.mode, 'confirm');
-  assert.ok(frameText(confirm.state).includes('将真实发送到该员工的渠道会话，确认？(y/n)'));
+  assert.ok(frameText(confirm.state).includes('将真实发送到该机器人的渠道会话，确认？(y/n)'));
 
   const sent = handleKey(confirm.state, ch('y'), DEPS);
   assert.deepEqual(sent.effects, [{
     type: 'send', botId: 'a1', name: '主号机器人', chatKey: 'wecom:group:2', content: '通知：明早十点例会',
   }]);
   const done = applyResult(sent.state, sent.effects[0], { ok: true, data: { ok: true } });
-  assert.ok(done.notice.text.includes('已广播：主号机器人 → wecom:group:2'));
+  assert.ok(done.notice.text.includes('已推送：主号机器人 → wecom:group:2'));
   // 发送失败（bot 离线 409）红字透传
   const failed = applyResult(sent.state, sent.effects[0], { ok: false, error: 'bot is offline', status: 409 });
-  assert.ok(failed.notice.text.includes('广播失败：bot is offline'));
+  assert.ok(failed.notice.text.includes('推送失败：bot is offline'));
   // n 取消发送
   const aborted = handleKey(confirm.state, ch('n'), DEPS);
   assert.deepEqual(aborted.effects, []);
@@ -220,7 +220,7 @@ test('b：无台账提示「还没有会话记录」；esc 可中途退出选择
   assert.deepEqual(out.effects, []);
 });
 
-test('n 入职向导全流程：逐字段→摘要→y=POST /api/bots（enabled=false）', () => {
+test('n 创建向导全流程：逐字段→摘要→y=POST /api/bots（enabled=false）', () => {
   const st0 = baseState([agent()]);
   const started = handleKey(st0, ch('n'), DEPS);
   assert.deepEqual(started.effects, [{ type: 'ports' }]);
@@ -236,7 +236,7 @@ test('n 入职向导全流程：逐字段→摘要→y=POST /api/bots（enabled=
   assert.equal(wizard.wizard.step, 0);
   assert.equal(wizard.wizard.id, 'hr-test01');
   let text = frameText(wizard);
-  assert.ok(text.includes('入职向导'));
+  assert.ok(text.includes('创建向导'));
   assert.ok(text.includes('▸ 姓名：'), 'name field is the editing row');
 
   // 空名被拒
@@ -248,7 +248,7 @@ test('n 入职向导全流程：逐字段→摘要→y=POST /api/bots（enabled=
   const atPick = drive(wizard, [...type('张三'), ENTER], DEPS);
   assert.equal(atPick.state.wizard.step, 1);
   text = frameText(atPick.state);
-  assert.ok(text.includes('选择岗位'));
+  assert.ok(text.includes('选择引擎'));
   assert.ok(text.includes('dsh') && text.includes('claude'));
 
   const atCwd = drive(atPick.state, [DOWN, ENTER], DEPS); // 选第二个岗位 claude
@@ -256,7 +256,7 @@ test('n 入职向导全流程：逐字段→摘要→y=POST /api/bots（enabled=
   assert.equal(atCwd.state.wizard.fields.provider, 'claude');
   text = frameText(atCwd.state);
   assert.ok(text.includes('✓ 姓名：张三'), 'done field collapses');
-  assert.ok(text.includes('▸ 工位（cwd）：'), 'cwd is editing');
+  assert.ok(text.includes('▸ 工作目录（cwd）：'), 'cwd is editing');
 
   const atBotId = drive(atCwd.state, [...type('/tmp/desk'), ENTER], DEPS);
   assert.equal(atBotId.state.wizard.step, 3);
@@ -273,12 +273,12 @@ test('n 入职向导全流程：逐字段→摘要→y=POST /api/bots（enabled=
   assert.equal(atSummary.state.wizard.step, 5);
   text = frameText(atSummary.state);
   assert.ok(text.includes('姓名：张三'));
-  assert.ok(text.includes('岗位：claude（工位 /tmp/desk）'));
+  assert.ok(text.includes('引擎：claude（工作目录 /tmp/desk）'));
   assert.ok(text.includes('通道：wecom（机器人 ID wwbot42，Secret 已填）'));
-  assert.ok(text.includes('工牌号：hr-test01（自动分配）'));
-  assert.ok(text.includes('调休'));
-  assert.ok(text.includes('门禁：未配置=接受任何企微用户发消息'), '摘要页醒目警示空门禁');
-  assert.ok(text.includes('办理入职？(y/n)'));
+  assert.ok(text.includes('机器人 ID：hr-test01（自动分配）'));
+  assert.ok(text.includes('暂停'));
+  assert.ok(text.includes('允许用户：未配置=接受任何企微用户发消息'), '摘要页醒目警示空名单');
+  assert.ok(text.includes('创建机器人？(y/n)'));
 
   const hired = handleKey(atSummary.state, ch('y'), DEPS);
   assert.deepEqual(hired.effects, [{
@@ -293,13 +293,13 @@ test('n 入职向导全流程：逐字段→摘要→y=POST /api/bots（enabled=
   const done = applyResult(hired.state, hired.effects[0], {
     ok: true, data: { bot: { id: 'hr-test01', name: '张三' } },
   });
-  assert.ok(done.notice.text.includes('已入职：张三（工牌号 hr-test01，调休态）'));
-  assert.ok(done.notice.text.includes('门禁：未配置=接受任何企微用户发消息'), '回执与摘要同步门禁警示');
-  assert.ok(done.notice.text.includes('按空格返岗'));
+  assert.ok(done.notice.text.includes('已创建：张三（机器人 ID hr-test01，暂停态）'));
+  assert.ok(done.notice.text.includes('允许用户：未配置=接受任何企微用户发消息'), '回执与摘要同步名单警示');
+  assert.ok(done.notice.text.includes('按空格启用'));
 
   // API 校验失败（如缺字段）红字透传
   const invalid = applyResult(hired.state, hired.effects[0], { ok: false, error: 'providerConfig.cwd is required' });
-  assert.ok(invalid.notice.text.includes('入职失败：providerConfig.cwd is required'));
+  assert.ok(invalid.notice.text.includes('创建机器人失败：providerConfig.cwd is required'));
 
   // esc 中途放弃 / 摘要 n 取消
   const quitMid = drive(atCwd.state, [ESC], DEPS);
@@ -314,11 +314,11 @@ test('n：无可册岗位/通道直接拒绝；Secret 允许留空（交给 API 
   const noProv = applyResult(started.state, started.effects[0], {
     ok: true, data: { channels: [{ id: 'wecom' }], providers: [] },
   });
-  assert.ok(noProv.notice.text.includes('没有在册岗位'));
+  assert.ok(noProv.notice.text.includes('没有可用引擎'));
   const noChan = applyResult(started.state, started.effects[0], {
     ok: true, data: { channels: [], providers: [{ id: 'dsh' }] },
   });
-  assert.ok(noChan.notice.text.includes('没有在册通道'));
+  assert.ok(noChan.notice.text.includes('没有可用渠道'));
 
   // 全流程但 secret 留空 → account 不带 secret 键
   const wizard = applyResult(started.state, started.effects[0], {
@@ -372,7 +372,7 @@ test('↑↓ 移动选中；空名册下操作键给出指引；esc 清通知；
   for (const k of [SPACE, ch('t'), ch('b')]) {
     const r = handleKey(empty, k, DEPS);
     assert.deepEqual(r.effects, []);
-    assert.ok(r.state.notice.text.includes('公司还没有员工'), `${k.key?.name} guards empty roster`);
+    assert.ok(r.state.notice.text.includes('还没有机器人'), `${k.key?.name} guards empty roster`);
   }
 
   const noticed = { ...two, notice: { text: '旧通知', kind: 'ok' } };
@@ -419,11 +419,11 @@ test('attachTUI：空格→y 走真 dispatch（fetchFn POST toggle）→ 绿字�
   await new Promise((r) => setTimeout(r, 30));
   input.emit('keypress', ' ', { name: 'space' });
   await new Promise((r) => setTimeout(r, 10));
-  assert.ok(stream.__out.join('').includes('确认将 主号机器人 调休？'), 'confirm row painted');
+  assert.ok(stream.__out.join('').includes('确认将 主号机器人 暂停？'), 'confirm row painted');
   input.emit('keypress', 'y', { name: 'y' });
   await new Promise((r) => setTimeout(r, 30));
   const painted = stream.__out.join('');
-  assert.ok(painted.includes('已调休：主号机器人'), 'success notice painted');
+  assert.ok(painted.includes('已暂停：主号机器人'), 'success notice painted');
   assert.ok(painted.includes('\x1b[32'), 'notice is green');
   const toggle = calls.find((c) => c.method === 'POST' && c.url.includes('/toggle'));
   assert.ok(toggle, 'toggle POST dispatched to the real route shape');
@@ -455,20 +455,20 @@ test('迟到回执不清用户模式：暂存 pendingNotice，回仪表盘才显
     { ok: true, data: { bot: { enabled: false } } },
   );
   assert.equal(late.mode, 'result', '迟到的回执不把用户拽回仪表盘');
-  assert.deepEqual(late.pendingNotice, { text: '🌴 已调休：主号机器人（在途工作收尾后下线）', kind: 'ok' });
-  assert.ok(!frameText(late).includes('已调休'), '非仪表盘模式不渲染通知');
+  assert.deepEqual(late.pendingNotice, { text: '⏸️ 已暂停：主号机器人（在途消息收尾后离线）', kind: 'ok' });
+  assert.ok(!frameText(late).includes('已暂停'), '非仪表盘模式不渲染通知');
   assert.equal(late.result.finalText, '第一轮', '用户正在看的内容不被清掉');
 
   // 关窗回仪表盘 → 暂存的通知露面、暂存清位。
   const closed = handleKey(late, ESC, DEPS);
   assert.equal(closed.state.mode, 'dashboard');
-  assert.ok(closed.state.notice.text.includes('已调休：主号机器人'));
+  assert.ok(closed.state.notice.text.includes('已暂停：主号机器人'));
   assert.equal(closed.state.pendingNotice ?? null, null);
 
   // 用户就在仪表盘时，回执仍然即时显示（原行为不变）。
   const fresh = applyResult(closed.state, { type: 'toggle', botId: 'a1', name: '主号机器人' }, { ok: false, error: 'boom' });
-  assert.ok(fresh.notice.text.includes('调休/返岗失败：boom'));
-  assert.ok(frameText(fresh).includes('调休/返岗失败：boom'));
+  assert.ok(fresh.notice.text.includes('暂停/启用失败：boom'));
+  assert.ok(frameText(fresh).includes('暂停/启用失败：boom'));
 });
 
 test('attachTUI：quit 后在途 dispatch 不再渲染（quitCalled 守卫）', async () => {
@@ -512,5 +512,5 @@ test('attachTUI：quit 后在途 dispatch 不再渲染（quitCalled 守卫）', 
   assert.equal(stream.__out.length, writesAtQuit, '还原终端后零写入——没有再画任何帧');
   const out = stream.__out.join('');
   assert.ok(!out.slice(out.indexOf('\x1b[?1049l')).includes('WAO 公司'), '还原序列之后不再出现仪表盘内容');
-  assert.ok(!out.slice(out.indexOf('\x1b[?1049l')).includes('已调休'), '迟到的回执不再上屏');
+  assert.ok(!out.slice(out.indexOf('\x1b[?1049l')).includes('已暂停'), '迟到的回执不再上屏');
 });

@@ -82,8 +82,8 @@ export const FAKE_TIMELINE = [
 // （源删除后快照独立生效，§3.2 DELETE row）。
 export const FAKE_ASSETS = [
   {
-    id: 'ast-skl001', type: 'skill', name: 'wao-company', description: '公司话术与台账规范',
-    content: { name: 'wao-company', description: '回工单前先查台账；公司话词表见 README §4.2', body: '# WAO 公司规范\n\n1. 回工单先查台账\n2. 公司话主层，技术词进 tooltip\n' },
+    id: 'ast-skl001', type: 'skill', name: 'wao-company', description: '话术与台账规范',
+    content: { name: 'wao-company', description: '回复前先查台账；术语对照见 README §4.2', body: '# WAO 使用规范\n\n1. 回复前先查台账\n2. 界面用标准术语，技术词进 tooltip\n' },
     origin: 'operator', version: 3, createdAt: now - 12 * 24 * 3600_000, updatedAt: minAgo(3000), bindings: 1,
   },
   {
@@ -121,10 +121,10 @@ export const FAKE = {
       id: 'bot-2', name: '二号机器人', enabled: true, status: 'offline',
       provider: 'claude', channel: 'wecom',
       progress: null, todayTurns: 0, users: 0, chats: 0,
-      reason: 'provider claude 已禁用（插件停用或加载失败）',
+      reason: '引擎 claude 已停用（插件停用或加载失败）',
       assetWarnings: [
         'memory 共享 cwd：跨会话记忆可能被同目录其他会话互见',
-        'rtk 已绑定但二进制不可用（rtk 未安装或不在 PATH）——装备暂未生效，绑定保留',
+        'rtk 已绑定但二进制不可用（rtk 未安装或不在 PATH）——配置暂未生效，绑定保留',
       ],
       // manifest.tools 装备态回显：rg 预检在位（available）、rtk 二进制缺失
       // （unavailable）——装备台「装备态」列两种徽章的基线。
@@ -317,7 +317,7 @@ export const FAKE_API = {
         ok: true, id: a.id, removedBindings, keptExclusive,
         rematerialized: holders.filter((b) => b.assets.some((x) => x.assetId !== a.id) || removedBindings > 0).map((b) => b.id),
         failed: [], writes: [],
-        ...(keptExclusive > 0 ? { note: `源资产已删除，${keptExclusive} 个私发（exclusive）副本仍生效（快照保留在各自 bot 记录中）` } : {}),
+        ...(keptExclusive > 0 ? { note: `源工具已删除，${keptExclusive} 个独立（exclusive）副本仍生效（快照保留在各自 bot 记录中）` } : {}),
       };
     }
     // PATCH：version 递增 + 共享绑定 fan-out 回执
@@ -355,7 +355,7 @@ export const FAKE_API = {
       `/api/bots/${bot.id}/assets/${assetId}`,
       () => { // DELETE 解绑
         const x = (bot.assets ?? []).find((b) => b.assetId === assetId);
-        if (x == null) throw new Error(`资产 ${assetId} 未绑定到 bot ${bot.id}`);
+        if (x == null) throw new Error(`工具 ${assetId} 未绑定到 bot ${bot.id}`);
         bot.assets = (bot.assets ?? []).filter((b) => b.assetId !== assetId);
         const src = FAKE_ASSETS.find((a) => a.id === assetId);
         if (src != null) src.bindings = Math.max(0, (src.bindings ?? 1) - 1);
@@ -376,7 +376,7 @@ export const FAKE_API = {
         ? { action: 'rtk-init', path: `${bot.providerConfig?.cwd ?? '/tmp'}/.wao` }
         : { action: 'write', path: `${bot.providerConfig?.cwd ?? '/tmp'}/.wao/${x.type}--${x.name}.md` })),
       ...((bot.assets ?? []).some((x) => x.type === 'tool')
-        ? { notes: ['rtk 不可用：二进制未安装或不在 PATH——绑定保留，装好 rtk 后重跑「重新物化」即可装备'] } : {}),
+        ? { notes: ['rtk 不可用：二进制未安装或不在 PATH——绑定保留，装好 rtk 后重跑「重新物化」即可配置'] } : {}),
     }),
   ])),
 };

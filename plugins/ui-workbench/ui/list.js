@@ -34,7 +34,7 @@ const WorkbenchInner = ({ WAO, retry }) => {
     try {
       await api(`/api/bots/${encodeURIComponent(agent.id)}/toggle`, {});
     } catch (err) {
-      setActionError(`办理「${agent.name ?? agent.id}」的调休/返岗失败：${err?.message ?? err}`);
+      setActionError(`暂停/启用「${agent.name ?? agent.id}」失败：${err?.message ?? err}`);
     } finally {
       setBusyId(null);
     }
@@ -43,7 +43,7 @@ const WorkbenchInner = ({ WAO, retry }) => {
   if (error != null) {
     return h('div', { className: 'page' },
       h('h2', null, '今日工作'),
-      h('div', { className: 'error' }, bannerText('加载同事列表失败：', error)),
+      h('div', { className: 'error' }, bannerText('加载机器人列表失败：', error)),
       h('div', { className: 'wb-toolbar' },
         h('button', { className: 'wb-btn wb-btn-primary', onClick: retry }, '重试'),
         h('span', { className: 'wb-hint' }, '后台仍会每 5 秒自动重试')),
@@ -54,16 +54,16 @@ const WorkbenchInner = ({ WAO, retry }) => {
     return h('div', { className: 'page' },
       h('h2', null, '今日工作'),
       h('div', { className: 'wb-empty' },
-        h('p', null, '公司今天静悄悄——还没有一位同事在岗。'),
-        h('p', { className: 'wb-hint' }, '去人事部办一次入职，四步就好：名片、岗位、工位、工牌。'),
-        h('button', { className: 'wb-btn wb-btn-primary', onClick: () => goBots('new', null) }, '去人事部办理入职')),
+        h('p', null, '还没有机器人在线。'),
+        h('p', { className: 'wb-hint' }, '去机器人管理创建一个，五步就好：基本信息、引擎、工具、工作目录、连接配置。'),
+        h('button', { className: 'wb-btn wb-btn-primary', onClick: () => goBots('new', null) }, '去创建机器人')),
     );
   }
 
   const onDuty = agents.filter((a) => a.enabled !== false && (a.status === 'working' || a.status === 'idle'));
   return h('div', { className: 'page' },
     h('h2', null, '今日工作'),
-    h('p', { className: 'muted' }, `${onDuty.length} 位同事在岗——谁在忙什么，这里实时可见`),
+    h('p', { className: 'muted' }, `${onDuty.length} 个机器人在线——谁在忙什么，这里实时可见`),
     actionError != null ? h('div', { className: 'error' }, actionError) : null,
     h('div', { className: 'wb-grid' },
       agents.map((a) => {
@@ -79,23 +79,23 @@ const WorkbenchInner = ({ WAO, retry }) => {
           h('div', { className: 'wb-card-head' },
             h(Avatar, {
               WAO, seed: a.id, size: 42, ring: meta.color, mood: off ? 'sleep' : 'neutral',
-              title: `工牌号 ${a.id}\n${meta.tech}`,
+              title: `机器人 ID ${a.id}\n${meta.tech}`,
             }),
             h('div', { style: { flex: '1', minWidth: '0' } },
               h('div', { className: 'wb-name' }, a.name ?? a.id),
-              h('div', { className: 'wb-sub', title: `${meta.label}（provider ${a.provider ?? '?'}）· 渠道 ${a.channel ?? '?'} · 工牌号 ${a.id}` },
+              h('div', { className: 'wb-sub', title: `${meta.label}（provider ${a.provider ?? '?'}）· 渠道 ${a.channel ?? '?'} · 机器人 ID ${a.id}` },
                 `${meta.label} · ${a.id}`)),
             badge,
             // P2-4: 在岗同事带离岗原因，但 provider/渠道端口消失的调休同事此前
             // 毫无信号——橙点在灰色「休假」之外点名原因（title）。
             a.providerMissing === true ? h('span', {
-              className: 'wb-dot-warn', title: '它的岗位部门已不存在（后勤部门里对应插件被停用）',
+              className: 'wb-dot-warn', title: '它的引擎插件已不存在（插件管理里对应插件被停用）',
             }) : null,
             h('label', {
               className: 'wb-switch',
               title: a.enabled === false
-                ? '调休中——点击返岗（在岗后立即连接企微开始接单）'
-                : '在岗——点击办理调休（在跑的活会收完尾再断开，档案保留）',
+                ? '已暂停——点击启用（启用后立即连接企微开始工作）'
+                : '在线——点击暂停（在跑的活会收完尾再断开，配置保留）',
             },
               h('input', {
                 type: 'checkbox', checked: a.enabled !== false, disabled: busyId === a.id,
@@ -103,16 +103,16 @@ const WorkbenchInner = ({ WAO, retry }) => {
               }),
               h('span', { className: 'wb-track' })),
           ),
-          working || a.progress?.line ? h('div', { className: 'wb-progress', title: '工作汇报（实时进度行）' },
+          working || a.progress?.line ? h('div', { className: 'wb-progress', title: '运行进度（实时进度行）' },
             a.progress?.line ?? '运行中…') : null,
-          status === 'offline' && a.reason ? h('div', { className: 'wb-reason', title: '离岗原因（技术原值见 tooltip）' }, `离岗原因：${a.reason}`) : null,
+          status === 'offline' && a.reason ? h('div', { className: 'wb-reason', title: '离线原因（技术原值见 tooltip）' }, `离线原因：${a.reason}`) : null,
           h('div', { className: 'wb-stats' },
-            h('span', null, '今日工单 ', h('b', null, a.todayTurns ?? 0)),
-            h('span', null, '服务同事 ', h('b', null, a.users ?? 0)),
-            h('span', null, '档案数 ', h('b', null, a.chats ?? 0))),
+            h('span', null, '今日消息 ', h('b', null, a.todayTurns ?? 0)),
+            h('span', null, '服务用户 ', h('b', null, a.users ?? 0)),
+            h('span', null, '会话数 ', h('b', null, a.chats ?? 0))),
           h('div', { className: 'wb-actions' },
-            h('button', { className: 'wb-btn', onClick: () => goBots('edit', a.id) }, '员工档案'),
-            h('button', { className: 'wb-btn', onClick: () => goBots('test', a.id), title: '试跑：直接跑它的岗位配置，不进引擎链' }, '岗前测试')),
+            h('button', { className: 'wb-btn', onClick: () => goBots('edit', a.id) }, '机器人配置'),
+            h('button', { className: 'wb-btn', onClick: () => goBots('test', a.id), title: '测试运行：直接跑它的引擎配置，不进引擎链' }, '测试运行')),
         );
       })),
   );

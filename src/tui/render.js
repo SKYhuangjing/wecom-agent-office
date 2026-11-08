@@ -112,10 +112,10 @@ const wrapText = (text, width) => {
 const STATUS_LABEL = {
   working: { text: '工作中', code: CODE.cyan },
   idle: { text: '待命', code: CODE.green },
-  offline: { text: '休假', code: CODE.gray },
+  offline: { text: '离线', code: CODE.gray },
 };
 
-export const KEYBAR = '↑↓选择 空格:调休/返岗 t:岗前测试 b:广播 l:日志 n:入职 e:浏览器 q:退出';
+export const KEYBAR = '↑↓选择 空格:暂停/启用 t:测试运行 b:推送 l:日志 n:创建 e:浏览器 q:退出';
 const LOG_WINDOW_ROWS = 5;
 
 // Per-mode footer hints (the dashboard keeps the classic key bar; every
@@ -130,8 +130,8 @@ const HINTS = {
   wizard: '输入后回车下一步 esc 取消向导',
 };
 const hintOf = (state) => {
-  if (state.mode === 'wizard' && state.wizard?.step === 5) return 'y 办理入职 n/esc 取消向导';
-  if (state.mode === 'wizard' && state.wizard?.step === 1) return '↑↓ 选择岗位 回车 确认 esc 取消向导';
+  if (state.mode === 'wizard' && state.wizard?.step === 5) return 'y 创建机器人 n/esc 取消向导';
+  if (state.mode === 'wizard' && state.wizard?.step === 1) return '↑↓ 选择引擎 回车 确认 esc 取消向导';
   return HINTS[state.mode] ?? KEYBAR;
 };
 
@@ -160,13 +160,13 @@ export function computeFrame(state = {}, opts = {}) {
     const onDuty = agents.filter((a) => (a?.status ?? 'offline') !== 'offline').length;
     const todayTurns = agents.reduce((n, a) => n + (a?.todayTurns ?? 0), 0);
     const segs = [
-      { t: 'WAO 公司', c: [CODE.bold] },
+      { t: 'WAO Console', c: [CODE.bold] },
       { t: ' │ ', c: [CODE.dim] },
       { t: `⏰ ${clockOf(now)}`, c: [CODE.bold] },
       { t: ' │ ', c: [CODE.dim] },
-      { t: `在岗 ${onDuty}/${agents.length}`, c: [] },
+      { t: `在线 ${onDuty}/${agents.length}`, c: [] },
       { t: ' │ ', c: [CODE.dim] },
-      { t: `今日工单 ${todayTurns}`, c: [] },
+      { t: `今日消息 ${todayTurns}`, c: [] },
     ];
     if (busy > 0) segs.push({ t: ' │ ', c: [CODE.dim] }, { t: '⏳ 处理中', c: [CODE.bold] });
     lines.push(composeLine(width, segs));
@@ -246,14 +246,14 @@ const dashboardPane = (width, budget, { agents, selectedIdx, now, logTail, logZo
   const contentRows = Math.max(1, budget - logWindowRows);
   const sel = agents.length === 0 ? 0 : Math.min(Math.max(0, selectedIdx), agents.length - 1);
   if (agents.length === 0) {
-    out.push('公司还没有员工——按 n 办理入职');
+    out.push('还没有机器人——按 n 创建机器人');
   } else {
     const visible = agents.length > contentRows ? agents.slice(0, contentRows - 1) : agents;
     visible.forEach((a, i) => {
       const selected = i === sel;
       const extra = selected ? [CODE.reverse] : [];
       const st = STATUS_LABEL[a?.status] ?? STATUS_LABEL.offline;
-      let label = a?.enabled === false ? '调休' : st.text;
+      let label = a?.enabled === false ? '暂停' : st.text;
       let stCode = a?.enabled === false ? CODE.gray : st.code;
       if (a?.enabled !== false && a?.status === 'offline' && a?.reason) label = `${label}·${a.reason}`;
       // 长名截断：名字最多占 width-30 列（窄端保底 8），把余宽留给
@@ -297,11 +297,11 @@ const dashboardPane = (width, budget, { agents, selectedIdx, now, logTail, logZo
       if (warnTitle !== '') segs.push({ t: '  ', c: [] }, { t: `⚠ ${warnTitle}`, c: [CODE.yellow] });
       const toolCount = Array.isArray(a?.assetTools) ? a.assetTools.length : 0;
       if (toolCount > 0) segs.push({ t: '  ', c: [] }, { t: `🛠${toolCount}`, c: [CODE.gray] });
-      if (a?.providerMissing) segs.push({ t: ' 部门缺席', c: [CODE.dim] });
+      if (a?.providerMissing) segs.push({ t: ' 引擎缺失', c: [CODE.dim] });
       out.push(composeLine(width, segs, extra));
     });
     if (agents.length > contentRows) {
-      out.push(paint(`…还有 ${agents.length - visible.length} 位员工未显示`, CODE.dim));
+      out.push(paint(`…还有 ${agents.length - visible.length} 个机器人未显示`, CODE.dim));
     }
   }
 
@@ -365,17 +365,17 @@ const pickPane = (width, budget, pick) => {
 };
 
 // 简版入职向导：逐字段行编辑（名→岗位→cwd→botId→secret→摘要确认）。
-const WIZARD_LABELS = ['姓名', '岗位', '工位（cwd）', '机器人 ID（botId）', 'Secret（不回显）'];
+const WIZARD_LABELS = ['姓名', '引擎', '工作目录（cwd）', '机器人 ID（botId）', 'Secret（不回显）'];
 const wizardPane = (width, budget, w) => {
-  if (w.step === 1) { // 岗位选择（技能部门枚举自 /api/ports）
+  if (w.step === 1) { // 引擎选择（provider 枚举自 /api/ports）
     return pickPane(width, budget, {
-      title: '选择岗位（技能部门）',
+      title: '选择引擎（provider）',
       items: (w.ports?.providers ?? []).map((p) => ({ label: p?.id ?? '?', value: p?.id })),
       idx: w.pickIdx,
     });
   }
   const out = [];
-  out.push(composeLine(width, [{ t: '入职向导（esc 取消）', c: [CODE.bold] }]));
+  out.push(composeLine(width, [{ t: '创建向导（esc 取消）', c: [CODE.bold] }]));
   for (let i = 0; i < WIZARD_LABELS.length; i++) {
     const field = WIZARD_FIELD_OF_STEP[i];
     if (w.step === i) { // 当前编辑行：反色 + 值 + 光标（secret 打码）
@@ -408,14 +408,14 @@ const wizardPane = (width, budget, w) => {
     const f = w.fields ?? {};
     out.push(paint('─'.repeat(Math.min(width, 44)), CODE.dim));
     out.push(composeLine(width, [{ t: `  姓名：${f.name ?? ''}`, c: [] }]));
-    out.push(composeLine(width, [{ t: `  岗位：${f.provider ?? '?'}（工位 ${f.cwd ?? ''}）`, c: [] }]));
+    out.push(composeLine(width, [{ t: `  引擎：${f.provider ?? '?'}（工作目录 ${f.cwd ?? ''}）`, c: [] }]));
     out.push(composeLine(width, [{ t: `  通道：${w.channel ?? '—'}（机器人 ID ${f.botId || '—'}${f.secret ? '，Secret 已填' : '，Secret 未填'}）`, c: [] }]));
-    out.push(composeLine(width, [{ t: `  工牌号：${w.id ?? '?'}（自动分配）`, c: [CODE.dim] }]));
-    out.push(paint('  入职后先调休（enabled=false）——到 Web 人事部完善资料，或选中按空格返岗', CODE.dim));
-    // 门禁警示（评审 W2 T3 #3）：TUI 简版向导不做 allowedUsers 字段（Web
-    // 人事部已有完整编辑），但空门禁=接受任何企微用户发消息，必须醒目告知。
-    out.push(paint('  ⚠ 门禁：未配置=接受任何企微用户发消息——返岗前到 Web 人事部配置白名单', CODE.yellow, CODE.bold));
-    out.push(composeLine(width, [{ t: '确认 办理入职？(y/n)', c: [CODE.bold, CODE.yellow] }]));
+    out.push(composeLine(width, [{ t: `  机器人 ID：${w.id ?? '?'}（自动分配）`, c: [CODE.dim] }]));
+    out.push(paint('  创建后先暂停（enabled=false）——到 Web 机器人管理完善资料，或选中按空格启用', CODE.dim));
+    // 允许用户警示（评审 W2 T3 #3）：TUI 简版向导不做 allowedUsers 字段（Web
+    // 机器人管理已有完整编辑），但空名单=接受任何企微用户发消息，必须醒目告知。
+    out.push(paint('  ⚠ 允许用户：未配置=接受任何企微用户发消息——启用前到 Web 机器人管理配置白名单', CODE.yellow, CODE.bold));
+    out.push(composeLine(width, [{ t: '确认 创建机器人？(y/n)', c: [CODE.bold, CODE.yellow] }]));
   }
   return out;
 };

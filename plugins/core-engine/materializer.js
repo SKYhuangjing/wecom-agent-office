@@ -524,9 +524,9 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
         const entry = arr.find((e) => JSON.stringify(e ?? {}).includes(spec.hookCommand)) ?? null;
         if (entry != null) {
           entriesOut.push({ file: hookFile, pointer: spec.hookPointer, entry, via: 'rtk' });
-          notes.push({ assetId, detail: `rtk 已装备（${probe.version}，flavor ${flavor}，主路径）：${hookFile} PreToolUse hook + RTK.md——卸载走 rtk uninstall` });
+          notes.push({ assetId, detail: `rtk 已配置（${probe.version}，flavor ${flavor}，主路径）：${hookFile} PreToolUse hook + RTK.md——卸载走 rtk uninstall` });
         } else {
-          notes.push({ assetId, detail: `rtk 已装备（${probe.version}，flavor ${flavor}，主路径），但回读未找到 ${spec.hookCommand} 条目（形状漂移？）——卸载依赖 rtk uninstall` });
+          notes.push({ assetId, detail: `rtk 已配置（${probe.version}，flavor ${flavor}，主路径），但回读未找到 ${spec.hookCommand} 条目（形状漂移？）——卸载依赖 rtk uninstall` });
         }
         const bak = join(target, `${spec.hookFile}.bak`);
         if (existsSync(bak)) {
@@ -535,7 +535,7 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
       } else {
         const ext = join(target, 'extensions', 'rtk.ts');
         notes.push(existsSync(ext)
-          ? { assetId, detail: `rtk 已装备（${probe.version}，flavor pi，主路径）：${ext} 扩展——卸载走 rtk uninstall` }
+          ? { assetId, detail: `rtk 已配置（${probe.version}，flavor pi，主路径）：${ext} 扩展——卸载走 rtk uninstall` }
           : { assetId, detail: `rtk 报告成功但 ${ext} 未出现（形状漂移？）——卸载依赖 rtk uninstall` });
       }
       return;
