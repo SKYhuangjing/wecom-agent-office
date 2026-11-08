@@ -66,8 +66,9 @@ body {
 }
 
 /* —— 侧栏 aside 挂载点 + AI 接入小卡（插件经 registerAside 注册）——————— */
+/* margin-top:auto 推到侧栏底部（左下角）；侧栏桌面形态 sticky 100vh，卡片贴角 */
 .aside-slot {
-  margin-top: 14px;
+  margin-top: auto;
   padding-top: 12px;
   border-top: 1px solid var(--line-subtle);
   display: flex;
