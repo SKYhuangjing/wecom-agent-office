@@ -297,7 +297,7 @@ const assetWarningsOf = (state, bot) => {
 // channel adapter's connection state — a terminal 'stopped' adapter (subscribe
 // 鉴权失败, kicked) means the bot cannot receive, so an attached-and-idle bot
 // still reports offline. Single extraction point shared by the roster row
-// (GET /api/agents / companyOps / get_employee) and the /healthz bots summary
+// (GET /api/agents / companyOps / get_bot) and the /healthz bots summary
 // (rosterSummary below) so the two faces can never drift.
 function botStatusOf(state, botId) {
   const st = state.engine.status(botId);
@@ -334,7 +334,7 @@ export function rosterSummary(state) {
 }
 
 // One roster row — shared by GET /api/agents, companyOps.agents and the
-// get_employee tool aggregate (single extraction point so the three cannot
+// get_bot tool aggregate (single extraction point so the three cannot
 // drift).
 function botRow(state, bot) {
   const midnight = new Date();
@@ -401,8 +401,8 @@ function agentsOp(state) {
   return { agents: state.doc.bots.filter(isObject).map((bot) => botRow(state, bot)) };
 }
 
-// Read-only single-bot aggregate for the MCP get_employee tool (no HTTP
-// route): the roster row PLUS the masked full record and the 入职 stamp.
+// Read-only single-bot aggregate for the MCP get_bot tool (no HTTP
+// route): the roster row PLUS the masked full record and the createdAt stamp.
 // maskedBotEcho keeps object-typed credential-shaped values as '__MASKED__'
 // and sendJson-side sanitize semantics are applied by callers that serialize.
 function botDetailOp(state, id) {
@@ -428,8 +428,8 @@ async function createBotOp(state, bot) {
   // cwdExistsError for why this 400 beats a spawn-time ENOENT.
   const cwdErr = cwdExistsError(bot);
   if (cwdErr != null) throw httpError(400, cwdErr);
-  // 入职日期 (redesign P2): stamped at creation, echoed by GET /api/bots for
-  // the 工牌. Refuse a caller-supplied value — createdAt is registry truth,
+  // 创建日期: stamped at creation, echoed by GET /api/bots for
+  // the ID card. Refuse a caller-supplied value — createdAt is registry truth,
   // not editable record data.
   if (bot.createdAt !== undefined) throw httpError(400, 'createdAt is set by the server, not accepted');
   bot.createdAt = Date.now();
@@ -449,7 +449,7 @@ async function patchBotOp(state, id, patchBody) {
   if (bot == null) throw httpError(404, 'bot not found');
   if (!isObject(patchBody)) throw httpError(400, 'patch body must be a JSON object');
   // createdAt is registry truth (mirrors createBotHandler's refusal): a patch
-  // body carrying it is rejected, never silently merged into the 工牌.
+  // body carrying it is rejected, never silently merged into the ID card.
   if (patchBody.createdAt !== undefined) throw httpError(400, 'createdAt is set by the server, not accepted');
   // Same dedicated-surface rule as createBotOp: binding mutations must run
   // the §2.3 chain, never a blind merge.

@@ -35,7 +35,7 @@ export default {
     // their callTool answer isError with an admin-disabled notice — the
     // read-only tools (roster/detail/log/state/…) stay available either way.
     config: {
-      dangerousTools: { type: 'bool', default: true, label: '允许 AI Agent 执行高危操作（离职/广播/资产变更/部门启停）' },
+      dangerousTools: { type: 'bool', default: true, label: '允许 AI Agent 执行高危操作（删除/推送/资产变更/插件启停）' },
     },
   },
 

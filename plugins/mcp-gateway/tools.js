@@ -1,8 +1,8 @@
 // MCP tool surface (W1 T2): the company's 19 tools exposed over /mcp —
-// Chinese names/copy per README §4.2 公司话词表, dual output for every tool
+// Chinese names/copy per README §4.2 标准术语词表, dual output for every tool
 // (content[].text = human-readable Chinese summary, structuredContent =
 // machine payload), and consequence copy on the dangerous ones
-// (offboard / department_toggle / broadcast + the W3 asset trio
+// (delete_bot / toggle_plugin / broadcast + the W3 asset trio
 // bind_asset / unbind_asset / rematerialize) so an Agent can read the impact
 // back to its user before/after acting.
 //
@@ -18,7 +18,7 @@
 // return masked/secret-free bodies (maskedBotEcho semantics); every
 // structured payload is additionally run through companyOps.sanitize — the
 // same recursive scrub sendJson applies — as belt-and-braces. Write paths
-// (hire/update) ACCEPT secrets in arguments; they are simply never echoed.
+// (create_bot/update) ACCEPT secrets in arguments; they are simply never echoed.
 //
 // Error channel split (server.js contract): an unknown tool name or unshaped
 // params throws a {jsonRpcCode: -32602} error (protocol level); anything the
@@ -57,7 +57,7 @@ const unavailable = (message) => {
 };
 
 // The dangerous 7 (security audit P1-5): destructive or company-wide impact —
-// offboard / broadcast / department_toggle + the four asset-mutation tools.
+// delete_bot / broadcast / toggle_plugin + the four asset-mutation tools.
 // With plugin option dangerousTools=false their callTool answers isError
 // with an admin-disabled notice BEFORE any service is touched.
 const DISABLED_NOTICE = '⚠️ 该操作已被管理员禁用（dangerousTools=false）';
@@ -103,7 +103,7 @@ const opsNow = (services) => services.get('companyOps')
 const kopsNow = (services) => services.get('kernelOps')
   ?? (() => { throw unavailable('内核操作服务不可用（kernelOps 未注册），插件/系统状态工具暂不能使用'); })();
 
-// hire/update error enrichment: an "unknown channel/provider" validation
+// create_bot/update error enrichment: an "unknown channel/provider" validation
 // failure is useless to a blind Agent unless it also says what IS available.
 // Appended to the op's own errors (display-only; nothing rethrown or altered).
 function appendPortHints(err, ops) {
@@ -119,7 +119,7 @@ function appendPortHints(err, ops) {
 // —— the 19 tools ———————————————————————————————————————————————————————
 const TOOLS = [
   {
-    name: 'list_employees',
+    name: 'list_bots',
     description: '查看在线机器人清单：全部机器人 ID/名称/在线状态/离线原因/当前进度行/今日与累计消息数/引擎/工具警示（如有，如 memory 共享 cwd）。状态四档：working=工作中/idle=待命/offline=离线/enabled:false=暂停(已停用)；转述时用此词表。只读，无参数。',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     run({ services }) {
@@ -145,7 +145,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'get_employee',
+    name: 'get_bot',
     description: '按机器人 ID 查一位机器人的详情：在线状态（状态四档：working=工作中/idle=待命/offline=离线/enabled:false=暂停(已停用)；转述时用此词表）/离线原因/创建时间/引擎与渠道/工作目录/允许用户/消息统计/配置摘要。敏感值不回显（secret 类键整体省略）。只读。',
     inputSchema: {
       type: 'object',
@@ -169,11 +169,11 @@ const TOOLS = [
         `- 消息统计：今日 ${d.todayTurns}｜累计 ${d.turns} 轮｜服务 ${d.users} 人 / ${d.chats} 个会话`,
         `- 配置摘要（无 secret）：${JSON.stringify(ops.sanitize({ account: d.bot.account, providerConfig: d.bot.providerConfig }))}`,
       );
-      return ok(lines.join('\n'), { employee: ops.sanitize(d) });
+      return ok(lines.join('\n'), { bot: ops.sanitize(d) });
     },
   },
   {
-    name: 'hire',
+    name: 'create_bot',
     description: '创建机器人（create_bot）：提交完整 bot 记录（机器人 ID id、名称 name、渠道 channel 及其 account 凭证、引擎 provider 及其 providerConfig（含工作目录 cwd）、enabled、allowedUsers 允许用户）。凭证字段可含 secret（只写不回显）。校验失败会逐字段列出原因并附当前可用的渠道/引擎清单。',
     inputSchema: {
       type: 'object',
@@ -194,7 +194,7 @@ const TOOLS = [
       try {
         const { bot: created } = await ops.createBot(args.bot);
         return ok(
-          `✅ 创建完成：${created.name}（机器人 ID ${created.id}）已建档${created.enabled !== false ? '并启用' : '（当前为暂停状态，未连接）'}。\n建议先做一次测试运行（probation_test）验证引擎可用。`,
+          `✅ 创建完成：${created.name}（机器人 ID ${created.id}）已建档${created.enabled !== false ? '并启用' : '（当前为暂停状态，未连接）'}。\n建议先做一次测试运行（test_bot）验证引擎可用。`,
           { bot: ops.sanitize(created) },
         );
       } catch (err) {
@@ -204,7 +204,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'update_employee',
+    name: 'update_bot',
     description: '更新机器人配置（patch 语义）：只传要改的字段（如 name/providerConfig.progressStyle/providerConfig.progressText/account.endpoint/enabled/allowedUsers）。密码类字段留空或缺省＝保留原值；改引擎/渠道或其配置会重新物化工作目录文件并重连。',
     inputSchema: {
       type: 'object',
@@ -233,9 +233,9 @@ const TOOLS = [
     },
   },
   {
-    name: 'offboard',
+    name: 'delete_bot',
     dangerous: true,
-    description: '⚠️ 危险操作：删除机器人。在途消息收尾后断开连接、清理物化工作目录文件、从清单移除；台账文件与时间线历史保留。同一机器人 ID 可重新 hire（历史台账不自动接续）。执行前务必向用户复述后果并确认。',
+    description: '⚠️ 危险操作：删除机器人。在途消息收尾后断开连接、清理物化工作目录文件、从清单移除；台账文件与时间线历史保留。同一机器人 ID 可重新创建（历史台账不自动接续）。执行前务必向用户复述后果并确认。',
     inputSchema: {
       type: 'object',
       properties: { botId: { type: 'string', description: '机器人 ID（bot id）' } },
@@ -246,19 +246,19 @@ const TOOLS = [
       const ops = opsNow(services);
       const d = ops.botDetail(args.botId); // 404 first, and gives the name for the confirm copy
       await ops.deleteBot(args.botId);
-      log?.info?.(`mcp: offboard bot ${args.botId}`);
+      log?.info?.(`mcp: delete_bot bot ${args.botId}`);
       return ok(
         `👋 已删除：${d.bot.name}（机器人 ID ${args.botId}）。后果说明：\n`
         + '- 在途消息已收尾：串行链排空后才断开连接，未及处理的入队消息已按维护话术答复\n'
         + '- 工作目录已清理：物化配置文件按引擎支持情况清理（清理失败仅记日志，不阻断删除）\n'
         + '- 会话历史留存：台账文件保留在 data/ledger/；时间线为本进程事件流，全员查询仍可见其历史事件；单机器人查询随删除关闭\n'
-        + '- 可重新创建：以同一机器人 ID 重新 hire 即可（历史台账不自动接续）',
-        { offboarded: { id: args.botId, name: d.bot.name } },
+        + '- 可重新创建：以同一机器人 ID 重新创建 即可（历史台账不自动接续）',
+        { deleted: { id: args.botId, name: d.bot.name } },
       );
     },
   },
   {
-    name: 'set_duty',
+    name: 'set_enabled',
     description: '启停切换：在线↔暂停（enabled 取反）。暂停＝在途消息收尾后离线、配置保留；启用＝重新连接上线。',
     inputSchema: {
       type: 'object',
@@ -273,11 +273,11 @@ const TOOLS = [
         const d = ops.botDetail(args.botId);
         return ok(`▶️ 已启用：${bot.name}（机器人 ID ${bot.id}）恢复上线，当前状态：${STATUS_ZH[d.status] ?? d.status}。`, { bot: ops.sanitize(bot), status: d.status });
       }
-      return ok(`⏸️ 已暂停：${bot.name}（机器人 ID ${bot.id}）已停用——在途消息收尾后离线；配置保留，随时可启用（再次 set_duty）。`, { bot: ops.sanitize(bot), status: 'off-duty' });
+      return ok(`⏸️ 已暂停：${bot.name}（机器人 ID ${bot.id}）已停用——在途消息收尾后离线；配置保留，随时可启用（再次 set_enabled）。`, { bot: ops.sanitize(bot), status: 'paused' });
     },
   },
   {
-    name: 'probation_test',
+    name: 'test_bot',
     description: '测试运行：直连引擎运行器跑一轮（默认探针「回复：收到」，可自定义 prompt；带 sessionId 则续跑该会话）。不进引擎链、不记台账。结果 code 字段才是探针成功判据（completed＝通过），勿只看 isError——未通过也是正常应答。',
     inputSchema: {
       type: 'object',
@@ -334,7 +334,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'list_departments',
+    name: 'list_plugins',
     description: '查看插件清单：id/名称/类型/版本/状态（启用/停用/故障）。只读。',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     run({ services }) {
@@ -345,26 +345,26 @@ const TOOLS = [
         const st = DEPT_STATUS_ZH[p.status] ?? p.status;
         lines.push(`- ${p.id}${p.name ? `（${p.name}）` : ''}｜${p.type ?? '?'}｜v${p.version ?? '?'}｜${st}${p.error ? `｜${clip(p.error, 80)}` : ''}`);
       }
-      return ok(lines.join('\n'), { departments: plugins });
+      return ok(lines.join('\n'), { plugins });
     },
   },
   {
-    name: 'department_toggle',
+    name: 'toggle_plugin',
     dangerous: true,
     description: '⚠️ 危险操作：插件启停（插件 enable/disable）。停用会触发四阶段重载（在途消息收尾→卸载→重扫→调和），依赖其渠道/引擎的机器人立即离线；重新启用后机器人自动恢复。注意：重载会重建 MCP 会话（若下次调用收到 -32002 请重新 initialize）。执行前向用户说明受影响机器人清单。',
     inputSchema: {
       type: 'object',
       properties: {
-        departmentId: { type: 'string', description: '插件 id，见 list_departments' },
+        pluginId: { type: 'string', description: '插件 id，见 list_plugins' },
         enabled: { type: 'boolean', description: 'true＝启用（恢复），false＝停用' },
       },
-      required: ['departmentId', 'enabled'],
+      required: ['pluginId', 'enabled'],
       additionalProperties: false,
     },
     async run({ services, args, log }) {
       const kops = kopsNow(services);
-      // Impact BEFORE the flip: which ON-DUTY employees lose their channel/
-      // provider port. Off-duty (休假) employees are already offline — counting
+      // Impact BEFORE the flip: which ON-DUTY bots lose their channel/
+      // provider port. Off-duty (休假) bots are already offline — counting
       // them as "taken down by this flip" would overstate the impact. null =
       // impact UNKNOWN (engine service unavailable or the tally failed); the
       // flip below is authoritative either way.
@@ -373,37 +373,37 @@ const TOOLS = [
       if (ops != null) {
         try {
           const { channels, providers } = ops.ports();
-          const chans = channels.filter((c) => c.owner === args.departmentId).map((c) => c.id);
-          const provs = providers.filter((p) => p.owner === args.departmentId).map((p) => p.id);
+          const chans = channels.filter((c) => c.owner === args.pluginId).map((c) => c.id);
+          const provs = providers.filter((p) => p.owner === args.pluginId).map((p) => p.id);
           affected = ops.agents().agents
             .filter((a) => a.enabled && (provs.includes(a.provider) || chans.includes(a.channel)))
             .map((a) => ({ id: a.id, name: a.name }));
         } catch { affected = null; /* impact is advisory; the flip below is authoritative */ }
       }
-      log?.info?.(`mcp: department_toggle ${args.departmentId} -> ${args.enabled}`);
-      const plugins = await kops.setPluginEnabled(args.departmentId, args.enabled);
-      const dept = plugins.find((p) => p.id === args.departmentId) ?? null;
+      log?.info?.(`mcp: toggle_plugin ${args.pluginId} -> ${args.enabled}`);
+      const plugins = await kops.setPluginEnabled(args.pluginId, args.enabled);
+      const dept = plugins.find((p) => p.id === args.pluginId) ?? null;
       if (args.enabled) {
         return ok(
-          `✅ 插件已启用：${args.departmentId}（四阶段重载完成，当前状态：${DEPT_STATUS_ZH[dept?.status] ?? dept?.status ?? '?'}）。依赖其渠道/引擎的机器人将由调和机制自动恢复上线。`,
-          { departmentId: args.departmentId, enabled: true, status: dept?.status ?? null },
+          `✅ 插件已启用：${args.pluginId}（四阶段重载完成，当前状态：${DEPT_STATUS_ZH[dept?.status] ?? dept?.status ?? '?'}）。依赖其渠道/引擎的机器人将由调和机制自动恢复上线。`,
+          { pluginId: args.pluginId, enabled: true, status: dept?.status ?? null },
         );
       }
       const impactLine = affected == null
-        ? '- 影响未知（引擎不可用）：本次停用未清点受影响机器人，请稍后用 list_employees 核对\n'
+        ? '- 影响未知（引擎不可用）：本次停用未清点受影响机器人，请稍后用 list_bots 核对\n'
         : `- 影响 ${affected.length} 个机器人离线${affected.length > 0 ? `：${affected.map((a) => `${a.id}（${a.name}）`).join('、')}` : ''}\n`;
       return ok(
-        `⚠️ 插件已停用：${args.departmentId}（四阶段重载完成）。\n`
+        `⚠️ 插件已停用：${args.pluginId}（四阶段重载完成）。\n`
         + impactLine
         + '- 在途消息已按四阶段收尾（drain → 卸载 → 重扫 → 调和）\n'
-        + '- 恢复方式：再次 department_toggle（enabled=true）即可，机器人自动恢复上线\n'
+        + '- 恢复方式：再次 toggle_plugin（enabled=true）即可，机器人自动恢复上线\n'
         + '- 注意：重载重建了 MCP 会话，若下次调用收到 -32002，请重新 initialize',
-        { departmentId: args.departmentId, enabled: false, status: dept?.status ?? null, affectedEmployees: affected == null ? null : affected.map((a) => a.id) },
+        { pluginId: args.pluginId, enabled: false, status: dept?.status ?? null, affectedBots: affected == null ? null : affected.map((a) => a.id) },
       );
     },
   },
   {
-    name: 'work_log',
+    name: 'get_ledger',
     description: '查会话历史（台账）：该机器人的对话轮次记录（时间/会话/用户与助手内容/结束原因），可按会话过滤。文本最多列最近 20 轮，结构化内容为全量。',
     inputSchema: {
       type: 'object',
@@ -430,7 +430,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'work_timeline',
+    name: 'get_timeline',
     description: '查活动日志（时间线事件流）：run_start/step/tool/thinking/turn/run_end 事件，可限定机器人与时间窗口（分钟，缺省 30）。机器人删除后其历史事件仍可经全量流查询。',
     inputSchema: {
       type: 'object',
@@ -454,7 +454,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'company_state',
+    name: 'get_state',
     description: '系统状态摘要：运行时长、插件（启用/停用/故障计数与清单）、机器人（总数/工作中/待命/离线/暂停）。状态四档：working=工作中/idle=待命/offline=离线/enabled:false=暂停(已停用)；转述时用此词表。只读。',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     run({ services }) {
@@ -463,19 +463,19 @@ const TOOLS = [
       const byStatus = (s) => plugins.filter((p) => p.status === s).length;
       const lines = [
         `系统状态：运行中（已运行 ${Math.round(kops.uptimeSec() / 60)} 分钟）`,
-        `- 插件：启用 ${byStatus('active')}／停用 ${byStatus('disabled')}／故障 ${byStatus('failed')}（共 ${plugins.length} 个，明细见 list_departments）`,
+        `- 插件：启用 ${byStatus('active')}／停用 ${byStatus('disabled')}／故障 ${byStatus('failed')}（共 ${plugins.length} 个，明细见 list_plugins）`,
       ];
       const ops = services.get('companyOps');
       if (ops == null) {
         lines.push('- 机器人：引擎服务不可用（core-engine 未激活）');
-        return ok(lines.join('\n'), { uptimeSec: kops.uptimeSec(), departments: plugins, agents: [] });
+        return ok(lines.join('\n'), { uptimeSec: kops.uptimeSec(), plugins: plugins, agents: [] });
       }
       const { agents } = ops.agents();
       const n = (s) => agents.filter((a) => (s === 'offduty' ? a.enabled === false : a.enabled !== false && a.status === s)).length;
       // 离线 counts ENABLED bots currently offline — the fourth bucket the old
       // line dropped (总数 ≠ 工作中+待命+暂停 when anyone is offline).
       lines.push(`- 机器人：共 ${agents.length} 个（工作中 ${n('working')}／待命 ${n('idle')}／离线 ${n('offline')}／暂停 ${n('offduty')}）`);
-      return ok(lines.join('\n'), { uptimeSec: kops.uptimeSec(), departments: plugins, agents: ops.sanitize(agents) });
+      return ok(lines.join('\n'), { uptimeSec: kops.uptimeSec(), plugins: plugins, agents: ops.sanitize(agents) });
     },
   },
 

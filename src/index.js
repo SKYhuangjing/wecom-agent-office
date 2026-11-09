@@ -25,6 +25,41 @@ import { runTUI } from './tui.js';
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const defaultDataDir = () => process.env.WAO_HOME || join(process.cwd(), 'data');
 
+// 开机自启动的键名/注册表键（createKernel 的 autostart API 与 doctor 共用）。
+const AUTOSTART_LABEL = 'com.wecom-agent-office';
+const WIN_RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+
+// 读用户级 Run 键里 wao 的启动命令；值不存在返回 null，reg 本身不可用才抛。
+const winRunValue = () => {
+  let out;
+  try {
+    out = execFileSync('reg', ['query', WIN_RUN_KEY, '/v', AUTOSTART_LABEL], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (err) {
+    if (err?.status === 1 || err?.code === 1) return null; // reg query：值不存在时退出码 1
+    throw err;
+  }
+  const m = /REG_SZ\s+(.+)/.exec(out);
+  return m ? m[1].trim() : null;
+};
+
+// win32 自启动启动器（纯函数，test/ops/autostart-win.test.js 锁内容）。登录时
+// Run 键的 cwd 是 System32、PATH 未必含 node——启用一刻把绝对路径全部烘焙进
+// cmd：cd 到仓库根、--data-dir 钉死数据目录、stdout/stderr 追加到数据目录日志
+//（boot 失败也留痕）。CRLF 是 cmd 解释器的行要求。
+export function buildWinAutostartCmd({ execPath, repoRoot: root, dataDir }) {
+  const q = (p) => `"${p}"`;
+  // Windows 分隔符显式拼接：本函数可能在非 win32 上被调用（生成/测试），
+  // path.join 在那里会产出正斜杠，混进 cmd 文件不伦不类。
+  const w = (...p) => p.join('\\');
+  return [
+    '@echo off',
+    `cd /d ${q(root)}`,
+    `if not exist ${q(w(dataDir, 'logs'))} mkdir ${q(w(dataDir, 'logs'))}`,
+    `${q(execPath)} ${q(w(root, 'src', 'index.js'))} start --data-dir ${q(dataDir)} >> ${q(w(dataDir, 'logs', 'autostart.log'))} 2>&1`,
+    '',
+  ].join('\r\n');
+}
+
 // Repo-bundled plugins first, then operator extras from WAO_PLUGINS_PATH
 // (path.delimiter-separated — ':' on POSIX, ';' on Windows —; empty segments
 // dropped) — the §2.1 scan rule.
@@ -294,9 +329,9 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
   });
   // 开机自启动（用户指令：设置里的开关，不替客户选择——开关只读写真实系统
   // 配置，永不预选）。只切「随系统启动」：macOS=LaunchAgent 的 RunAtLoad，
-  // Linux=systemd --user enable/disable；写完即生效于下次登录/开机，当前
-  // 进程与 KeepAlive（崩溃自愈）均不受影响——切换零服务中断。
-  const AUTOSTART_LABEL = 'com.wecom-agent-office';
+  // Linux=systemd --user enable/disable，Windows=用户级注册表 Run 键；写完即
+  // 生效于下次登录/开机，当前进程与 KeepAlive（崩溃自愈）均不受影响——切换
+  // 零服务中断。
   const autostartStatus = () => {
     if (process.platform === 'darwin') {
       const file = join(homedir(), 'Library', 'LaunchAgents', `${AUTOSTART_LABEL}.plist`);
@@ -319,8 +354,18 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
         return { supported: true, installed: false, enabled: false, mechanism: 'systemd (user)', detail: `systemctl 不可用：${out || '无输出'}` };
       }
     }
+    if (process.platform === 'win32') {
+      // Run 键两态：值在=已启用（指向启用时生成的 data/win-autostart.cmd），
+      // 值不在=未启用。只管登录拉起；KeepAlive/崩溃自愈语义仍属 NSSM（README §3.1）。
+      const val = winRunValue();
+      if (val == null) {
+        return { supported: true, installed: false, enabled: false, mechanism: 'registry Run (user)',
+          detail: '未启用——POST enabled:true 随登录启动（仅登录拉起，无崩溃自愈）' };
+      }
+      return { supported: true, installed: true, enabled: true, mechanism: 'registry Run (user)', detail: val };
+    }
     return { supported: false, installed: false, enabled: false, mechanism: null,
-      detail: '当前平台暂不支持（支持 macOS launchd 与 Linux systemd 用户服务）' };
+      detail: '当前平台暂不支持（支持 macOS launchd、Linux systemd 用户服务与 Windows 注册表 Run 键）' };
   };
   const setAutostart = (enabled) => {
     if (process.platform === 'darwin') {
@@ -341,6 +386,22 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
         execFileSync('systemctl', ['--user', enabled ? 'enable' : 'disable', AUTOSTART_LABEL], { stdio: 'ignore' });
         return;
       } catch (err) { err.status = 409; throw err; }
+    }
+    if (process.platform === 'win32') {
+      // 启用：生成启动器（烘焙绝对路径）+ 写用户级 Run 键（免管理员）；禁用：
+      // 删值，值本就不缺视为已达目标态（幂等），reg 真不可用才 409。
+      if (enabled) {
+        const launcher = join(dir, 'win-autostart.cmd');
+        atomicWrite(launcher, buildWinAutostartCmd({ execPath: process.execPath, repoRoot, dataDir: dir }));
+        execFileSync('reg', ['add', WIN_RUN_KEY, '/v', AUTOSTART_LABEL, '/t', 'REG_SZ', '/d', launcher, '/f'], { stdio: 'ignore' });
+      } else {
+        try {
+          execFileSync('reg', ['delete', WIN_RUN_KEY, '/v', AUTOSTART_LABEL, '/f'], { stdio: 'ignore' });
+        } catch (err) {
+          if (winRunValue() != null) { err.status = 409; throw err; }
+        }
+      }
+      return;
     }
     const err = new Error('当前平台暂不支持开机自启动配置'); err.status = 400; throw err;
   };
@@ -414,7 +475,7 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
   // Plugin enable/disable as ONE operation (W1 T2): flips the enable table in
   // plugins.json (atomic read-modify-write, other options preserved) and
   // drives the four-phase reload. Both the kernel-native /api/plugins/:id
-  // route and the mcp-gateway department_toggle tool call this same function
+  // route and the mcp-gateway toggle_plugin tool call this same function
   // — no duplicated logic, no HTTP self-calls. Unknown plugin → status-404
   // error (the route turns it into its historical 404 shape).
   const setPluginEnabled = async (id, enabled) => {
@@ -433,8 +494,8 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
   };
 
   // Kernel operations published to plugins through the service container
-  // (same broker as 'ports'/'paths', W1 T2): mcp-gateway's list_departments /
-  // department_toggle / company_state tools consume these. Read per call by
+  // (same broker as 'ports'/'paths', W1 T2): mcp-gateway's list_plugins /
+  // toggle_plugin / get_state tools consume these. Read per call by
   // the consumer, so a reload's fresh closures are always current.
   services.register('kernelOps', { plugins: pluginList, setPluginEnabled, uptimeSec });
 
@@ -790,8 +851,19 @@ const cmdDoctor = async (flags) => {
         mark('✗', 'systemd', `installed at ${unitPath} but ${state || 'unknown'} (journalctl --user -u wao.service -n 50; systemctl --user restart wao)`);
       }
     }
+  } else if (process.platform === 'win32') {
+    // 注册表 Run 键两态（与 /api/service/autostart 同源）：已启用 ✓；未启用 !
+    //（信息级——开关在设置页，不替客户选择）；reg 探测失败 !（状态未知，指路
+    // 手查）。Run 键只管登录拉起，KeepAlive 等价物仍是 NSSM（README §3.1）。
+    try {
+      const val = winRunValue();
+      if (val != null) mark('✓', 'autostart', `enabled (${val})`);
+      else mark('!', 'autostart', 'not enabled (informational — 设置页「开机自启动」开关，或 POST /api/service/autostart {"enabled":true})');
+    } catch (err) {
+      mark('!', 'autostart', `cannot determine — reg query failed (${err?.message}); check manually: reg query "${WIN_RUN_KEY}" /v ${AUTOSTART_LABEL}`);
+    }
   } else {
-    mark('!', 'service', `no service-manager check on ${process.platform} — see README §3.1 (Windows: NSSM 或任务计划程序)`);
+    mark('!', 'service', `no service-manager check on ${process.platform} — see README §3.1`);
   }
   // Asset drift check (DESIGN-ASSETS §8.1 P1-8, W3 T5): read-only dryRun
   // verify per bound bot — the provider planners rebuild every product in

@@ -223,7 +223,7 @@ MCP_AST=$(api POST /api/assets "{\"type\":\"mcp\",\"name\":\"wao-company\",\"des
 api POST /api/bots/m1/assets "{\"assetId\":\"$MCP_AST\",\"mode\":\"shared\"}" > "$D/s2-bind.json"
 MCP_SESS_BEFORE=$(grep -c 'mcp: session .* initialized' "$D/data/logs/wao.log" 2>/dev/null || true)
 cat > "$D/s2-q.txt" <<'EOF'
-用公司工具（list_employees）查一下公司在册员工名单和总人数，把名单里每个人的名字完整念出来，并明确给出总人数。
+用公司工具（list_bots）查一下公司在册员工名单和总人数，把名单里每个人的名字完整念出来，并明确给出总人数。
 EOF
 probe m1 "$D/s2-q.txt" > "$D/s2-probe.json"
 MCP_SESS_AFTER=$(grep -c 'mcp: session .* initialized' "$D/data/logs/wao.log" 2>/dev/null || true)
@@ -246,8 +246,8 @@ const names = ['技能员壹', '连接员贰', '基线员叁', '装备员肆', '
 console.log(`  [S2] materialized: ${mcpFile} (wao-wao-company, mode 600)`);
 console.log(`  [S2] roster names relayed: ${names.join('/')} | 总人数 mentioned: ${/(^|[^0-9])6([^0-9]|$)/.test(text) ? 'yes(6)' : 'NO'}`);
 console.log(`  [S2] gateway sessions during probe: ${before} → ${after}`);
-if (names.length < 2) die(`answer names ${names.length} seeded employees — the equipped mcp server was not consulted:\n${text.slice(0, 300)}`);
-if (!/(^|[^0-9])6([^0-9]|$)/.test(text)) die(`answer does not state the 6-employee count:\n${text.slice(0, 300)}`);
+if (names.length < 2) die(`answer names ${names.length} seeded bots — the equipped mcp server was not consulted:\n${text.slice(0, 300)}`);
+if (!/(^|[^0-9])6([^0-9]|$)/.test(text)) die(`answer does not state the 6-bot count:\n${text.slice(0, 300)}`);
 if (Number(after) - Number(before) < 1) die('no new MCP session in the kernel log during the probe — claude never connected to the equipped server');
 console.log('  [S2] ASSERTIONS OK (tool call happened: roster facts + gateway session delta)');
 EOF
@@ -430,7 +430,7 @@ cat > "$D/s5-task.txt" <<'EOF'
 帮我给员工 s1 配一个技能，全程用公司工具完成：
 1) 用 create_asset 登记一个 skill 资产：名字 echo-helper，content 里 name 也是 echo-helper，body 写「被问『回声』时，只回答四个字再加编号：回声-7391」；
 2) 把这个资产私发（exclusive 模式）绑定给工牌号 s1 的员工；
-3) 绑定成功后用 probation_test 对 s1 做一次岗前测试，测试问题传「回声」；
+3) 绑定成功后用 test_bot 对 s1 做一次岗前测试，测试问题传「回声」；
 4) 把岗前测试的回复原文告诉我。
 EOF
 run_with_timeout 420 bash -c 'cd "$1" && exec "$2" -p "$(cat "$3")" --mcp-config "$4" --output-format stream-json --verbose --dangerously-skip-permissions' \
@@ -448,7 +448,7 @@ const uses = events.flatMap((e) => (e.type === 'assistant' ? e.message?.content 
   .map((c) => ({ name: c.name.replace('mcp__wao-company__', ''), input: c.input }));
 const names = uses.map((u) => u.name + (u.name === 'bind_asset' ? `(${u.input?.mode})` : '')).join(', ');
 console.log(`  [S5] agent mcp tool_use: ${names || '(none)'}`);
-for (const need of ['create_asset', 'bind_asset', 'probation_test']) {
+for (const need of ['create_asset', 'bind_asset', 'test_bot']) {
   if (!uses.some((u) => u.name === need)) die(`agent never called ${need}`);
 }
 if (!uses.some((u) => u.name === 'bind_asset' && u.input?.mode === 'exclusive')) die('bind_asset was not exclusive');

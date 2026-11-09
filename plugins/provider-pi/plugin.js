@@ -129,7 +129,7 @@ export default {
         { key: 'piArgs', label: '额外 CLI 参数（列表，逐项原样追加；不校验内容）', type: 'list' },
         { key: 'apiKeyEnv', label: '凭证环境变量名（models.json 写 $该名字，值来自 model.apiKey 字面量注入；默认 PI_MAGPIE_API_KEY）', type: 'string', default: 'PI_MAGPIE_API_KEY' },
         { key: 'piBin', label: 'pi 可执行文件（PATH 或绝对路径）', type: 'string', default: 'pi' },
-        { key: 'piAgentDir', label: 'pi agent 目录（注入 $PI_CODING_AGENT_DIR；models.json 与 sessions/ 都在其下。默认 ~/.pi/agent-wao-<botId>，离职只清 models.json、保留会话档案）', type: 'string' },
+        { key: 'piAgentDir', label: 'pi agent 目录（注入 $PI_CODING_AGENT_DIR；models.json 与 sessions/ 都在其下。默认 ~/.pi/agent-wao-<botId>，删除机器人只清 models.json、保留会话数据）', type: 'string' },
         { key: 'env', label: '注入子进程的环境变量（值必须是字符串）', type: 'object' },
         // progressStyle/progressText (2026-11-06 拟人播报)：进度行风格与播报
         // 文案，core-engine 出站面消费（polite=企微只播报一句「思考中…请稍

@@ -138,7 +138,7 @@ test('unknown method → -32601; tools/call unknown tool → -32602 (T2 surface)
   // A KNOWN tool still answers as a result even when the engine behind it is
   // absent (this boot loads only mcp-gateway): isError result, HTTP 200.
   const noEngine = await rpc(
-    { jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'list_employees', arguments: {} } },
+    { jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'list_bots', arguments: {} } },
     { 'mcp-session-id': sessionId },
   );
   assert.equal(noEngine.body.error, undefined, 'business failure stays inside the result');
@@ -276,12 +276,12 @@ test('GET /api/mcp: tool roster with dangerous flags, session count tracks live 
   assert.equal(typeof before, 'number');
   assert.equal(boot.tools.length, 19);
   const byName = new Map(boot.tools.map((t) => [t.name, t]));
-  assert.equal(byName.get('list_employees').dangerous, false);
-  assert.equal(byName.get('set_duty').dangerous, false);
-  assert.equal(byName.get('offboard').dangerous, true);
+  assert.equal(byName.get('list_bots').dangerous, false);
+  assert.equal(byName.get('set_enabled').dangerous, false);
+  assert.equal(byName.get('delete_bot').dangerous, true);
   assert.equal(byName.get('broadcast').dangerous, true);
   assert.equal(byName.get('rematerialize').dangerous, true);
-  assert.ok(byName.get('hire').description.length > 0, 'description carried for the UI list');
+  assert.ok(byName.get('create_bot').description.length > 0, 'description carried for the UI list');
 
   const a = await initialize();
   const b = await initialize();

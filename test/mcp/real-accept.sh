@@ -118,21 +118,21 @@ if (mcpUses.length === 0) die('no mcp__wao-company__ tool_use in the stream');
 if (result?.subtype !== 'success') die(`result subtype=${result?.subtype}`);
 const standalone = (n) => new RegExp(`(^|[^0-9])${n}([^0-9]|$)`).test(answer);
 if (mode === 'task1') {
-  if (!mcpUses.some((u) => /list_employees|company_state/.test(u.name))) die('neither list_employees nor company_state was called');
-  if (!answer.includes('休假丙')) die('answer does not name the on-leave employee 休假丙');
-  if (!standalone(2)) die('answer does not state 2 on-duty employees');
+  if (!mcpUses.some((u) => /list_bots|get_state/.test(u.name))) die('neither list_bots nor get_state was called');
+  if (!answer.includes('休假丙')) die('answer does not name the on-leave bot 休假丙');
+  if (!standalone(2)) die('answer does not state 2 on-duty bots');
 } else if (mode === 'task2') {
   const names = mcpUses.map((u) => u.name);
-  if (!names.some((n) => /hire$/.test(n))) die('hire was never called');
-  if (!names.some((n) => /probation_test/.test(n))) die('probation_test was never called');
-  const probationResults = resultFor((n) => /probation_test/.test(n));
+  if (!names.some((n) => /create_bot$/.test(n))) die('create_bot was never called');
+  if (!names.some((n) => /test_bot/.test(n))) die('test_bot was never called');
+  const probationResults = resultFor((n) => /test_bot/.test(n));
   if (probationResults.length === 0)
-    die(`no tool_result paired with the probation_test call (uses=${JSON.stringify(toolUses.map((u) => ({ id: u.id, name: u.name })))} results=${JSON.stringify(toolResults.map((r) => ({ id: r.id, body: r.body.slice(0, 120) })))}`);
+    die(`no tool_result paired with the test_bot call (uses=${JSON.stringify(toolUses.map((u) => ({ id: u.id, name: u.name })))} results=${JSON.stringify(toolResults.map((r) => ({ id: r.id, body: r.body.slice(0, 120) })))}`);
   if (!probationResults.some((b) => /"code"\s*:\s*"completed"/.test(b))) die('probation tool_result lacks code:"completed"');
   if (!probationResults.some((b) => b.includes('fake 完成'))) die('probation tool_result lacks the fake finalText');
   if (!answer.includes('fake 完成')) die('answer does not relay the finalText');
 } else if (mode === 'recovery') {
-  if (!standalone(4)) die('answer does not report 4 registered employees');
+  if (!standalone(4)) die('answer does not report 4 registered bots');
 }
 console.log(`  [claude ${mode}] ASSERTIONS OK`);
 EOF
@@ -151,11 +151,11 @@ console.log(`  [codex] mcp_tool_call: ${calls.map((c) => `${c.tool}(${c.status})
 console.log(`  [codex] answer: ${answer.slice(0, 400).replace(/\n/g, ' ⏎ ')}`);
 const die = (m) => { console.error(`ASSERT-FAIL [codex]: ${m}`); process.exit(1); };
 if (calls.length === 0) die('no mcp_tool_call event in the stream');
-if (!calls.some((c) => /list_employees|company_state/.test(c.tool) && c.status === 'completed'))
-  die('neither list_employees nor company_state completed');
+if (!calls.some((c) => /list_bots|get_state/.test(c.tool) && c.status === 'completed'))
+  die('neither list_bots nor get_state completed');
 if (calls.some((c) => c.status === 'failed')) die(`a tool call failed: ${JSON.stringify(calls.find((c) => c.status === 'failed').error)}`);
-if (!answer.includes('休假丙')) die('answer does not name the on-leave employee 休假丙');
-if (!new RegExp('(^|[^0-9])2([^0-9]|$)').test(answer)) die('answer does not state 2 on-duty employees');
+if (!answer.includes('休假丙')) die('answer does not name the on-leave bot 休假丙');
+if (!new RegExp('(^|[^0-9])2([^0-9]|$)').test(answer)) die('answer does not state 2 on-duty bots');
 console.log('  [codex] ASSERTIONS OK');
 EOF
 
@@ -171,14 +171,14 @@ curl -sf "$BASE/api/state" | grep -q '"id":"mcp-gateway","name":"MCP 网关","ty
 echo "  healthz ok; mcp-gateway active; plugins: $(curl -sf "$BASE/api/state" | grep -o '"id":"[a-z0-9-]*"' | wc -l | tr -d ' ') loaded"
 
 # —— L1: seed the roster via the kernel API (real HTTP surface) ————————————
-note "L1 seed roster: w1 值守甲 + w2 值守乙 on-duty, w3 休假丙 off-duty"
+note "L1 seed roster: w1 值守甲 + w2 值守乙 on-duty, w3 休假丙 paused"
 curl -sf -X POST "$BASE/api/bots" -H 'content-type: application/json' \
   -d "{\"id\":\"w1\",\"name\":\"值守甲\",\"enabled\":true,\"channel\":\"fakechan\",\"account\":{\"endpoint\":\"http://fake.local\"},\"provider\":\"fakeprov\",\"providerConfig\":{\"cwd\":\"$D/w1\"}}" >/dev/null
 curl -sf -X POST "$BASE/api/bots" -H 'content-type: application/json' \
   -d "{\"id\":\"w2\",\"name\":\"值守乙\",\"enabled\":true,\"channel\":\"fakechan\",\"account\":{\"endpoint\":\"http://fake.local\"},\"provider\":\"fakeprov\",\"providerConfig\":{\"cwd\":\"$D/w2\"}}" >/dev/null
 curl -sf -X POST "$BASE/api/bots" -H 'content-type: application/json' \
   -d "{\"id\":\"w3\",\"name\":\"休假丙\",\"enabled\":false,\"channel\":\"fakechan\",\"account\":{\"endpoint\":\"http://fake.local\"},\"provider\":\"fakeprov\",\"providerConfig\":{\"cwd\":\"$D/w3\"}}" >/dev/null
-curl -sf "$BASE/api/agents" | grep -q '"id":"w3","name":"休假丙","enabled":false' || fail "w3 not seeded off-duty"
+curl -sf "$BASE/api/agents" | grep -q '"id":"w3","name":"休假丙","enabled":false' || fail "w3 not seeded paused"
 echo "  seeded: w1 值守甲(idle) w2 值守乙(idle) w3 休假丙(休假)"
 
 # —— L2: claude task 1 (read) —————————————————————————————————————————————
@@ -189,8 +189,8 @@ EOF
 claude_run "$TASK1" "$D/claude-task1.jsonl" "$D/claude-task1.err"
 node "$D/assert-claude.mjs" "$D/claude-task1.jsonl" task1
 
-# —— L3: claude task 2 (write chain hire → probation_test) ————————————————
-note "L3 claude task2 (write): hire 测试员A/mcp-acc off-duty, then probation_test"
+# —— L3: claude task 2 (write chain create_bot → test_bot) ————————————————
+note "L3 claude task2 (write): create_bot 测试员A/mcp-acc paused, then test_bot"
 claude_run "$TASK2" "$D/claude-task2.jsonl" "$D/claude-task2.err"
 node "$D/assert-claude.mjs" "$D/claude-task2.jsonl" task2
 node - "$D/data/bots.json" "$D/work" <<'EOF'
@@ -241,10 +241,10 @@ RELIST=$(curl -s -X POST "$MCP" -H 'content-type: application/json' -H "mcp-sess
   -d '{"jsonrpc":"2.0","id":4,"method":"tools/list"}')
 N_TOOLS=$(printf '%s' "$RELIST" | grep -o '"name":"[a-z_]*"' | awk 'END { print NR }')
 [ "$N_TOOLS" = "13" ] || fail "re-initialized session lists $N_TOOLS tools, expected 13"
-echo "  re-initialized S2 → 13 tools; roster on disk survived: $(curl -s -X POST "$MCP" -H 'content-type: application/json' -H "mcp-session-id: $S2" -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"list_employees","arguments":{}}}' | grep -o '在岗名册（[0-9]* 人）')"
+echo "  re-initialized S2 → 13 tools; roster on disk survived: $(curl -s -X POST "$MCP" -H 'content-type: application/json' -H "mcp-session-id: $S2" -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"list_bots","arguments":{}}}' | grep -o '在岗名册（[0-9]* 人）')"
 # Real-CLI leg of the recovery story: a fresh headless claude process opens a
 # NEW session against the restarted kernel and operates the company again.
-claude_run '用公司工具查公司状态（company_state），告诉我现在在册共几人、休假几人。' \
+claude_run '用公司工具查公司状态（get_state），告诉我现在在册共几人、休假几人。' \
   "$D/claude-recovery.jsonl" "$D/claude-recovery.err"
 node "$D/assert-claude.mjs" "$D/claude-recovery.jsonl" recovery
 
