@@ -269,7 +269,7 @@ export async function runTUI({
     const res = await fetch(`${base}/api/state`, { headers: waoTokenHeaders(), signal: AbortSignal.timeout(2500) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   } catch {
-    console.error(`wao: tui 连不上 ${base} —— 公司服务好像没在跑`);
+    console.error(`wao: tui 连不上 ${base} —— 服务好像没在跑`);
     console.error('提示：先执行 wao start 启动服务（或用 --port 指定端口），再开仪表盘。');
     return 1;
   }

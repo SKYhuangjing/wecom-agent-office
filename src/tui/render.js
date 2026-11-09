@@ -319,7 +319,7 @@ const dashboardPane = (width, budget, { agents, selectedIdx, now, logTail, logZo
   return out;
 };
 
-// 岗前测试结果窗：code（通过绿/未通过红）+ 回复（长文折行滚动）+ 会话/事件数。
+// 测试运行结果窗：code（通过绿/未通过红）+ 回复（长文折行滚动）+ 会话/事件数。
 const resultPane = (width, budget, result) => {
   const out = [];
   out.push(composeLine(width, [{ t: result.title ?? '结果', c: [CODE.bold] }]));
@@ -364,7 +364,7 @@ const pickPane = (width, budget, pick) => {
   return out;
 };
 
-// 简版入职向导：逐字段行编辑（名→岗位→cwd→botId→secret→摘要确认）。
+// 简版创建向导：逐字段行编辑（名→引擎→cwd→botId→secret→摘要确认）。
 const WIZARD_LABELS = ['姓名', '引擎', '工作目录（cwd）', '机器人 ID（botId）', 'Secret（不回显）'];
 const wizardPane = (width, budget, w) => {
   if (w.step === 1) { // 引擎选择（provider 枚举自 /api/ports）

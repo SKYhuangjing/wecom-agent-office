@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # W2 T2+T3 真机验收（隔离内核，绝不碰生产 8792）：
-#   1. 起一个临时内核（fake provider/channel 插件 + 一名 enabled 员工 +
+#   1. 起一个临时内核（fake provider/channel 插件 + 一名 enabled 机器人 +
 #      预置一条台账行，fake channel 的 push 会落到 FAKE_PUSH_LOG 供断言）
 #   2. 用 pty（script(1)）驱动 `wao tui` 的真实键位流，四条链路：
-#        a) 空格 → y（调休）→ 空格 → y（返岗）→ t → 回车（默认探针）→ esc → q
+#        a) 空格 → y（暂停）→ 空格 → y（启用）→ t → 回车（默认探针）→ esc → q
 #        b) b →（台账）选 fakechat:room1 → 输入内容 → y 确认 → q
 #           （断言 fake channel 收到 push：chatRef + 内容逐字落盘）
-#        c) n → 逐字段入职向导（姓名/岗位/cwd/botId/Secret → 摘要 y）→ q
+#        c) n → 逐字段创建向导（姓名/引擎/cwd/botId/Secret → 摘要 y）→ q
 #           （断言 bots.json 落盘：enabled=false + account 逐键核对）
 #        d) l 日志半屏：26 行终端下前后两跑对照（5 行 ↔ ≥10 行标记）
 #   3. rc=0 + 抓帧断言 + /api/agents 状态核对 + 终端还原（script 退出码）
@@ -31,8 +31,8 @@ check() { # check <描述> <抓帧文本> <grep 正则>
 }
 
 # —— 隔离内核的 fake 端口（与 test/mcp/tools.test.js 同款形状）———————————
-# accountSchema 用 botId+secret（对齐 channel-wecom 的形状）：入职向导按
-# schema 键组装 account，端点式 schema 会让向导入职永远过不了校验。
+# accountSchema 用 botId+secret（对齐 channel-wecom 的形状）：创建向导按
+# schema 键组装 account，端点式 schema 会让向导创建永远过不了校验。
 # push() 落盘 FAKE_PUSH_LOG：广播链的「fake channel 真实收到」断言读它
 # （adapter 的进程内数组出不了内核进程）。
 mkdir -p "$OUT/fakes/channel-fake" "$OUT/fakes/provider-fake"
@@ -121,16 +121,16 @@ run_script() { # run_script <capture> <cmd...>
 
 KEYS=''
 step() { KEYS="$KEYS printf '$1'; sleep $2;"; }
-step ' '    1.0   # 空格：确认行「确认将 验收员工 调休？」
+step ' '    1.0   # 空格：确认行「确认将 验收员工 暂停？」
 step 'y'    1.5   # y：执行 toggle（enabled → false）
-step ' '    1.0   # 空格：这次是返岗确认
+step ' '    1.0   # 空格：这次是启用确认
 step 'y'    1.5   # y：执行 toggle（enabled → true）
 step 't'    0.8   # t：底部输入行
 step '\r'   2.5   # 回车：默认探针「回复：收到」→ 结果窗
 step '\x1b' 0.6   # esc：关结果窗
 step 'q'    0.8   # q：退出还原终端
 
-say "== 键位流：空格 y 调休 → 空格 y 返岗 → t 回车(默认探针) → esc → q =="
+say "== 键位流：空格 y 暂停 → 空格 y 启用 → t 回车(默认探针) → esc → q =="
 eval "{ sleep 1.6;$KEYS }" | run_script "$OUT/frames.log" node src/index.js tui --port "$PORT" --data-dir "$OUT/data"
 TUI_RC=$?
 say "script 退出码：${TUI_RC}（0=终端正常还原）"
@@ -148,28 +148,28 @@ last_frame() { node -e '
   const fs = require("node:fs");
   const raw = fs.readFileSync(process.argv[1], "utf8");
   const text = raw.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/\x1b\][^\x07]*\x07/g, "").replace(/\r/g, "");
-  const parts = text.split("↑↓选择 空格:调休/返岗");
+  const parts = text.split("↑↓选择 空格:暂停/启用");
   // 键位栏是每帧最后一行：末段只是退出序列，倒数第二段才是末帧内容。
   if (parts.length < 2) process.exit(0);
   process.stdout.write(parts[parts.length - 2]);
 ' "$1"; }
 FRAMES=$(strip_ansi "$OUT/frames.log")
 say "== 抓帧断言 =="
-check "空格弹出确认行（确认将 验收员工 调休）" "$FRAMES" '确认将 验收员工 调休？\(y/n\)'
-check "y 后绿字反馈（已调休）"               "$FRAMES" '已调休：验收员工'
-check "第二次确认（返岗）"                   "$FRAMES" '确认将 验收员工 返岗？\(y/n\)'
-check "返岗绿字反馈"                         "$FRAMES" '已返岗：验收员工'
-check "t 弹出输入行（默认探针提示）"          "$FRAMES" '岗前测试 · 验收员工——测试问题'
+check "空格弹出确认行（确认将 验收员工 暂停）" "$FRAMES" '确认将 验收员工 暂停？\(y/n\)'
+check "y 后绿字反馈（已暂停）"               "$FRAMES" '已暂停：验收员工'
+check "第二次确认（启用）"                   "$FRAMES" '确认将 验收员工 启用？\(y/n\)'
+check "启用绿字反馈"                         "$FRAMES" '已启用：验收员工'
+check "t 弹出输入行（默认探针提示）"          "$FRAMES" '测试运行 · 验收员工——测试问题'
 check "回车执行后结果窗 code: completed"      "$FRAMES" 'code: completed  ✅ 通过'
 check "结果窗展示 fake 回复"                 "$FRAMES" 'fake 完成：回复：收到'
 check "结果窗展示 sessionId"                 "$FRAMES" '会话：session-fake-acc1'
-check "esc 关窗回到仪表盘（键位栏复现）"       "$FRAMES" '↑↓选择 空格:调休/返岗'
+check "esc 关窗回到仪表盘（键位栏复现）"       "$FRAMES" '↑↓选择 空格:暂停/启用'
 
 # —— 状态翻转的服务端核对 ————————————————————————————————————————————————
 say "== /api/agents 状态核对 =="
 FINAL=$(curl -s "$BASE/api/agents")
 printf '%s' "$FINAL" | grep -q '"enabled":true' && ok "两次 toggle 后 enabled 回到 true（true→false→true 全程真实生效）" || bad "最终态不对：$FINAL"
-if grep -q 'detached (bot disabled)' "$OUT/server.log" && [ "$(grep -c 'bot acc1 attached' "$OUT/server.log")" -ge 2 ]; then
+if grep -q 'detached (bot disabled)' "$WORK/data/logs/wao.log" && [ "$(grep -c 'bot acc1 attached' "$WORK/data/logs/wao.log")" -ge 2 ]; then
   ok "服务端日志见证两次翻转：detached (bot disabled) → attached"
 else
   bad "服务端日志没有 toggle 事件（detached/attached 缺席）"
@@ -185,7 +185,7 @@ EOF
 chmod +x "$OUT/tui-26x90.sh"
 
 # —— b：广播链（台账 → 选会话 → 内容 → 确认 → fake channel 真实收到）————
-say "== 键位流 b：广播（选 fakechat:room1 → 内容 → y 确认 → push 落盘）=="
+say "== 键位流 b：推送（选 fakechat:room1 → 内容 → y 确认 → push 落盘）=="
 KEYS=''
 step 'b'    1.6   # b：查台账 → 目标会话选择窗
 step '\r'   1.0   # 回车：选 fakechat:room1 → 内容输入行
@@ -198,12 +198,12 @@ BCAST_RC=$?
 [ "$BCAST_RC" -eq 0 ] && ok "b 流 TUI 正常退出（终端还原）" || bad "b 流退出码 $BCAST_RC"
 FRAMES_B=$(strip_ansi "$OUT/frames-bcast.log")
 say "== b 流抓帧断言 =="
-check "b 弹出目标会话选择窗"         "$FRAMES_B" '广播 · 选择目标会话（验收员工）'
+check "b 弹出目标会话选择窗"         "$FRAMES_B" '推送 · 选择目标会话（验收员工）'
 check "台账行成为选项（fakechat:room1（1 轮））" "$FRAMES_B" 'fakechat:room1（1 轮）'
-check "选中后进内容输入行"           "$FRAMES_B" '广播到 fakechat:room1——内容：'
+check "选中后进内容输入行"           "$FRAMES_B" '推送到 fakechat:room1——内容：'
 check "逐字输入的内容回显"           "$FRAMES_B" '全体注意：十分钟后台演练'
-check "回车后二次确认行"             "$FRAMES_B" '将真实发送到该员工的渠道会话，确认？\(y/n\)'
-check "y 后绿字广播回执"             "$FRAMES_B" '📢 已广播：验收员工 → fakechat:room1'
+check "回车后二次确认行"             "$FRAMES_B" '将真实发送到该机器人的渠道会话，确认？\(y/n\)'
+check "y 后绿字推送回执"             "$FRAMES_B" '📢 已推送：验收员工 → fakechat:room1'
 say "== b 流 fake channel 侧断言（FAKE_PUSH_LOG）=="
 if [ -s "$OUT/pushes.jsonl" ] && grep -q '"chatRef":"fakechat:room1"' "$OUT/pushes.jsonl" && grep -q '全体注意：十分钟后台演练' "$OUT/pushes.jsonl"; then
   ok "fake channel 收到 push（chatRef=fakechat:room1，内容逐字一致）：$(cat "$OUT/pushes.jsonl")"
@@ -212,29 +212,30 @@ else
 fi
 
 # —— n：入职向导全流（逐字段 → 摘要 y → bots.json 落盘）———————————————————
-say "== 键位流 n：入职向导（新同学 → fakeprov → /tmp/wao-hire → wb-hire-001 → secret → y）=="
+say "== 键位流 n：创建向导（新同学 → fakeprov → /tmp/wao-hire → wb-hire-001 → secret → y）=="
+mkdir -p /tmp/wao-hire   # 服务端 cwd 存在性校验会拒绝不存在的目录（/tmp 会被 macOS 定期清理）
 KEYS=''
 step 'n'    1.8   # n：查 /api/ports → 向导第 0 步（姓名）
 step '新同学' 0.8
-step '\r'   0.8   # 回车 → 第 1 步：岗位选择
-step '\r'   1.0   # 回车：选 fakeprov（唯一在册岗位）→ 第 2 步 cwd
+step '\r'   0.8   # 回车 → 第 1 步：引擎选择
+step '\r'   1.0   # 回车：选 fakeprov（唯一在册引擎）→ 第 2 步 cwd
 step '/tmp/wao-hire' 0.8
 step '\r'   0.8   # → 第 3 步 botId
 step 'wb-hire-001' 0.8
 step '\r'   0.8   # → 第 4 步 secret（打码）
 step 'fake-secret-881' 0.8
 step '\r'   1.2   # → 第 5 步：摘要确认
-step 'y'    2.0   # y：POST /api/bots → 入职回执
+step 'y'    2.0   # y：POST /api/bots → 创建回执
 step 'q'    0.8
 eval "{ sleep 1.6;$KEYS }" | run_script "$OUT/frames-hire.log" node src/index.js tui --port "$PORT" --data-dir "$OUT/data"
 HIRE_RC=$?
 [ "$HIRE_RC" -eq 0 ] && ok "n 流 TUI 正常退出（终端还原）" || bad "n 流退出码 $HIRE_RC"
 FRAMES_N=$(strip_ansi "$OUT/frames-hire.log")
 say "== n 流抓帧断言 =="
-check "n 进向导（第 0 步姓名行）"      "$FRAMES_N" '入职向导（esc 取消）'
+check "n 进向导（第 0 步姓名行）"      "$FRAMES_N" '创建向导（esc 取消）'
 check "逐字输入姓名"                  "$FRAMES_N" '▸ 姓名：新同学'
-check "第 1 步岗位选择（fakeprov）"    "$FRAMES_N" '选择岗位（技能部门）'
-check "第 2 步 cwd 回显"              "$FRAMES_N" '工位（cwd）：/tmp/wao-hire'
+check "第 1 步引擎选择（provider）"    "$FRAMES_N" '选择引擎（provider）'
+check "第 2 步 cwd 回显"              "$FRAMES_N" '工作目录（cwd）：/tmp/wao-hire'
 check "第 3 步 botId 回显"            "$FRAMES_N" '机器人 ID（botId）：wb-hire-001'
 check "第 4 步 secret 打码（≥10 个＊）"  "$FRAMES_N" '＊＊＊＊＊＊＊＊＊＊'
 check "摘要：已填回显（＊＊＊＊（已填））" "$FRAMES_N" '＊＊＊＊（已填）'
@@ -243,14 +244,14 @@ if printf '%s' "$FRAMES_N" | grep -qF 'fake-secret-881'; then
 else
   ok "secret 全程不回显明文（抓帧仅见打码）"
 fi
-check "摘要：姓名/岗位/工位"          "$FRAMES_N" '姓名：新同学'
-check "摘要：岗位 fakeprov（工位）"    "$FRAMES_N" '岗位：fakeprov（工位 /tmp/wao-hire）'
+check "摘要：姓名/引擎/工作目录"          "$FRAMES_N" '姓名：新同学'
+check "摘要：引擎 fakeprov（工作目录）"    "$FRAMES_N" '引擎：fakeprov（工作目录 /tmp/wao-hire）'
 check "摘要：通道 + botId + Secret"   "$FRAMES_N" '通道：fakechan（机器人 ID wb-hire-001，Secret 已填）'
-check "摘要：调休入职提示"            "$FRAMES_N" '入职后先调休'
-check "摘要：门禁未配置警示（醒目）"    "$FRAMES_N" '门禁：未配置=接受任何企微用户发消息'
-check "摘要确认行"                  "$FRAMES_N" '确认 办理入职？\(y/n\)'
-check "y 后入职回执（工牌号 hr-）"    "$FRAMES_N" '已入职：新同学（工牌号 hr-'
-check "入职回执同步门禁警示"          "$FRAMES_N" '门禁：未配置=接受任何企微用户发消息'
+check "摘要：暂停创建提示"            "$FRAMES_N" '创建后先暂停'
+check "摘要：允许用户未配置警示（醒目）"    "$FRAMES_N" '允许用户：未配置=接受任何企微用户发消息'
+check "摘要确认行"                  "$FRAMES_N" '确认 创建机器人？\(y/n\)'
+check "y 后创建回执（机器人 ID hr-"    "$FRAMES_N" '已创建：新同学（机器人 ID hr-'
+check "创建回执同步允许用户警示"          "$FRAMES_N" '允许用户：未配置=接受任何企微用户发消息'
 say "== n 流落盘断言（bots.json 逐键核对）=="
 HIRE_CHECK=$(node -e '
   const bots = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).bots;
@@ -266,8 +267,8 @@ HIRE_CHECK=$(node -e '
   if (!/^hr-[a-z0-9]{6,}$/.test(String(b.id))) errs.push("badge id");
   console.log(errs.length === 0 ? "OK" : "BAD:" + errs.join(","));
 ' "$WORK/data/bots.json")
-case "$HIRE_CHECK" in
-  OK) ok "bots.json 新员工逐键一致（enabled:false / fakechan / fakeprov / account.botId / account.secret / cwd / hr- 工牌号）" ;;
+case "${HIRE_CHECK:-MISSING}" in
+  OK) ok "bots.json 新员工逐键一致（enabled:false / fakechan / fakeprov / account.botId / account.secret / cwd / hr- 机器人 ID）" ;;
   *)   bad "bots.json 新员工核对失败（$HIRE_CHECK）" ;;
 esac
 curl -s "$BASE/api/agents" | grep -q '"name":"新同学"' && ok "/api/agents 在册新同学" || bad "/api/agents 没有新同学"
