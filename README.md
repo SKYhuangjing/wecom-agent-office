@@ -428,7 +428,7 @@ prefers-reduced-motion 全关动画（画布动画由 ofscene 的 reduced 标志
 
 | 命令 | 内容 | 时长 |
 |---|---|---|
-| `npm test` | 666 用例（2026-11-09 实测）：内核（含 log ENOSPC 降级）/loader/engine（含 createdAt 服务端落戳、healthz 口径与 /api/agents 统一、cwd 存在性校验）/ledger/provider（dsh/claude/codex/pi 剖析）+ web 基建（静态托管/穿越拒绝/uiPlugins/SSE 桥）+ e2e 六场景（fake ws + fake-dsh 全链路）+ ops（孤儿扫尾：单元 + 真服务进程 SIGINT e2e） | ~40s |
+| `npm test` | 669+ 用例（2026-11-09 实测 669；并行会话合入 Windows 装机单测，数字会持续增长——以 npm test 实跑为准）：内核（含 log ENOSPC 降级）/loader/engine（含 createdAt 服务端落戳、healthz 口径与 /api/agents 统一、cwd 存在性校验）/ledger/provider（dsh/claude/codex/pi 剖析）+ web 基建（静态托管/穿越拒绝/uiPlugins/SSE 桥）+ e2e 六场景（fake ws + fake-dsh 全链路）+ ops（孤儿扫尾：单元 + 真服务进程 SIGINT e2e） | ~40s |
 | `npm run contract -- --plugin plugins/provider-dsh --port dsh` | provider 端口契约 11/11（真子进程语义；五家各有套件：dsh/claude/codex/pi/cursor 全部 11/11 零跳过（cursor 走 fake 级探针）） | 秒级 |
 | `npm run contract` | _template 参考实现（4 pass + 7 skip，skip=需真 CLI 的组） | 秒级 |
 | `bash test/smoke-dsh.sh` | **真 dsh**：两轮对话记忆（同 sessionId 续跑记暗号）+ 真 session 文件解码 | ~10s+ |

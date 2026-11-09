@@ -104,7 +104,7 @@
 | 11-06 | 全程终评+收口 → **公司隐喻全站重设计**（4651eb6..149816f：入职向导/离职面谈/打卡钟/软插画办公室/头像即化身） |
 | 11-07 | **provider-pi 第四技能部门**：pi CLI 1.5.0 接入（`-p --mode json`+`--session` 续接；magpie 网关 models.json 物化，`$ENV` 凭证引用无密钥落盘）→ 契约 11/11×4、探针基线 pi×3、切换矩阵扩 pi（9 轮）、单测 +19、launchd PATH 已覆盖（pi 在 nvm bin） |
 | 11-08 | v2：导航收敛三页 + UI 标准术语还原（词表=README §4.2；取代 11-06 公司隐喻话术） |
-| 11-09 | 术语全量收口：MCP 12 工具改名（list_employees→list_bots 等，server 名 wao-company 保留）+ office3d 迁移 + skill/盲评清单重写 + 33 张基线重截；office3d 工牌 innerHTML XSS 修复；WAO_TOKEN 生产启用（CUTOVER 检查项 #8）；文档对齐实测（666 用例/契约×5/内核 1164 行）；根目录过程产物归档 + 最小 CI |
+| 11-09 | 术语全量收口：MCP 12 工具改名（list_employees→list_bots 等，server 名 wao-company 保留）+ office3d 迁移 + skill/盲评清单重写 + 33 张基线重截；office3d 工牌 innerHTML XSS 修复；WAO_TOKEN 生产启用（CUTOVER 检查项 #8）；文档对齐实测（669+ 用例/契约×5/内核 1164 行）；根目录过程产物归档 + 最小 CI |
 
 ---
 

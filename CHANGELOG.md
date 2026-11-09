@@ -9,7 +9,7 @@
 - **MCP 12 工具改名**（标准术语，README §4.2；server 名 `wao-company` 与 skill 文件名不变）：list_employees→list_bots、get_employee→get_bot、hire→create_bot、update_employee→update_bot、offboard→delete_bot、set_duty→set_enabled、probation_test→test_bot、list_departments→list_plugins、department_toggle→toggle_plugin（参数 departmentId→pluginId）、work_log→get_ledger、work_timeline→get_timeline、company_state→get_state；结构化键 departments/employee(s)/affectedEmployees/off-duty 同步 → plugins/bot(s)/affectedBots/paused。skill 文档与盲评清单同步重写。
 - **office3d 文案迁移标准术语**（在岗/休假/花名册/工单/服务同事/档案 → 工作中/离线/机器人列表/消息/服务用户/会话）；工牌标签 innerHTML→textContent（bot 名防注入，XSS 修复）。
 - **WAO_TOKEN 生产启用**：launchd 实例注入令牌（API/MCP 裸访问 401；healthz/静态面豁免；doctor 实测生效）；CUTOVER 检查单增 #8；docs/launchd.plist 模板加示例。
-- 文档对齐实测：README/HANDOFF（666 用例/契约×5/33 张基线/内核 1164 行/真实企微已切换 11-06/四家 provider+cursor）；头部加「数字类以实跑为准」声明。
+- 文档对齐实测：README/HANDOFF（669+ 用例/契约×5/33 张基线/内核 1164 行/真实企微已切换 11-06/四家 provider+cursor）；头部加「数字类以实跑为准」声明。
 - TUI 验收脚本断言对齐新文案；attach/detach 断言改指 data/logs/wao.log；生产帧存档重采 ×3。
 - 根目录过程产物归档 docs/archive/；新增最小 CI（npm test + 契约×5）。
 
