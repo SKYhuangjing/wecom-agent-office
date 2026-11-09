@@ -945,3 +945,100 @@ test('sendDrainRefusals: a hung adapter reply is bounded by the same outbound de
   ]);
   assert.match(h.log.lines.error.join('\n'), /drain refusal reply failed: outbound timeout/);
 });
+
+// —— 会话 TTL 退役（DESIGN-TOKEN-OPT §4.4）————————————————————————————
+import { isSessionStale, sessionTtlMinutes, SESSION_TTL_MIN_DEFAULT } from '../../plugins/core-engine/engine.js';
+
+test('isSessionStale: pure TTL decision boundaries', () => {
+  const now = Date.now();
+  assert.equal(SESSION_TTL_MIN_DEFAULT, 45);
+  // ttl<=0 disables retirement entirely
+  assert.equal(isSessionStale({ lastAt: now - 10 * 60_000 }, now, 0), false);
+  assert.equal(isSessionStale({ lastAt: now - 10 * 60_000 }, now, -1), false);
+  // null pe / non-object → false
+  assert.equal(isSessionStale(null, now, 45), false);
+  // legacy entries without lastAt keep the old resume behavior (no surprise resets post-upgrade)
+  assert.equal(isSessionStale({}, now, 45), false);
+  assert.equal(isSessionStale({ lastAt: 'yesterday' }, now, 45), false);
+  // boundary: exactly TTL minutes elapsed is NOT stale (strict >)
+  assert.equal(isSessionStale({ lastAt: now - 45 * 60_000 }, now, 45), false);
+  assert.equal(isSessionStale({ lastAt: now - 45 * 60_001 }, now, 45), true);
+  assert.equal(isSessionStale({ lastAt: now - 46 * 60_000 }, now, 45), true);
+});
+
+test('sessionTtlMinutes: defensive providerConfig parsing (unknown keys pass validation)', () => {
+  assert.equal(sessionTtlMinutes({ providerConfig: {} }), SESSION_TTL_MIN_DEFAULT);
+  assert.equal(sessionTtlMinutes({}), SESSION_TTL_MIN_DEFAULT);
+  assert.equal(sessionTtlMinutes({ providerConfig: { sessionTtlMin: 10 } }), 10);
+  assert.equal(sessionTtlMinutes({ providerConfig: { sessionTtlMin: 0 } }), 0);
+  // junk shapes fall back to default, never crash, never negative
+  assert.equal(sessionTtlMinutes({ providerConfig: { sessionTtlMin: -5 } }), SESSION_TTL_MIN_DEFAULT);
+  assert.equal(sessionTtlMinutes({ providerConfig: { sessionTtlMin: '45' } }), SESSION_TTL_MIN_DEFAULT);
+  assert.equal(sessionTtlMinutes({ providerConfig: { sessionTtlMin: NaN } }), SESSION_TTL_MIN_DEFAULT);
+});
+
+test('SessionCache: upsert stamps lastAt; expire removes the entry and clears current', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wao-ttl-'));
+  const log = fakeLog();
+  const ledger = new Ledger({ file: join(dir, 'l.jsonl'), log });
+  const cache = new SessionCache({ file: join(dir, 's.json'), log, ledger });
+  const before = Date.now();
+  cache.upsert(K, 'codex', { sessionId: 's1', bornCwd: CWD }, 0);
+  const got = cache.get(K).cache.codex;
+  assert.equal(got.sessionId, 's1');
+  assert.ok(typeof got.lastAt === 'number' && got.lastAt >= before && got.lastAt <= Date.now(), 'lastAt stamped at upsert');
+  assert.equal(cache.get(K).current, 'codex');
+  // expire: current provider → cleared alongside
+  assert.equal(cache.expire(K, 'codex'), true);
+  assert.equal(cache.get(K).cache.codex, undefined);
+  assert.equal(cache.get(K).current, null);
+  assert.equal(cache.get(K).dirty, false);
+  // idempotent: nothing left to delete
+  assert.equal(cache.expire(K, 'codex'), false);
+  // persistence round-trip keeps the removal
+  const cache2 = new SessionCache({ file: join(dir, 's.json'), log, ledger });
+  assert.equal(cache2.get(K).cache.codex, undefined);
+});
+
+test('turn flow: TTL-expired session retires to a FRESH session with NO handoff prefix', async () => {
+  const h = makeHarness({ steps: [COMPLETE(), COMPLETE({ returnsSessionId: 's2' })] });
+  await h.send('第一条');
+  assert.equal(h.runner.calls[0].sessionId, null);
+  assert.equal(h.cache.get(K).cache.codex.sessionId, 's1');
+  // backdate the entry beyond TTL (default 45min)
+  h.cache._data[K].cache.codex.lastAt = Date.now() - 46 * 60_000;
+  await h.send('第二条');
+  const second = h.runner.calls[1];
+  assert.equal(second.sessionId, null, 'expired session is NOT resumed');
+  assert.equal(second.prompt, '第二条', 'no handoff prefix — durable context belongs to the memory layer');
+  // the fresh session is cached and clean
+  assert.equal(h.cache.get(K).cache.codex.sessionId, 's2');
+  assert.equal(h.cache.get(K).cache.codex.dirty, false);
+  // ledger still journals both turns
+  assert.equal(h.ledger.turns({ chatKey: K }).length, 2);
+  assert.match(h.log.lines.info.join('\n'), /session expired by TTL/, 'the retirement is logged');
+});
+
+test('turn flow: sessionTtlMin=0 disables retirement; legacy entries without lastAt resume', async () => {
+  const bot0 = mkBot({ providerConfig: { sessionTtlMin: 0 } });
+  const h0 = makeHarness({ bot: bot0, steps: [COMPLETE(), COMPLETE()] });
+  await h0.send('a');
+  h0.cache._data[K].cache.codex.lastAt = Date.now() - 100 * 24 * 60_000; // months old, TTL off
+  await h0.send('b');
+  assert.equal(h0.runner.calls[1].sessionId, 's1', 'ttl=0 → always resume');
+
+  const h1 = makeHarness({ steps: [COMPLETE(), COMPLETE()] });
+  await h1.send('a');
+  delete h1.cache._data[K].cache.codex.lastAt; // legacy persisted entry
+  await h1.send('b');
+  assert.equal(h1.runner.calls[1].sessionId, 's1', 'legacy no-lastAt entry keeps resume behavior');
+});
+
+test('turn flow: within TTL the session resumes natively (the resume we WANT to pay for)', async () => {
+  const h = makeHarness({ steps: [COMPLETE(), COMPLETE()] });
+  await h.send('a');
+  h.cache._data[K].cache.codex.lastAt = Date.now() - 10 * 60_000; // well within 45min
+  await h.send('b');
+  assert.equal(h.runner.calls[1].sessionId, 's1', 'native resume inside the window');
+  assert.equal(h.runner.calls[1].prompt, 'b');
+});

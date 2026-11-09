@@ -151,6 +151,29 @@ export function createUsageAccumulator() {
   };
 }
 
+// —— 会话 TTL 退役（DESIGN-TOKEN-OPT §4.4）————————————————————————————
+// --resume 每轮把整段会话历史作为输入重放（实测一条「hi」付 62k）。TTL 内的
+// 多轮任务照旧续会话（这正是 --resume 该付的钱）；越窗即退役——下一轮从全新
+// 会话开始，不带 handoff 前缀，长时上下文交给记忆层（memory 资产注入）。
+export const SESSION_TTL_MIN_DEFAULT = 45;
+
+// providerConfig.sessionTtlMin：数字、≥0 才有效；0=永不退役；非法/缺省→默认。
+// 引擎侧防御式解析（providerConfig 未知键自由通过，schema 无 number 类型）。
+export function sessionTtlMinutes(bot) {
+  const v = bot?.providerConfig?.sessionTtlMin;
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : SESSION_TTL_MIN_DEFAULT;
+}
+
+// 纯判定（导出供单测）：pe 无时间戳（历史遗留条目）视为未过期——升级后首条
+// 消息不惊扰既有会话，下一次 upsert 起才参与 TTL。
+export function isSessionStale(pe, now, ttlMin) {
+  if (pe == null || typeof pe !== 'object') return false;
+  if (!(typeof ttlMin === 'number' && ttlMin > 0)) return false;
+  const lastAt = pe.lastAt;
+  if (typeof lastAt !== 'number' || !Number.isFinite(lastAt)) return false;
+  return now - lastAt > ttlMin * 60_000;
+}
+
 export async function defaultRunTurn(bot, msg, ac) {
   const engine = this;
   // A bare engine (kernel boot) has no wiring: skip loudly instead of crashing
@@ -194,7 +217,17 @@ export async function defaultRunTurn(bot, msg, ac) {
 
   // —— 1. session resolution (§6.3 + §7) ————————————————————————————————
   const entry = cache.get(chatKey);
-  const pe = entry?.cache?.[provider] ?? null;
+  let pe = entry?.cache?.[provider] ?? null;
+  // TTL 退役前置（DESIGN-TOKEN-OPT §4.4）：越窗的活跃会话先退役——当轮
+  // 走全新会话。区别于 provider 切换的分支 3：不带 handoff 前缀（长时
+  // 上下文由记忆层承接，不重放历史）。
+  let expiredByTtl = false;
+  if (isSessionStale(pe, Date.now(), sessionTtlMinutes(bot))) {
+    cache.expire(chatKey, provider);
+    pe = null;
+    expiredByTtl = true;
+    engine.log.info?.(`session expired by TTL: ${chatKey}/${provider} — starting fresh`);
+  }
   const nativeOk = !!entry && entry.current === provider && !!pe
     && pe.bornCwd === bornCwd && pe.dirty !== true && entry.dirty !== true;
   // Rule-1 pin (review counterexample A): the upsert's consumedSeq argument is
@@ -222,7 +255,8 @@ export async function defaultRunTurn(bot, msg, ac) {
     // New provider, dirty session (self-handoff) or bornCwd drift: fresh
     // session carrying the ledger prefix. Switching away does NOT dirty the
     // old provider's entry — only timeout / hard kill does (§7 切回语义).
-    prefix = ledger.buildHandoffPrefix({ chatKey });
+    // TTL 退役同样落到这里，但不带前缀——旧历史不进新会话（§4.4）。
+    prefix = expiredByTtl ? '' : ledger.buildHandoffPrefix({ chatKey });
     sessionId = null;
   }
   const sessionIdWasNull = sessionId === null;

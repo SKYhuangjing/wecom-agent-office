@@ -211,7 +211,8 @@ test('upsert persists atomically: no tmp residue, full roundtrip, rule-1 fields'
   const rec = new SessionCache({ file: join(dir, 'sessions.json'), log: mkLog() }).get(K);
   assert.equal(rec.current, 'claude', 'upsert switches current');
   assert.equal(rec.dirty, false);
-  assert.deepEqual(rec.cache.dsh, { sessionId: 's1', bornCwd: '/ws', consumedSeq: 5, consumedAtBuild: 5, dirty: false });
+  assert.deepEqual({ ...rec.cache.dsh, lastAt: 0 }, { sessionId: 's1', bornCwd: '/ws', consumedSeq: 5, consumedAtBuild: 5, dirty: false, lastAt: 0 });
+  assert.ok(Number.isFinite(rec.cache.dsh.lastAt) && Date.now() - rec.cache.dsh.lastAt < 60_000, 'lastAt stamped (TTL retirement datum)');
   assert.equal(rec.cache.claude.sessionId, 's2');
 });
 

@@ -3,12 +3,13 @@
 // synchronously, persisted through atomicWrite after every mutation — never a
 // read-modify-write across an await (that is how updates get lost).
 //
-// Persisted shape (DESIGN §3, extended with per-entry dirty):
+// Persisted shape (DESIGN §3, extended with per-entry dirty + lastAt):
 //   { [chatKey]: { current, dirty, cache: { [provider]: {
-//       sessionId, bornCwd, consumedSeq, consumedAtBuild, dirty } } } }
+//       sessionId, bornCwd, consumedSeq, consumedAtBuild, dirty, lastAt } } } }
 // `dirty` lives on the provider entry (only that session was killed); the
 // chatKey-level `dirty` mirrors the CURRENT provider's entry so the record
-// shape stays the one DESIGN §3 documents.
+// shape stays the one DESIGN §3 documents. `lastAt` (ms epoch) stamps every
+// upsert — the engine's TTL retirement (DESIGN-TOKEN-OPT §4.4) reads it.
 //
 // The ledger is injected (constructor, recompute, or replay opts) because
 // handoffReplay must read it; the cache never owns ledger state itself.
@@ -57,8 +58,25 @@ export class SessionCache {
       consumedSeq,
       consumedAtBuild: consumedSeq,
       dirty: false,
+      lastAt: Date.now(), // TTL 退役判据（DESIGN-TOKEN-OPT §4.4）
     };
     this._persist();
+  }
+
+  // TTL 退役（DESIGN-TOKEN-OPT §4.4）：删除该 provider 的会话条目，下一次
+  // 轮次从全新会话开始。注意与 markDirty 的语义差：不落 dirty（会话本身
+  // 没坏，只是过期），也不触碰其他 provider 的条目；旧会话文件留在
+  // provider 侧不动（远期归档/L3 检索候选）。返回是否有条目被删。
+  expire(chatKey, provider) {
+    const rec = this._data[chatKey];
+    if (!rec?.cache?.[provider]) return false;
+    delete rec.cache[provider];
+    if (rec.current === provider) {
+      rec.current = null;
+      rec.dirty = false;
+    }
+    this._persist();
+    return true;
   }
 
   // Rule 2: advance only — a stale/lower seq must never erase progress
