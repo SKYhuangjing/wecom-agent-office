@@ -197,7 +197,7 @@ test('P1-3: a stale installing entry self-heals to failed (GET display + POST no
   mkdirSync(join(fakes, 'channel-fake'), { recursive: true });
   writeFileSync(join(fakes, 'channel-fake', 'plugin.js'), FAKE_CHANNEL);
   writeFileSync(join(fakes, 'channel-fake', 'package.json'), '{"type":"module"}\n');
-  // 21 分钟前开始安装（> 20min 上限）——服务重启把它永远留在了 installing
+  // 36 分钟前开始安装（> 35min 窗口）——服务重启把它永远留在了 installing
   writeToolsRegistry(join(dataDir, 'tools.json'), { rtk: { state: 'installing', startedAt: Date.now() - 36 * 60 * 1000 } });
   const kernel = await createKernel({ port: 0, dataDir, pluginsDirs: [fakes, join(repoRoot, 'plugins')] });
   try {

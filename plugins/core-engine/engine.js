@@ -629,8 +629,10 @@ export async function defaultRunTurn(bot, msg, ac) {
       case 'completed': {
         // Push carries the FULL text (the adapter chunks it, §6.7); a stream
         // final is capped at maxContentChars with the 会话页 pointer.
-        // onOutbound runs on the final reply ONLY, after mask+truncate so an
-        // appended footer survives the 会话页 cut; the product is masked
+        // onOutbound runs on the final reply ONLY and eats the FULL text (a
+        // distill marker at the tail must not be cut before extraction); the
+        // FINAL frame then uses tail-keeping truncation so middleware tail
+        // appendages (📊 footer) survive the cut; the product is masked
         // again — masking is ALWAYS on, even for middleware-injected text.
         const outCtx = {
           bot,

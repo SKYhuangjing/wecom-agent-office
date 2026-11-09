@@ -610,7 +610,7 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
   // restart = 派生更新器 --restart-only（无下载无覆写，只杀旧进程+原参数拉起）。
   const toolsRegistryFile = () => join(resolve(dir), 'tools.json');
   // 盲评 P1-3：安装是后台任务，服务重启/断电会把它永远留在 installing——
-  // GET 展示与 POST 409 守卫都按「超时即失败」自愈（20 分钟 > SFX 600s 上限）。
+  // GET 展示与 POST 409 守卫都按「超时即失败」自愈。
   // 35min > 最坏合法安装时长（直连 600s + 镜像回退 600s + SFX 600s ≈ 30min）。
   const STALE_INSTALL_MS = 35 * 60 * 1000;
   const effectiveInstall = (entry) => (entry?.state === 'installing'
