@@ -41,6 +41,9 @@
 
 ## 设计备忘(记录在案,暂不排期)
 
+- **记忆层外部系统集成**(2026-11-10 调研,详见 [MEMORY-RESEARCH.md](MEMORY-RESEARCH.md)):首选 scope-recall(MIT,536★,原生尊重 CLAUDE_CONFIG_DIR→per-bot 隔离零改动);路径 A 试点(per-bot 直装)→B 产品化(工具资产 kind,rtk 状态机同款)→C 网关层(magpie 插件,bot 隔离粗,远期);mem0 过重/basic-memory AGPL 不推荐。触发条件:WAO memory 资产条数逼近 50 上限或 FAQ 检索需求出现。
+
+
 - **provider 凭证/模型目录层**(2026-11-08 讨论记录;**owner 裁定短期不需要**——magpie 支持统一代理,
   新 provider 走网关型路线即可零凭证入职,问题只在账号型 provider 上存在)。
   问题本质:provider 实际分两类——**网关型**(dsh/claude/codex/pi 经 magpie:凭证机器级、模型目录可查、
