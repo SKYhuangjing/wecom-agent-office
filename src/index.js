@@ -8,7 +8,7 @@
 // fails the boot before anything serves traffic.
 import process from 'node:process';
 import net from 'node:net';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { accessSync, chmodSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { homedir, networkInterfaces, hostname } from 'node:os';
