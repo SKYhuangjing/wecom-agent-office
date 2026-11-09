@@ -550,7 +550,7 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
     mkdirSync(stageDir, { recursive: true });
     const res = await fetch(zipUrl, {
       headers: { 'User-Agent': 'WAO-Updater/1.0' },
-      signal: AbortSignal.timeout(60000),
+      signal: AbortSignal.timeout(300000), // 慢网络实测 10MB 源码包要 2 分钟+
     });
     if (!res.ok) throw new Error(`下载更新代码包失败（HTTP ${res.status}）`);
     const buf = Buffer.from(await res.arrayBuffer());
