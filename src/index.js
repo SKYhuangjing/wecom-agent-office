@@ -544,44 +544,6 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
     return 'detached';
   };
 
-  const downloadAndExtractUpdate = async (stageDir) => {
-    const zipUrl = 'https://codeload.github.com/SKYhuangjing/wecom-agent-office/zip/refs/heads/main';
-    const stageZip = join(stageDir, 'wao-update.zip');
-    mkdirSync(stageDir, { recursive: true });
-    const res = await fetch(zipUrl, {
-      headers: { 'User-Agent': 'WAO-Updater/1.0' },
-      signal: AbortSignal.timeout(300000), // 慢网络实测 10MB 源码包要 2 分钟+
-    });
-    if (!res.ok) throw new Error(`下载更新代码包失败（HTTP ${res.status}）`);
-    const buf = Buffer.from(await res.arrayBuffer());
-    writeFileSync(stageZip, buf);
-
-    const extDir = join(stageDir, 'ext');
-    rmSync(extDir, { recursive: true, force: true });
-    mkdirSync(extDir, { recursive: true });
-
-    if (process.platform === 'win32') {
-      try {
-        execFileSync('tar.exe', ['-xf', stageZip, '-C', extDir], { stdio: 'ignore', timeout: 30000 });
-      } catch {
-        execFileSync('powershell', ['-NoProfile', '-Command', `Expand-Archive -Path '${stageZip}' -DestinationPath '${extDir}' -Force`], { stdio: 'ignore', timeout: 60000 });
-      }
-    } else {
-      try {
-        execFileSync('tar', ['-xf', stageZip, '-C', extDir], { stdio: 'ignore', timeout: 30000 });
-      } catch {
-        execFileSync('unzip', ['-q', stageZip, '-d', extDir], { stdio: 'ignore', timeout: 30000 });
-      }
-    }
-
-    const subdirs = readdirSync(extDir, { withFileTypes: true }).filter((d) => d.isDirectory());
-    const realSrc = subdirs.length === 1 ? join(extDir, subdirs[0].name) : extDir;
-    if (!existsSync(join(realSrc, 'package.json')) || !existsSync(join(realSrc, 'src', 'index.js'))) {
-      throw new Error('更新包完整性校验失败：缺少 package.json 或 src/index.js');
-    }
-    return realSrc;
-  };
-
   http.register({
     prefix: '/api/service/update', owner: 'kernel', handler: async (req, res) => {
       if (req.method === 'GET') {
@@ -595,19 +557,21 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
         const cur = getCurrentCommit(dir);
         const check = await checkRemoteUpdate(cur);
         const targetCommit = check.remoteCommit || '';
+        if (!targetCommit) {
+          return json(res, 503, { ok: false, error: `无法确定远程最新 Commit（${check.error ?? 'GitHub 不可达'}），稍后重试` });
+        }
 
-        const stageDir = join(dir, '.update-stage');
-        const extractedSrc = await downloadAndExtractUpdate(stageDir);
-
+        // 零停机架构：主进程只派生更新器并立即应答——下载在更新器里做（无 HTTP
+        // 超时压力，慢网络可跑数分钟），旧服务全程在线；下载完成那一刻更新器才
+        // 杀旧进程、覆写、重启。停机窗口 = 覆写+重启 ≈ 十几秒。
         const restartMode = detectRestartMode();
         const updaterScript = join(repoRoot, 'scripts', 'updater.js');
         const updaterArgs = [
           updaterScript,
+          '--zip-url', 'https://codeload.github.com/SKYhuangjing/wecom-agent-office/zip/refs/heads/main',
           '--parent-pid', String(process.pid),
-          '--stage-dir', extractedSrc,
           '--target-dir', repoRoot,
           '--data-dir', dir,
-          '--entry', join(repoRoot, 'src', 'index.js'),
           '--port', String(http.port),
           '--host', host,
           '--restart-mode', restartMode,
@@ -623,16 +587,12 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
         });
         child.unref();
 
-        logger.info(`wao: update initiated (mode=${restartMode}, targetCommit=${targetCommit}), updater pid=${child.pid}`);
-        json(res, 200, { ok: true, message: '更新已触发，服务正在平滑重启', restartMode, targetCommit });
-
-        // 响应客户端完成后优雅停机交接
-        setImmediate(async () => {
-          try { await lifecycle.drainEngine(2000); } catch { /* best effort */ }
-          try { await lifecycle.deactivateAll(); } catch { /* best effort */ }
-          try { http.forceClose(); } catch { /* best effort */ }
-          try { lock.release(); } catch { /* best effort */ }
-          process.exit(0);
+        logger.info(`wao: update delegated to detached updater (mode=${restartMode}, targetCommit=${targetCommit}), updater pid=${child.pid} — service stays up during download`);
+        return json(res, 200, {
+          ok: true,
+          message: '后台更新已启动：新版本下载完成后服务将短暂重启（十几秒），页面就绪后自动刷新',
+          restartMode,
+          targetCommit,
         });
       } catch (err) {
         logger.error('wao: update failed', err);

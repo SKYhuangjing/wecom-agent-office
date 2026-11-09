@@ -1,12 +1,22 @@
 #!/usr/bin/env node
 // scripts/updater.js — Cross-platform detached updater for WAO (macOS / Linux / Windows).
-// Runs detached from the main service. Steps:
-// 1. Wait for the parent service process to exit (releasing port & data/.lock)
-// 2. Safely overlay new code into targetDir (STRICTLY PRESERVING data/)
-// 3. Compare package.json dependencies, run npm install --omit=dev if changed
-// 4. Update data/version.json with the target commit SHA
-// 5. Restart WAO (via launchd / systemd if managed, or by spawning a new detached process)
-// 6. Probe /healthz, log outcome to data/logs/updater.log, and exit.
+// Runs detached from the main service. Two modes:
+//
+//   A. --zip-url mode (recommended): download the release zip FIRST (parent keeps
+//      serving — zero downtime during download), then kill parent, overlay, restart.
+//   B. --stage-dir mode: the stage is already prepared by the caller; wait for
+//      parent exit, overlay, restart.
+//
+// Steps (zip-url mode):
+// 1. Download the zip from --zip-url into data/.update-stage/ (no HTTP timeout
+//    pressure — slow networks can take minutes; the old service stays up)
+// 2. Extract + validate (package.json & src/index.js must exist)
+// 3. Kill the parent service process (it keeps serving until THIS point)
+// 4. Safely overlay new code into targetDir (STRICTLY PRESERVING data/)
+// 5. Compare package.json dependencies, run npm install --omit=dev if changed
+// 6. Update data/version.json with the target commit SHA
+// 7. Restart WAO (via launchd / systemd if managed, or by spawning a new detached process)
+// 8. Probe /healthz, log outcome to data/logs/updater.log, and exit.
 
 import process from 'node:process';
 import { execFileSync, spawn } from 'node:child_process';
@@ -34,7 +44,7 @@ const parseArgs = (argv) => {
 
 const sleepSync = (ms) => {
   const end = Date.now() + ms;
-  while (Date.now() < end) { /* busy wait fallback or Atomics.wait */ }
+  while (Date.now() < end) { /* busy wait */ }
 };
 
 export function copyOverlay(srcDir, destDir) {
@@ -81,11 +91,61 @@ export function waitProcessExit(pid, timeoutMs = 15000) {
   return false;
 }
 
-export function probeHealth(url, timeoutMs = 15000) {
+export function killProcess(pid) {
+  if (!pid || pid <= 0) return;
+  try {
+    if (process.platform === 'win32') {
+      execFileSync('taskkill', ['/PID', String(pid), '/F', '/T'], { stdio: 'ignore', timeout: 10000 });
+    } else {
+      process.kill(pid, 'SIGKILL');
+    }
+  } catch { /* already gone or access denied — waitProcessExit handles the rest */ }
+}
+
+// Download a zip with generous patience (slow networks: no caller waiting on us).
+export async function downloadZip(url, outFile, log, timeoutMs = 600000) {
+  const res = await fetch(url, {
+    headers: { 'User-Agent': 'WAO-Updater/1.0' },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!res.ok) throw new Error(`download failed (HTTP ${res.status})`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  writeFileSync(outFile, buf);
+  log(`zip downloaded: ${buf.length} bytes from ${url}`);
+  return outFile;
+}
+
+export function extractZip(zipPath, extDir, log) {
+  rmSync(extDir, { recursive: true, force: true });
+  mkdirSync(extDir, { recursive: true });
+  if (process.platform === 'win32') {
+    try {
+      execFileSync('tar.exe', ['-xf', zipPath, '-C', extDir], { stdio: 'ignore', timeout: 60000 });
+    } catch {
+      execFileSync('powershell', ['-NoProfile', '-Command',
+        `Expand-Archive -Path '${zipPath}' -DestinationPath '${extDir}' -Force`], { stdio: 'ignore', timeout: 120000 });
+    }
+  } else {
+    try {
+      execFileSync('tar', ['-xf', zipPath, '-C', extDir], { stdio: 'ignore', timeout: 60000 });
+    } catch {
+      execFileSync('unzip', ['-q', zipPath, '-d', extDir], { stdio: 'ignore', timeout: 60000 });
+    }
+  }
+  // codeload zips wrap in <repo>-<branch>/; git archive zips are at root.
+  const subdirs = readdirSync(extDir, { withFileTypes: true }).filter((d) => d.isDirectory());
+  const realSrc = subdirs.length === 1 ? join(extDir, subdirs[0].name) : extDir;
+  if (!existsSync(join(realSrc, 'package.json')) || !existsSync(join(realSrc, 'src', 'index.js'))) {
+    throw new Error('zip integrity check failed: package.json or src/index.js missing');
+  }
+  log(`zip extracted and validated: ${realSrc}`);
+  return realSrc;
+}
+
+export function probeHealth(url, timeoutMs = 20000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      // Use curl if available for sync probe, or fallback
       const bin = process.platform === 'win32' ? 'curl.exe' : 'curl';
       const out = execFileSync(bin, ['-s', '-m', '2', url], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
       if (out && out.includes('"ok":true')) return true;
@@ -95,10 +155,11 @@ export function probeHealth(url, timeoutMs = 15000) {
   return false;
 }
 
-export function runUpdater(argv = process.argv.slice(2)) {
+export async function runUpdater(argv = process.argv.slice(2)) {
   const flags = parseArgs(argv);
   const parentPid = Number(flags['parent-pid'] || 0);
   const stageDir = flags['stage-dir'] ? resolve(flags['stage-dir']) : null;
+  const zipUrl = flags['zip-url'] || '';
   const targetDir = flags['target-dir'] ? resolve(flags['target-dir']) : null;
   const dataDir = flags['data-dir'] ? resolve(flags['data-dir']) : null;
   const targetCommit = flags['target-commit'] || '';
@@ -107,8 +168,8 @@ export function runUpdater(argv = process.argv.slice(2)) {
   const lan = flags.lan === true;
   const restartMode = flags['restart-mode'] || 'auto';
 
-  if (!stageDir || !targetDir || !dataDir) {
-    console.error('updater: missing required --stage-dir, --target-dir, or --data-dir');
+  if ((!stageDir && !zipUrl) || !targetDir || !dataDir) {
+    console.error('updater: missing required --stage-dir/--zip-url, --target-dir, or --data-dir');
     process.exit(1);
   }
 
@@ -119,115 +180,128 @@ export function runUpdater(argv = process.argv.slice(2)) {
     try { writeFileSync(logFile, line, { flag: 'a' }); } catch { /* ignore */ }
   };
 
-  log(`updater started: parentPid=${parentPid}, restartMode=${restartMode}, targetCommit=${targetCommit}`);
+  log(`updater started: parentPid=${parentPid}, restartMode=${restartMode}, targetCommit=${targetCommit}, mode=${zipUrl ? 'zip-url' : 'stage-dir'}`);
 
-  // Step 1: Wait for parent process to exit
-  if (parentPid > 0) {
-    log(`waiting for parent pid ${parentPid} to terminate...`);
-    const exited = waitProcessExit(parentPid, 15000);
-    log(`parent process terminated: exited=${exited}`);
-  }
-
-  // Clear stale lock if parent left one
-  const lockPidFile = join(dataDir, '.lock', 'pid');
   try {
-    if (existsSync(lockPidFile)) {
-      const holder = Number(readFileSync(lockPidFile, 'utf8').trim());
-      if (holder === parentPid) rmSync(lockPidFile, { force: true });
+    // —— Phase 1: prepare the stage (parent keeps serving — zero downtime here) ——
+
+    let src = stageDir;
+    if (zipUrl) {
+      const stage = join(dataDir, '.update-stage');
+      mkdirSync(stage, { recursive: true });
+      const zipPath = join(stage, 'wao-update.zip');
+      log(`downloading ${zipUrl} (parent ${parentPid} stays up during download)...`);
+      await downloadZip(zipUrl, zipPath, log);
+      src = extractZip(zipPath, join(stage, 'ext'), log);
     }
-  } catch { /* best effort */ }
 
-  // Step 2: Overlay files into targetDir (preserving data/)
-  const oldPkg = join(targetDir, 'package.json');
-  const newPkg = join(stageDir, 'package.json');
-  const shouldNpm = needNpmInstall(oldPkg, newPkg);
+    // —— Phase 2: take the old service down (only after the stage is ready) ——
 
-  log(`copying files from ${stageDir} to ${targetDir} (data/ protected)...`);
-  copyOverlay(stageDir, targetDir);
-  log('file overlay complete');
+    if (parentPid > 0) {
+      log(`stage ready — stopping parent pid ${parentPid}...`);
+      killProcess(parentPid);
+      waitProcessExit(parentPid, 15000);
+      log('parent stopped');
+    }
 
-  // Step 3: Run npm install if dependencies changed
-  if (shouldNpm) {
-    log('package.json dependencies changed; running npm install --omit=dev...');
-    const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    // Clear stale lock if parent left one
+    const lockPidFile = join(dataDir, '.lock', 'pid');
     try {
-      execFileSync(npmBin, ['install', '--omit=dev', '--no-audit', '--no-fund'], {
-        cwd: targetDir,
+      if (existsSync(lockPidFile)) {
+        const holder = Number(readFileSync(lockPidFile, 'utf8').trim());
+        if (holder === parentPid) rmSync(lockPidFile, { force: true });
+      }
+    } catch { /* best effort */ }
+
+    // —— Phase 3: overlay + deps + version ——
+
+    const oldPkg = join(targetDir, 'package.json');
+    const newPkg = join(src, 'package.json');
+    const shouldNpm = needNpmInstall(oldPkg, newPkg);
+
+    log(`copying files from ${src} to ${targetDir} (data/ protected)...`);
+    copyOverlay(src, targetDir);
+    log('file overlay complete');
+
+    if (shouldNpm) {
+      log('package.json dependencies changed; running npm install --omit=dev...');
+      const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+      try {
+        execFileSync(npmBin, ['install', '--omit=dev', '--no-audit', '--no-fund'], {
+          cwd: targetDir,
+          stdio: 'ignore',
+        });
+        log('npm install complete');
+      } catch (err) {
+        log(`npm install failed: ${err.message}`);
+      }
+    }
+
+    const versionFile = join(dataDir, 'version.json');
+    let pkgVer = '0.1.0';
+    try { pkgVer = JSON.parse(readFileSync(join(targetDir, 'package.json'), 'utf8')).version; } catch { /* fallback */ }
+    try {
+      writeFileSync(versionFile, JSON.stringify({ version: pkgVer, commit: targetCommit, updatedAt: Date.now() }, null, 2));
+      log(`version.json updated: commit=${targetCommit}, version=${pkgVer}`);
+    } catch (err) {
+      log(`failed to write version.json: ${err.message}`);
+    }
+
+    // Clean stage
+    try { rmSync(join(dataDir, '.update-stage'), { recursive: true, force: true }); } catch { /* ignore */ }
+
+    // —— Phase 4: restart WAO ——
+
+    log(`restarting WAO (mode=${restartMode})...`);
+    let restarted = false;
+
+    if (restartMode === 'launchd' && process.platform === 'darwin') {
+      try {
+        const uid = process.getuid();
+        execFileSync('launchctl', ['kickstart', '-k', `gui/${uid}/com.wecom-agent-office`], { stdio: 'ignore' });
+        log('launchctl kickstart executed');
+        restarted = true;
+      } catch (err) {
+        log(`launchctl kickstart failed: ${err.message}; falling back to detached spawn`);
+      }
+    } else if (restartMode === 'systemd' && process.platform === 'linux') {
+      try {
+        execFileSync('systemctl', ['--user', 'restart', 'wao'], { stdio: 'ignore' });
+        log('systemctl --user restart executed');
+        restarted = true;
+      } catch (err) {
+        log(`systemctl restart failed: ${err.message}; falling back to detached spawn`);
+      }
+    }
+
+    if (!restarted) {
+      const entry = join(targetDir, 'src', 'index.js');
+      const startArgs = [entry, 'start', '--port', String(port), '--host', host, '--data-dir', dataDir];
+      if (lan) startArgs.push('--lan');
+      log(`spawning detached process: ${process.execPath} ${startArgs.join(' ')}`);
+      const child = spawn(process.execPath, startArgs, {
+        detached: true,
         stdio: 'ignore',
+        cwd: targetDir,
+        env: process.env,
       });
-      log('npm install complete');
-    } catch (err) {
-      log(`npm install failed: ${err.message}`);
+      child.unref();
+      log(`detached child spawned: pid=${child.pid}`);
     }
-  }
 
-  // Step 4: Write version.json
-  const versionFile = join(dataDir, 'version.json');
-  let pkgVer = '0.1.0';
-  try { pkgVer = JSON.parse(readFileSync(join(targetDir, 'package.json'), 'utf8')).version; } catch { /* fallback */ }
-  const meta = {
-    version: pkgVer,
-    commit: targetCommit,
-    updatedAt: Date.now(),
-  };
-  try {
-    writeFileSync(versionFile, JSON.stringify(meta, null, 2));
-    log(`version.json updated: commit=${targetCommit}, version=${pkgVer}`);
+    const probeHost = host === '0.0.0.0' ? '127.0.0.1' : host;
+    const probeUrl = `http://${probeHost}:${port}/healthz`;
+    log(`probing health at ${probeUrl}...`);
+    const healthy = probeHealth(probeUrl, 20000);
+    log(`health probe result: healthy=${healthy}`);
+    log(healthy ? 'updater completed successfully' : 'updater finished but service health NOT confirmed — check wao.log');
   } catch (err) {
-    log(`failed to write version.json: ${err.message}`);
+    log(`updater FAILED: ${err?.message ?? err}`);
+    process.exit(1);
   }
-
-  // Clean stage
-  try { rmSync(stageDir, { recursive: true, force: true }); } catch { /* ignore */ }
-
-  // Step 5: Restart WAO
-  log(`restarting WAO (mode=${restartMode})...`);
-  let restarted = false;
-
-  if (restartMode === 'launchd' && process.platform === 'darwin') {
-    try {
-      const uid = process.getuid();
-      execFileSync('launchctl', ['kickstart', '-k', `gui/${uid}/com.wecom-agent-office`], { stdio: 'ignore' });
-      log('launchctl kickstart executed');
-      restarted = true;
-    } catch (err) {
-      log(`launchctl kickstart failed: ${err.message}; falling back to detached spawn`);
-    }
-  } else if (restartMode === 'systemd' && process.platform === 'linux') {
-    try {
-      execFileSync('systemctl', ['--user', 'restart', 'wao'], { stdio: 'ignore' });
-      log('systemctl --user restart executed');
-      restarted = true;
-    } catch (err) {
-      log(`systemctl restart failed: ${err.message}; falling back to detached spawn`);
-    }
-  }
-
-  if (!restarted) {
-    const entry = join(targetDir, 'src', 'index.js');
-    const startArgs = [entry, 'start', '--port', String(port), '--host', host, '--data-dir', dataDir];
-    if (lan) startArgs.push('--lan');
-    log(`spawning detached process: ${process.execPath} ${startArgs.join(' ')}`);
-    const child = spawn(process.execPath, startArgs, {
-      detached: true,
-      stdio: 'ignore',
-      cwd: targetDir,
-      env: process.env,
-    });
-    child.unref();
-    log(`detached child spawned: pid=${child.pid}`);
-  }
-
-  // Step 6: Probe health
-  const probeHost = host === '0.0.0.0' ? '127.0.0.1' : host;
-  const probeUrl = `http://${probeHost}:${port}/healthz`;
-  log(`probing health at ${probeUrl}...`);
-  const healthy = probeHealth(probeUrl, 15000);
-  log(`health probe result: healthy=${healthy}`);
-  log('updater completed successfully');
 }
 
 // Direct invocation CLI
 if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
-  runUpdater();
+  runUpdater().catch((err) => { console.error(err); process.exit(1); });
 }
