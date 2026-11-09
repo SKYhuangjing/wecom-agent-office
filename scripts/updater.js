@@ -24,6 +24,7 @@ import {
   cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const parseArgs = (argv) => {
   const flags = {};
@@ -301,7 +302,8 @@ export async function runUpdater(argv = process.argv.slice(2)) {
   }
 }
 
-// Direct invocation CLI
-if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
+// Direct invocation CLI（fileURLToPath：Windows 下 URL pathname 是 /C:/… 编码形
+// 式，与 argv[1] 的 C:\… 永不相等——fileURLToPath 才是跨平台正解）
+if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
   runUpdater().catch((err) => { console.error(err); process.exit(1); });
 }
