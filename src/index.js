@@ -8,13 +8,13 @@
 // fails the boot before anything serves traffic.
 import process from 'node:process';
 import net from 'node:net';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { accessSync, chmodSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createLogger } from './kernel/log.js';
-import { lockDataDir, readJson, writeJson } from './kernel/config.js';
+import { atomicWrite, lockDataDir, readJson, writeJson } from './kernel/config.js';
 import { createEventBus } from './kernel/events.js';
 import { createServices } from './kernel/services.js';
 import { createHttpShell, sendFile, fileUnder } from './kernel/http.js';
@@ -290,6 +290,80 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
       // Returned promise: the shell's dispatch wrapper turns a rejection into
       // an attributed 500 instead of an unhandled crash.
       return reload().then(() => json(res, 200, { ok: true }));
+    },
+  });
+  // 开机自启动（用户指令：设置里的开关，不替客户选择——开关只读写真实系统
+  // 配置，永不预选）。只切「随系统启动」：macOS=LaunchAgent 的 RunAtLoad，
+  // Linux=systemd --user enable/disable；写完即生效于下次登录/开机，当前
+  // 进程与 KeepAlive（崩溃自愈）均不受影响——切换零服务中断。
+  const AUTOSTART_LABEL = 'com.wecom-agent-office';
+  const autostartStatus = () => {
+    if (process.platform === 'darwin') {
+      const file = join(homedir(), 'Library', 'LaunchAgents', `${AUTOSTART_LABEL}.plist`);
+      if (!existsSync(file)) {
+        return { supported: true, installed: false, enabled: false, mechanism: 'launchd',
+          detail: `未安装 LaunchAgent——按 docs/launchd.plist 模板安装到 ${file} 后可切换` };
+      }
+      const enabled = /<key>RunAtLoad<\/key>\s*<true\s*\/>/.test(readFileSync(file, 'utf8'));
+      return { supported: true, installed: true, enabled, mechanism: 'launchd' };
+    }
+    if (process.platform === 'linux') {
+      try {
+        execFileSync('systemctl', ['--user', 'is-enabled', AUTOSTART_LABEL], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+        return { supported: true, installed: true, enabled: true, mechanism: 'systemd (user)' };
+      } catch (err) {
+        const out = String(err?.stdout ?? err?.stderr ?? '').trim();
+        if (/disabled/.test(out)) return { supported: true, installed: true, enabled: false, mechanism: 'systemd (user)' };
+        if (/not[- ]found|no such/i.test(out)) return { supported: true, installed: false, enabled: false, mechanism: 'systemd (user)',
+          detail: '未安装 wao 用户服务——按 docs/wao.service 模板安装后可切换' };
+        return { supported: true, installed: false, enabled: false, mechanism: 'systemd (user)', detail: `systemctl 不可用：${out || '无输出'}` };
+      }
+    }
+    return { supported: false, installed: false, enabled: false, mechanism: null,
+      detail: '当前平台暂不支持（支持 macOS launchd 与 Linux systemd 用户服务）' };
+  };
+  const setAutostart = (enabled) => {
+    if (process.platform === 'darwin') {
+      const file = join(homedir(), 'Library', 'LaunchAgents', `${AUTOSTART_LABEL}.plist`);
+      if (!existsSync(file)) { const err = new Error('未安装 LaunchAgent（docs/launchd.plist），无法切换'); err.status = 409; throw err; }
+      let text = readFileSync(file, 'utf8');
+      const tag = `<key>RunAtLoad</key>\n    <${enabled}/>`;
+      if (/<key>RunAtLoad<\/key>\s*<(?:true|false)\s*\/>/.test(text)) {
+        text = text.replace(/<key>RunAtLoad<\/key>\s*<(?:true|false)\s*\/>/, tag);
+      } else {
+        text = text.replace(/<\/dict>/, `    ${tag}\n</dict>`);
+      }
+      atomicWrite(file, text);
+      return;
+    }
+    if (process.platform === 'linux') {
+      try {
+        execFileSync('systemctl', ['--user', enabled ? 'enable' : 'disable', AUTOSTART_LABEL], { stdio: 'ignore' });
+        return;
+      } catch (err) { err.status = 409; throw err; }
+    }
+    const err = new Error('当前平台暂不支持开机自启动配置'); err.status = 400; throw err;
+  };
+  const readServiceBody = (req, limit = 1 << 16) => new Promise((resolve, reject) => {
+    const chunks = []; let size = 0;
+    req.on('data', (c) => { size += c.length; if (size > limit) { reject(new Error('body too large')); req.destroy(); } else chunks.push(c); });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+  http.register({
+    prefix: '/api/service/autostart', owner: 'kernel', handler: (req, res) => {
+      if (req.method === 'GET') return json(res, 200, { ok: true, ...autostartStatus() });
+      if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' }, { Allow: 'GET, POST' });
+      return readServiceBody(req).then((raw) => {
+        let enabled;
+        try { enabled = JSON.parse(raw.toString('utf8') || '{}')?.enabled; } catch { /* fall through */ }
+        if (typeof enabled !== 'boolean') return json(res, 400, { error: 'enabled 必须为布尔值' });
+        setAutostart(enabled);
+        return json(res, 200, { ok: true, ...autostartStatus() });
+      }).catch((err) => {
+        if (err?.status) return json(res, err.status, { error: err.message });
+        throw err;
+      });
     },
   });
   // Plugin runtime enable/disable (DESIGN §8 kernel-native): body-less POST

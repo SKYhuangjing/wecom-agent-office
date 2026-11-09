@@ -218,6 +218,27 @@ const SystemInfo = ({ WAO }) => {
   const [error, setError] = useState(null);
   const [loadedAt, setLoadedAt] = useState(null); // uptimeSec 快照时刻 → 活表走秒
   const [, setTick] = useState(0); // 每秒强制重渲染，驱动运行时间活表
+  // 开机自启动（/api/service/autostart）：读系统真实配置，永不预选
+  const [autostart, setAutostart] = useState(null);
+  const [asBusy, setAsBusy] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    api('/api/service/autostart')
+      .then((d) => { if (alive) setAutostart(d); })
+      .catch((err) => { if (alive) setAutostart({ error: err?.message ?? String(err) }); });
+    return () => { alive = false; };
+  }, []);
+  const toggleAutostart = async (next) => {
+    if (asBusy) return;
+    setAsBusy(true);
+    try {
+      setAutostart(await api('/api/service/autostart', { enabled: next }));
+    } catch (err) {
+      setAutostart({ ...(autostart ?? {}), error: err?.message ?? String(err) });
+    } finally {
+      setAsBusy(false);
+    }
+  };
 
   const refresh = async () => {
     setError(null);
@@ -270,9 +291,27 @@ const SystemInfo = ({ WAO }) => {
           ? h('span', { className: 'wb-mono', title: '机器人配置、台账与插件启停表都落在这里' }, state.dataDir)
           : h('span', { className: 'wb-hint' }, '（当前服务版本未通过 API 暴露——升级服务后可见）'), '/api/state'),
         row('插件', `${counts.active ?? 0} 运行中 · ${counts.disabled ?? 0} 已停用 · ${counts.failed ?? 0} 加载失败（共 ${plugins.length}）`, '启停去「插件」标签页'),
+        row('开机自启动',
+          autostart == null ? h('span', { className: 'wb-hint' }, '读取中…')
+          : autostart.error != null ? h('span', { className: 'wb-field-error' }, `读取失败：${autostart.error}`)
+          : !autostart.supported || !autostart.installed ? h('span', { className: 'wb-hint' }, autostart.detail)
+          : h('label', {
+              className: 'wb-switch',
+              title: autostart.enabled
+                ? '已开启：系统启动（用户登录）时自动运行 WAO——点击关闭。不影响当前运行，崩溃自愈不受此控'
+                : '已关闭：系统启动时不会自动运行——点击开启（当前运行不受影响）',
+            },
+            h('input', {
+              type: 'checkbox', checked: autostart.enabled === true, disabled: asBusy,
+              onChange: (e) => void toggleAutostart(e.target.checked),
+            }),
+            h('span', { className: 'wb-track' })),
+          autostart?.mechanism ?? undefined),
         row('页面插件', uiPlugins.length > 0
           ? uiPlugins.map((p) => p?.id).filter(Boolean).join('、')
-          : '（无）', '本控制台的页面来源，内核托管于 /api/ui/<id>/')))) : null);
+          : '（无）', '本控制台的页面来源，内核托管于 /api/ui/<id>/')))) : null,
+    h('p', { className: 'wb-hint', style: { marginTop: 8 } },
+      '开机自启动只控制系统启动（用户登录）时是否自动运行 WAO——不影响当前运行，崩溃自动拉活（KeepAlive）也不受此开关控制；状态以系统里的真实配置为准，不做默认选择。'));
 };
 
 export default {
