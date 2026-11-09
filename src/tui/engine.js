@@ -14,7 +14,7 @@
 // wizard (mini hire). Every mutating operation goes through a confirm row;
 // input modes intercept all other keys.
 
-// 工牌号 roll（与 Web 人事部 rollBadgeId 同规则：hr- + 6 位无歧义字符）。
+// 机器人 ID roll（与 Web 端 rollBadgeId 同规则：hr- + 6 位无歧义字符）。
 export const genBadgeId = (taken) => {
   const abc = 'abcdefghjkmnpqrstuvwxyz23456789';
   const has = new Set(Array.isArray(taken) ? taken : []);
@@ -223,7 +223,7 @@ export function handleKey(state = {}, ev = {}, deps = {}) {
     return none;
   }
 
-  // —— wizard：简版入职向导 ——————————————————————————————————————————————
+  // —— wizard：简版创建向导 ——————————————————————————————————————————————
   if (st.mode === 'wizard' && st.wizard != null) {
     const w = st.wizard;
     if (name === 'escape') return { state: backToDashboard(st), effects: [] };
@@ -263,7 +263,7 @@ export function handleKey(state = {}, ev = {}, deps = {}) {
       if (field === 'name' && value.length > 30) {
         return { state: { ...st, wizard: { ...w, err: '姓名太长（≤30 字）' } }, effects: [] };
       }
-      if (w.step === 4) { // secret 完成 → 组装入职档案，进入摘要
+      if (w.step === 4) { // secret 完成 → 组装 bot 记录，进入摘要
         const f = { ...w.fields, name: String(w.fields.name ?? '').trim(), cwd: String(w.fields.cwd ?? '').trim(), botId: String(w.fields.botId ?? '').trim() };
         const account = {};
         if (w.channelKeys?.has('botId') && f.botId !== '') account.botId = f.botId;

@@ -107,8 +107,8 @@ const wrapText = (text, width) => {
   return out;
 };
 
-// 公司话状态词 (README §4.2: 状态只用 工作中/待命/休假 三档 + 调休 for the
-// enabled=false toggle) — colors: working=青 / idle=绿 / offline+调休=灰.
+// 状态标准词 (README §4.2: 状态只用 工作中/待命/离线/暂停 四档;
+// enabled=false 显示 暂停) — colors: working=青 / idle=绿 / offline+暂停=灰.
 const STATUS_LABEL = {
   working: { text: '工作中', code: CODE.cyan },
   idle: { text: '待命', code: CODE.green },
@@ -155,7 +155,7 @@ export function computeFrame(state = {}, opts = {}) {
   const target = opts.target ?? 'http://127.0.0.1:8792';
   const lines = [];
 
-  // 顶栏：打卡钟（活钟 · 在岗 N/M · 今日工单 X · 操作中 ⏳）。断连=红条。
+  // 顶栏：活钟 · 在线 N/M · 今日消息 X · 处理中 ⏳。断连=红条。
   if (connected) {
     const onDuty = agents.filter((a) => (a?.status ?? 'offline') !== 'offline').length;
     const todayTurns = agents.reduce((n, a) => n + (a?.todayTurns ?? 0), 0);

@@ -823,10 +823,10 @@ export default {
         // 让 AI 经 MCP 直接做，完整接入去设置 → AI 操作。
         h('div', {
           className: 'wb-hint wb-bot-ai-hint',
-          title: '经 MCP 网关（wao-company server）对话式操作；工具：set_duty 暂停/启用、broadcast 推送、update_employee 改配置',
+          title: '经 MCP 网关（wao-company server）对话式操作；工具：set_enabled 暂停/启用、broadcast 推送、update_bot 改配置',
         },
           '💡 你的 AI 可以直接操作这个机器人：',
-          h('code', null, `"帮我暂停 ${bot.name ?? bot.id}"`), ' → set_duty · ',
+          h('code', null, `"帮我暂停 ${bot.name ?? bot.id}"`), ' → set_enabled · ',
           h('code', null, `"给 ${bot.name ?? bot.id} 发一条推送"`), ' → broadcast · 接入方法见',
           h('button', { className: 'wb-linklike', onClick: () => goSettingsAi() }, '设置 → AI 操作')),
         h('div', { className: 'wb-tabs', style: { margin: '14px 0 0' } },

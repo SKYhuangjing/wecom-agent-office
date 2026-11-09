@@ -39,7 +39,7 @@ export const providerMeta = (id) => (PROVIDER_META[id] ?? {
   dept: '外部来源', tech: id ?? '—', blurb: '来自外部的引擎。',
 });
 
-// 状态公司话：工作中 / 待命 / 休假。技术原值与原因进 title。
+// 状态标准词（README §4.2）：工作中 / 待命 / 离线。技术原值与原因进 title。
 export const STATUS_LABEL = { working: '工作中', idle: '待命', offline: '离线' };
 export const statusTitle = (a) => {
   const tech = a?.status ?? 'offline';
@@ -66,7 +66,7 @@ export const fmtDate = (at) => (Number.isFinite(at) && at > 0
   ? new Date(at).toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
   : null);
 
-// 工牌号建议：roll 骰子生成一个可读的小写 id（创建后不可改，化身由它决定）
+// 机器人 ID 建议：roll 骰子生成一个可读的小写 id（创建后不可改，化身由它决定）
 export const rollBadgeId = (taken) => {
   const abc = 'abcdefghjkmnpqrstuvwxyz23456789';
   for (let i = 0; i < 64; i++) {

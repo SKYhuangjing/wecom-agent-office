@@ -1,5 +1,5 @@
-// 离职面谈 (company-metaphor redesign P2): 删除一位同事前的确认层——后果清单
-// （工作档案保留 / 物化配置将清理 / 可随时重新入职）逐条讲清，输入「姓名」
+// 删除确认 (标准术语见 README §4.2): 删除一台机器人前的确认层——后果清单
+// （会话历史保留 / 物化配置将清理 / 可随时重新创建）逐条讲清，输入「姓名」
 // 才能办结（误输即禁用），办结后 toast 送别。DELETE /api/bots/:id。
 import { providerMeta, Avatar, ensurePageStyle } from './hr.js';
 

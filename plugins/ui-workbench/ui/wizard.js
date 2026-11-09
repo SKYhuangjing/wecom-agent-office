@@ -1,11 +1,11 @@
-// 入职向导 (company-metaphor redesign P2; W3 T4 增第 3.5 步; v2 渠道化+装备必选):
-// 五步把一位新同事办进公司——①名片（姓名+化身 roll 骰子）②技能岗位（部门卡片）
-// ③配发装备（必选：推荐装备包按类型一键整包 + 逐件精挑，至少一件；公司还没
-// 登记过资产或所选岗位不支持装备时放行并说明）④工位与权限（cwd+门禁名单）
+// 创建向导 (v2 渠道化+装备必选;标准术语见 README §4.2):
+// 五步创建一台机器人——①基本信息（姓名+化身 roll 骰子）②Agent 引擎（引擎卡片）
+// ③配置工具（必选：推荐工具包按类型一键整包 + 逐件精挑，至少一件；平台还没
+// 登记过资产或所选引擎不支持工具时放行并说明）④工作目录与权限（cwd+允许用户）
 // ⑤通信渠道（IM 渠道卡片 → 选中渠道的 accountSchema 凭证动态渲染）。
-// 「办理入职」→ POST /api/bots →（选了装备则逐件 POST /api/bots/:id/assets，
-// 失败不回滚入职，成功页点名补配）→成功页（工牌预览 + 去办公室看看）。
-// enabled 概念后置：入职即上岗，调休/返岗在花名册上随时可办。化身由工牌号
+// 「创建机器人」→ POST /api/bots →（选了工具则逐件 POST /api/bots/:id/assets，
+// 失败不回滚创建，成功页点名补配）→成功页（ID 卡预览 + 去办公室看看）。
+// enabled 概念后置：创建即启用，暂停/启用在机器人页随时可办。化身由机器人 ID
 // （botId）决定——同一张脸跟它一生。
 import { Avatar, PROVIDER_META, providerMeta, rollBadgeId, fmtDate, ensurePageStyle } from './hr.js';
 import { fieldsFromSchema, SchemaFields, serializeSchema } from './form.js';

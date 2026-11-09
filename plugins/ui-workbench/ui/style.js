@@ -269,7 +269,7 @@ const CSS = `
   .wb-stickybar { box-shadow: 0 -8px 20px rgb(0 0 0 / .35); }
 }
 
-/* 入职向导 */
+/* 创建向导 */
 .wb-wizard { display: flex; flex-direction: column; gap: 16px; }
 .wb-steps { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .wb-step {
@@ -318,7 +318,7 @@ const CSS = `
 .wb-dept-blurb { font-size: 12.5px; color: var(--muted); line-height: 1.55; }
 .wb-dept-tech { font-size: 11px; color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
 
-/* 成功页工牌 */
+/* 成功页 ID 卡 */
 .wb-wizard-done { display: flex; flex-direction: column; gap: 14px; }
 .wb-badgecard {
   display: flex; gap: 16px; align-items: center;
@@ -329,7 +329,7 @@ const CSS = `
 .wb-badgecard-name { font-size: 18px; font-weight: 700; }
 .wb-badgecard-rows { display: flex; gap: 18px; font-size: 13px; margin-top: 6px; flex-wrap: wrap; }
 
-/* 离职面谈 */
+/* 删除确认 */
 .wb-offboard { max-width: 520px; }
 .wb-offboard-head { display: flex; align-items: center; gap: 12px; }
 .wb-offboard-head h3 { margin: 0; }

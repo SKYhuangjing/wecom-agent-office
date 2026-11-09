@@ -10,23 +10,23 @@
 
 | 页 id | 标题 | 内容 |
 | --- | --- | --- |
-| `overview` | 总览（落地页） | **AI 操作引导卡**（v2 新增：Web 是看的，MCP/Skill 是操作的——复制 MCP 配置 / 跳完整指南；`/api/mcp` 5 秒轮询报「✓ N 个 AI 会话活跃」，网关未启用给引导文案）+ 办公室 3D 为主视觉（`WAO.getPage('office3d')` 内嵌渲染 ui-office3d 插件页面，未注册时兜底同源 import；该插件 `hidden: true` 不占导航）+ 状态卡片视图（`_legacy/list.js` 精简版：化身/状态徽标/进度行/调休返岗开关/机器人配置·测试运行快捷键）+ 最近活动摘要（最近 5 条，点击跳机器人详情日志 tab） |
-| `robots` | 机器人 | 花名册（化身+状态徽标）+ 入职向导五步（`_legacy/wizard.js`，第 3.5 步配发装备可跳过）+ 离职面谈；详情页头部有 **AI 操作提示行**（v2 新增：「帮我暂停 ××」→ set_duty、推送 → broadcast，一键跳设置 → AI 操作）+ 四 tab：**会话**（`_legacy/session.js` 按 bot 固定：台账 chatKey 归档 + 引擎会话钻取 + 导出）、**日志**（`_legacy/timeline.js` 按 bot 固定：5/15/30 分钟窗事件流）、**工具**（`_legacy/assets.js` 装备台精简为 per-bot：绑定表/配置/卸下/重物化 + 回执）、**设置**（`_legacy/bots.js` 编辑表单：分组折叠 + schema 动态渲染 + sticky 保存栏 + 岗前测试）+ 「发送消息」按钮（`_legacy/push.js` 精简为 dialog：选会话→填内容→`POST /api/send`） |
-| `settings` | 设置 | **AI 操作**（v2 新增、第一 section：MCP 端点 + Claude/Codex/ZCode 三家配置——复制/下载，检测到本机已存令牌时自动附 `X-WAO-Token` 头 + 19 工具清单（高危标记，`?ai-tools=1` 深链展开）+ skill 文件下载/复制（`/api/mcp/skill` 按需拉取）+ MCP 连通性测试（无会话探测，应答 -32002 即活，不占会话名额）；共享逻辑在 `ui/ai-access.js`）、**工具库**（`_legacy/assets.js` 整页内嵌：清单 CRUD + 装备台双视图，深链不变）、**插件**（`_legacy/plugins.js` 整页内嵌：启停/四阶段重载）、**系统信息**（/healthz 版本 + /api/state 运行时间·PID·数据目录·插件与页面清单） |
+| `overview` | 总览（落地页） | **AI 操作引导卡**（v2 新增：Web 是看的，MCP/Skill 是操作的——复制 MCP 配置 / 跳完整指南；`/api/mcp` 5 秒轮询报「✓ N 个 AI 会话活跃」，网关未启用给引导文案）+ 办公室 3D 为主视觉（`WAO.getPage('office3d')` 内嵌渲染 ui-office3d 插件页面，未注册时兜底同源 import；该插件 `hidden: true` 不占导航）+ 状态卡片视图（`_legacy/list.js` 精简版：化身/状态徽标/进度行/暂停/启用开关/机器人配置·测试运行快捷键）+ 最近活动摘要（最近 5 条，点击跳机器人详情日志 tab） |
+| `robots` | 机器人 | 机器人列表（化身+状态徽标）+ 创建向导五步（`_legacy/wizard.js`，第 3.5 步配置工具可跳过）+ 删除确认；详情页头部有 **AI 操作提示行**（v2 新增：「帮我暂停 ××」→ set_enabled、推送 → broadcast，一键跳设置 → AI 操作）+ 四 tab：**会话**（`_legacy/session.js` 按 bot 固定：台账 chatKey 归档 + 引擎会话钻取 + 导出）、**日志**（`_legacy/timeline.js` 按 bot 固定：5/15/30 分钟窗事件流）、**工具**（`_legacy/assets.js` 工具配置精简为 per-bot：绑定表/配置/卸下/重物化 + 回执）、**设置**（`_legacy/bots.js` 编辑表单：分组折叠 + schema 动态渲染 + sticky 保存栏 + 测试运行）+ 「发送消息」按钮（`_legacy/push.js` 精简为 dialog：选会话→填内容→`POST /api/send`） |
+| `settings` | 设置 | **AI 操作**（v2 新增、第一 section：MCP 端点 + Claude/Codex/ZCode 三家配置——复制/下载，检测到本机已存令牌时自动附 `X-WAO-Token` 头 + 19 工具清单（高危标记，`?ai-tools=1` 深链展开）+ skill 文件下载/复制（`/api/mcp/skill` 按需拉取）+ MCP 连通性测试（无会话探测，应答 -32002 即活，不占会话名额）；共享逻辑在 `ui/ai-access.js`）、**工具库**（`_legacy/assets.js` 整页内嵌：清单 CRUD + 工具配置双视图，深链不变）、**插件**（`_legacy/plugins.js` 整页内嵌：启停/四阶段重载）、**系统信息**（/healthz 版本 + /api/state 运行时间·PID·数据目录·插件与页面清单） |
 
 跨页交接：总览（卡片/活动行/快捷键）经 sessionStorage handoff
 （`wao-robots-handoff`：`{id, tab, test}`）跳进机器人详情；顶栏状态条的链接全部指向
 新三页。深链：`#/overview`、`#/robots?select=new&step=N`（向导第 N 步）、
 `#/robots?select=<botId>&tab=session|logs|tools|settings`、`#/settings?section=ai[&ai-tools=1]`（AI 操作/工具清单展开）、`#/settings?section=system`、
-`#/settings&view=equip&bot=<id>`（内嵌装备台）；hidden 页 `#/office3d` 仍可路由。
+`#/settings&view=equip&bot=<id>`（内嵌工具配置）；hidden 页 `#/office3d` 仍可路由。
 旧页 id（workbench/bots/assets/session/push/plugins/timeline）不再存在——书签请换新锚点。
 
 ## 公司化说明（company-metaphor 重设计）
 
-UI 主层公司话（入职/离职/调休/工位/工单…），技术词（provider、botId、chatKey、kind）
-收进 tooltip/副标题；每位同事的化身由 `WAO.avatar(botId)` 生成（DiceBear notionists，
-全离线），同一 botId 在卡片、花名册、日志行上是同一张脸，provider 色描边环编码岗位；
-状态词统一三档工作中/待命/休假。词表对照见仓库 README §4.2。
+UI 主层标准术语（创建/删除/暂停/工作目录/消息…），技术词（provider、botId、chatKey、kind）
+收进 tooltip/副标题；每台机器人的化身由 `WAO.avatar(botId)` 生成（DiceBear notionists，
+全离线），同一 botId 在卡片、列表、日志行上是同一张脸，provider 色描边环编码岗位；
+状态词统一四档工作中/待命/离线/暂停。词表对照见仓库 README §4.2。
 
 ## 数据面
 
@@ -66,4 +66,4 @@ disabled 与 failed；时间线六种 kind 全覆盖；四资产 + 绑定摘要�
 `?state=empty|error` 或改假数据再截。
 深链：`?view=cards`（总览卡片视图）；`?select=new&step=N`（向导第 N 步）；
 `?select=<botId>&tab=…`（详情 tab）；`?section=ai`（AI 操作，`&ai-tools=1` 展开工具清单）；`?section=system`（系统信息）；
-`?view=equip&bot=<botId>`（内嵌装备台）、`&new=1`/`&edit=<assetId>`（资产编辑器）。
+`?view=equip&bot=<botId>`（内嵌工具配置）、`&new=1`/`&edit=<assetId>`（资产编辑器）。

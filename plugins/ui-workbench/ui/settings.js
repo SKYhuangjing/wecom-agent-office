@@ -196,7 +196,7 @@ const AiSection = ({ WAO }) => {
           }, skillBusy ? '获取中…' : skill?.content != null ? '再次下载' : '下载 wao-company.md'))),
       h('p', { className: 'wb-hint', style: { margin: '6px 0 0' } },
         skill?.error != null ? `读取失败：${skill.error}`
-          : '放到 ~/.zcode/skills/wao-company/SKILL.md（ZCode）或对应 Agent 的技能目录，即可用「看看机器人在岗情况」「帮我暂停 main」这类快捷词操作。')),
+          : '放到 ~/.zcode/skills/wao-company/SKILL.md（ZCode）或对应 Agent 的技能目录，即可用「看看机器人状态」「帮我暂停 main」这类快捷词操作。')),
 
     h('div', { className: 'ai-probe' },
       h('button', {
