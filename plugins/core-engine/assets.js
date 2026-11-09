@@ -56,6 +56,35 @@ const fail = (status, message, errors) => {
 
 // —— registry persistence (§2.1; discipline identical to bots.js) ——————————
 
+// P1-B 省 token 装备包 seed（DESIGN-TOKEN-OPT §P1-B，11-09 owner 裁定：向导
+// 默认勾选 rtk+ripgrep）。纯函数：往 doc.assets 追加缺失的内置工具资产（origin
+// 'plugin'，cost-tracker 同款 append-only）。判重按 (type=tool, content.kind)——
+// operator 已建同类（手工迁移存量）不重复不改名；同名不同类跳过并记 skipped
+// （validateAsset 的 (type,name) 唯一红线）。返回 {seeded, skipped} 供调用方记日志。
+export function seedBuiltinToolAssets(doc) {
+  const assets = Array.isArray(doc?.assets) ? doc.assets : [];
+  const defs = [
+    { kind: 'rtk', name: 'rtk', description: 'Token 瘦身 hook：PreToolUse 拦截 Bash 命令输出过滤（实测单轮 -18%）——绑定即装备；要求 bot 配置专属 config 目录（claudeConfigDir 等）且机器上有 rtk 二进制' },
+    { kind: 'ripgrep', name: 'ripgrep', description: '代码检索指引：一律用 rg 关键词定位，替代 grep/find/逐文件翻看' },
+  ];
+  const seeded = [];
+  const skipped = [];
+  for (const def of defs) {
+    if (assets.some((a) => a?.type === 'tool' && a?.content?.kind === def.kind)) continue;
+    if (assets.some((a) => a?.name === def.name)) {
+      skipped.push(`${def.kind}：同名资产已存在（${def.name}）`);
+      continue;
+    }
+    const now = Date.now();
+    assets.push({
+      id: `ast-tool-${def.kind}`, type: 'tool', name: def.name, description: def.description,
+      content: { kind: def.kind }, origin: 'plugin', version: 1, createdAt: now, updatedAt: now,
+    });
+    seeded.push(def.name);
+  }
+  return { seeded, skipped };
+}
+
 export function loadAssets(file) {
   const doc = readJson(file);
   if (isObject(doc) && Array.isArray(doc.assets)) return { assets: doc.assets };

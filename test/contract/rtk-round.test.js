@@ -196,7 +196,15 @@ test('API unavailable flow: rtk bind succeeds with rtk missing — receipt notes
     assert.equal(bind.status, 200, 'bind SUCCEEDS in unavailable state (§7.1: 绑定保留)');
     const bindBody = await bind.json();
     assert.ok(bindBody.notes.some((n) => /rtk 未安装（unavailable）/.test(n.detail)), `receipt notes carry guidance: ${JSON.stringify(bindBody.notes)}`);
-    assert.equal(existsSync(join(cfgDir, 'settings.json')), false, 'zero products while unavailable');
+    // P1-B 起 createBot 会预拷网关 settings.json（用户 ~/.claude 存在时）——目录
+    // 不再「零文件」；unavailable 的语义改为「零 rtk 产物」：settings 可在，但
+    // 绝不含 rtk hook 条目。
+    const assertNoRtkProducts = () => {
+      const f = join(cfgDir, 'settings.json');
+      if (!existsSync(f)) return;
+      assert.ok(!readFileSync(f, 'utf8').includes('rtk'), 'no rtk hook products while unavailable');
+    };
+    assertNoRtkProducts();
 
     const agents = await (await req('/api/agents')).json();
     const row = agents.agents.find((a) => a.id === 'rtk-api-b1');
@@ -211,7 +219,7 @@ test('API unavailable flow: rtk bind succeeds with rtk missing — receipt notes
     const unbind = await req(`/api/bots/rtk-api-b1/assets/${asset.asset.id}`, 'DELETE');
     assert.equal(unbind.status, 200);
     const unbindBody = await unbind.json();
-    assert.equal(existsSync(join(cfgDir, 'settings.json')), false, 'still zero products after unbind');
+    assertNoRtkProducts();
     void unbindBody;
   } finally {
     if (prevRtkBin === undefined) delete process.env.WAO_RTK_BIN; else process.env.WAO_RTK_BIN = prevRtkBin;

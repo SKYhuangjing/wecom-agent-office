@@ -6,6 +6,8 @@
 // This file is the port registration: manifest, configSchema (the bots.json
 // providerConfig block), semantic validate, materializeConfig hook (claude
 // needs no side files → null) and the code→中文 describeError copy.
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createRunner } from './runner.js';
@@ -154,6 +156,35 @@ export default {
         { key: 'claudeBin', label: 'claude 可执行文件（PATH 或绝对路径）', type: 'string', default: 'claude' },
         { key: 'claudeConfigDir', label: 'claude 配置目录（默认 ~/.claude，会话历史所在；重定向时注入子进程 $CLAUDE_CONFIG_DIR——readHistory 同源）', type: 'string' },
       ],
+
+      // P1-B（11-09 owner 裁定）：新建 claude bot 默认配专属 claudeConfigDir 时
+      // 的预建钩子（createBotOp 调用）。目录建好；settings.json 从用户
+      // ~/.claude/settings.json 拷贝 env 块（网关路由随行——重定向后 claude 只
+      // 读 $CLAUDE_CONFIG_DIR 下的 settings，不拷会静默丢网关）；.claude.json
+      // （CLI onboarding 态）有则一并拷。目标已存在 = 尊重现状，只补缺文件。
+      // 幂等、只动 $CLAUDE_CONFIG_DIR 命名空间，绝不写用户自己的 ~/.claude。
+      prepareConfigDir(bot) {
+        const dir = bot?.providerConfig?.claudeConfigDir;
+        if (typeof dir !== 'string' || dir === '') return { prepared: false, reason: 'claudeConfigDir 未设置' };
+        mkdirSync(dir, { recursive: true });
+        const notes = [`配置目录：${dir}`];
+        const userHome = join(homedir(), '.claude');
+        const copyIfMissing = (name, why) => {
+          const target = join(dir, name);
+          if (existsSync(target)) return;
+          const src = join(userHome, name);
+          try {
+            if (!existsSync(src)) { notes.push(`${name}：用户侧不存在，跳过（${why}）`); return; }
+            writeFileSync(target, readFileSync(src));
+            notes.push(`${name}：已从 ~/.claude 拷贝（${why}）`);
+          } catch (err) {
+            notes.push(`${name}：拷贝失败 ${err?.message ?? err}——若走网关请手工补`);
+          }
+        };
+        copyIfMissing('settings.json', '网关路由 env 随行');
+        copyIfMissing('.claude.json', 'CLI onboarding 态');
+        return { prepared: true, dir, notes };
+      },
 
       // Semantic validation on top of the schema types: cwd presence, model
       // completeness (a model object without .model would silently spawn an

@@ -12,7 +12,7 @@
 // exclusive-only Agent assets — while REST stays the operator face.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -484,4 +484,55 @@ test('closed content schema over HTTP: stray keys 400 with「unexpected key」co
   const content = await post('/api/assets', { type: 'prompt', name: 'stray-key', content: { text: 'x', lang: 'zh' } });
   assert.equal(content.status, 400);
   assert.ok((await content.json()).errors.some((e) => /content\.lang：unexpected key（prompt 仅接受 text）/.test(e)));
+});
+
+
+// —— P1-B：内置工具资产 seed + claude 新建默认专属目录 ———————————————————
+test('boot seeds ast-tool-rtk / ast-tool-ripgrep (origin plugin); reload stays idempotent', async () => {
+  const list = await (await get('/api/assets')).json();
+  for (const kind of ['rtk', 'ripgrep']) {
+    const rows = list.assets.filter((a) => a.type === 'tool' && a.content?.kind === kind);
+    assert.equal(rows.length, 1, `exactly one seeded ${kind}`);
+    assert.equal(rows[0].id, `ast-tool-${kind}`);
+    assert.equal(rows[0].origin, 'plugin');
+  }
+  // reload re-runs afterAllActivated → the seed must not duplicate
+  assert.equal((await post('/api/service/reload')).status, 200);
+  await new Promise((r) => setTimeout(r, 300));
+  const again = await (await get('/api/assets')).json();
+  assert.equal(again.assets.filter((a) => a.content?.kind === 'rtk').length, 1, 'no duplicate after reload');
+  assert.equal(again.assets.filter((a) => a.content?.kind === 'ripgrep').length, 1);
+});
+
+test('POST /api/bots (provider claude, no claudeConfigDir): auto-filled + dir pre-created', async () => {
+  // The REAL provider-claude plugin ships in this kernel (repo plugins dir) —
+  // its prepareConfigDir is what createBotOp calls; assert on its side effects.
+  mkdirSync(join(dataDir, 'cwds', 'cl1'), { recursive: true });
+  const r = await post('/api/bots', {
+    id: 'cl1', name: '云端一号', enabled: false, channel: 'fakechan',
+    account: { endpoint: 'http://fake.local' }, allowedUsers: [],
+    provider: 'claude', providerConfig: { cwd: join(dataDir, 'cwds', 'cl1') },
+  });
+  assert.equal(r.status, 200);
+  const { bot } = await r.json();
+  const expected = join(dataDir, 'claude-config', 'cl1');
+  assert.equal(bot.providerConfig.claudeConfigDir, expected, 'dedicated config dir auto-filled');
+  assert.ok(existsSync(expected), 'prepareConfigDir physically created the dir');
+  // cleanup
+  assert.equal((await del(`/api/bots/cl1`)).status, 200);
+});
+
+test('POST /api/bots (provider claude, EXPLICIT claudeConfigDir): operator value untouched', async () => {
+  mkdirSync(join(dataDir, 'cwds', 'cl2'), { recursive: true });
+  const explicit = join(dataDir, 'my-own-config-cl2');
+  const r = await post('/api/bots', {
+    id: 'cl2', name: '云端二号', enabled: false, channel: 'fakechan',
+    account: { endpoint: 'http://fake.local' }, allowedUsers: [],
+    provider: 'claude', providerConfig: { cwd: join(dataDir, 'cwds', 'cl2'), claudeConfigDir: explicit },
+  });
+  assert.equal(r.status, 200);
+  const { bot } = await r.json();
+  assert.equal(bot.providerConfig.claudeConfigDir, explicit, 'explicit dir wins — never rewritten');
+  assert.ok(existsSync(explicit), 'explicit dir also pre-created');
+  assert.equal((await del(`/api/bots/cl2`)).status, 200);
 });

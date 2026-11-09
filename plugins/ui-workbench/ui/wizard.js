@@ -52,6 +52,15 @@ const packMeta = (type) => EQUIP_PACKS.find((p) => p.type === type)
 
 const errorLines = (message) => String(message ?? '').split('; ').filter((s) => s.trim() !== '');
 
+// P1-B 省 token 装备包（11-09 owner 裁定：默认勾选）：资产面就绪后自动勾上
+// rtk + ripgrep 两件工具资产（11-09 生产实测：会话重放 62k/轮 + 盲扫 280k 的
+// 对症装备）。dsh 引擎不支持 rtk（绑定面拒绝），只预选 ripgrep。用户可手动
+// 取消——默认≠强制。
+export const tokenSaverIds = (assetsList, providerId) => (assetsList ?? [])
+  .filter((a) => a?.type === 'tool'
+    && (a?.content?.kind === 'ripgrep' || (a?.content?.kind === 'rtk' && providerId !== 'dsh')))
+  .map((a) => a.id);
+
 export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated, initialStep = 0 }) => {
   const { h, useState, useEffect, api } = WAO;
   ensurePageStyle();
@@ -71,6 +80,15 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
       .catch(() => { if (alive) setAssets([]); }); // 资产面不可用不拦创建——这步可跳过
     return () => { alive = false; };
   }, []);
+  // 资产清单一到就按当前引擎预选省 token 装备包（assets 为 null 时等下一拍）。
+  useEffect(() => {
+    if (assets == null) return;
+    setDraft((d) => {
+      if (ports?.providers?.find((p) => p.id === d.provider)?.assets === false) return d;
+      const want = tokenSaverIds(assets, d.provider).filter((id) => !d.equip.includes(id));
+      return want.length > 0 ? { ...d, equip: [...d.equip, ...want] } : d;
+    });
+  }, [assets]);
   const [draft, setDraft] = useState(() => {
     const channel = ports?.channels?.[0]?.id ?? '';
     const provider = ports?.providers?.[0]?.id ?? '';
@@ -103,7 +121,10 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
       providerConfig: fieldsFromSchema(ports?.providers?.find((p) => p.id === id)?.configSchema),
       // 换到不支持工具的引擎（provider 无 materializeAssets，/api/ports
       // assets:false）：清掉已勾选——留着只会在创建后逐件绑定失败。
-      ...(ports?.providers?.find((p) => p.id === id)?.assets === false ? { equip: [] } : {}),
+      ...(ports?.providers?.find((p) => p.id === id)?.assets === false ? { equip: [] } : {
+        // 换入支持工具的引擎：补预选省 token 装备包（去重追加，不动其他勾选）。
+        equip: [...d.equip, ...tokenSaverIds(assets, id).filter((x) => !d.equip.includes(x))],
+      }),
     }));
   };
 
@@ -299,6 +320,19 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
               providerSupportsAssets ? h('div', { className: 'wb-field' },
                 h('label', null, '推荐工具包', h('span', { className: 'wb-hint', style: { marginLeft: 8 } }, '按类型一键整包勾选 / 收起')),
                 h('div', { className: 'wb-toolbar', style: { flexWrap: 'wrap' } },
+                  (() => { // 省 token 装备包：跨类型小组件（rtk+ripgrep），一键整组
+                    const ids = tokenSaverIds(assets, draft.provider);
+                    if (ids.length === 0) return null;
+                    const allOn = ids.every((id) => draft.equip.includes(id));
+                    return h('button', {
+                      className: 'wb-btn' + (allOn ? ' wb-btn-primary' : ''),
+                      onClick: () => setDraft((d) => ({
+                        ...d,
+                        equip: allOn ? d.equip.filter((id) => !ids.includes(id)) : [...new Set([...d.equip, ...ids])],
+                      })),
+                      title: allOn ? '取消省 token 装备包' : '一键勾选 rtk + ripgrep（实测单轮 -18% + 检索定位）',
+                    }, allOn ? '省 token 包 · 已选' : '省 token 装备包（推荐）');
+                  })(),
                   packGroups.map((g) => {
                     const allOn = g.list.every((a) => draft.equip.includes(a.id));
                     return h('button', {

@@ -19,7 +19,7 @@ import { Timeline } from './timeline.js';
 import { createProgressor } from './progressor.js';
 import { maskOutbound } from './middleware.js';
 import { loadBots, revalidateAll, validateBot, BOT_ID_RE } from './bots.js';
-import { loadAssets, buildPlan } from './assets.js';
+import { loadAssets, buildPlan, saveAssets, seedBuiltinToolAssets } from './assets.js';
 import { createDistillMiddleware } from './distill.js';
 import { createMaterializer } from './materializer.js';
 import { companyOps, createApi, rosterSummary, updateAssetOp } from './api.js';
@@ -287,6 +287,14 @@ export default {
     ctx.afterAllActivated(async () => {
       doc = loadBots(botsFile);
       assetsDoc = loadAssets(assetsFile);
+      {
+        const r = seedBuiltinToolAssets(assetsDoc);
+        if (r.seeded.length > 0) {
+          saveAssets(assetsFile, assetsDoc);
+          for (const name of r.seeded) log.info?.(`core-engine: 内置工具资产 ${name} 已 seed（向导默认勾选，绑定即生效）`);
+        }
+        for (const why of r.skipped) log.warn?.(`core-engine: 内置工具资产 seed 跳过——${why}`);
+      }
       const { bad } = revalidateAll(doc.bots, ports);
       for (const { bot, errors } of bad) {
         log.warn?.(`core-engine: bot ${JSON.stringify(bot?.id)} validation drift: ${errors.join('; ')}`);
