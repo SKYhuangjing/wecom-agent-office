@@ -51,11 +51,25 @@ export const ripgrepText = (entry) => [
   ...(entry?.content?.options?.extraHints ? [String(entry.content.options.extraHints)] : []),
 ].join('\n');
 
+// Memory distillation footer (DESIGN-TOKEN-OPT §4.3): instructs the model to
+// emit machine-collectable notes; core-engine's distiller middleware strips
+// the markers from the outbound reply and appends them into this asset —
+// the write-back half of the FAQ-sedimentation loop. Same copy in every
+// provider (RIPGREP_GUIDANCE precedent: plugins stay self-contained).
+export const MEMORY_DISTILL_FOOTER = [
+  '',
+  '---',
+  '沉淀规则：本轮若产生了跨会话有价值的结论（业务口径、操作路径、用户偏好、已确认的事实或决定），在回复最末尾另起一行输出沉淀标记（同事看不到这行，系统会自动收集进上面的记忆）：',
+  '<!--wao-memory:问题关键词 → 结论（≤100字）-->',
+  '可以多行多条；没有值得沉淀的就完全不输出，绝不为输出而输出。日常寒暄、一次性的查数结果不要沉淀。',
+].join('\n');
+
 // Memory section body (§4.3): 节首标注来源资产名, notes in binding order.
 export const memoryMarkdown = (entry) => [
   `## WAO 跨会话记忆：${entry.name}`,
   '',
   ...((entry.content?.notes ?? []).flatMap((n, i) => [...(i > 0 ? [''] : []), n])),
+  MEMORY_DISTILL_FOOTER,
 ].join('\n');
 
 // mcp translation (§4.2): claude face keeps server shapes as-is (keys land

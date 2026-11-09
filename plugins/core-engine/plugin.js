@@ -20,8 +20,9 @@ import { createProgressor } from './progressor.js';
 import { maskOutbound } from './middleware.js';
 import { loadBots, revalidateAll, validateBot, BOT_ID_RE } from './bots.js';
 import { loadAssets, buildPlan } from './assets.js';
+import { createDistillMiddleware } from './distill.js';
 import { createMaterializer } from './materializer.js';
-import { companyOps, createApi, rosterSummary } from './api.js';
+import { companyOps, createApi, rosterSummary, updateAssetOp } from './api.js';
 
 const isBotRecord = (bot) => bot != null && typeof bot === 'object' && typeof bot.id === 'string' && bot.id !== '';
 
@@ -359,6 +360,23 @@ export default {
       get doc() { return doc; },
       get assetsDoc() { return assetsDoc; },
     };
+    // 记忆蒸馏中间件（DESIGN-TOKEN-OPT §4.3）：最终回复先剥 wao-memory 标记
+    // （协议绝不外泄），再把条目并进该 bot 绑定的首个 memory 资产——走
+    // updateAssetOp（REST 面），§3.2 eager 扇出自动重物化，下一轮生效。
+    // 引擎对 onOutbound 逐 impl 隔离：写回失败=标记已剥但条目丢弃，绝不吞回复。
+    ctx.registerMiddleware(createDistillMiddleware({
+      findMemoryAsset: (bot) => {
+        for (const b of bot?.assets ?? []) {
+          if (b == null || typeof b !== 'object') continue;
+          const asset = state.assetsDoc.assets.find((a) => a?.id === b.assetId);
+          if (asset?.type === 'memory') return asset;
+        }
+        return null;
+      },
+      updateNotes: (assetId, notes) => updateAssetOp(state, assetId, { content: { notes } }),
+      log,
+    }));
+
     ctx.http.register({ prefix: '/api', handler: createApi({ getState: () => state }) });
     // Company operations for the mcp-gateway plugin (W1 T2): the same api.js
     // functions the /api routes call, brokered through the service container

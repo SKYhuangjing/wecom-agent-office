@@ -855,7 +855,7 @@ const structuralKeysOf = (type, content) => {
   return [];
 };
 
-async function updateAssetOp(state, id, patchBody, { mcpFace = false } = {}) {
+export async function updateAssetOp(state, id, patchBody, { mcpFace = false } = {}) {
   const asset = findAsset(state, id);
   if (asset == null) throw httpError(404, 'asset not found');
   if (!isObject(patchBody)) throw httpError(400, 'patch body must be a JSON object');

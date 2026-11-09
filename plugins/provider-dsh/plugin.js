@@ -48,6 +48,17 @@ export const rgInstallHint = (platform = process.platform) => platform === 'win3
   : platform === 'linux' ? 'sudo apt-get install ripgrep（或你的发行版包管理器）'
     : 'brew install ripgrep';
 
+// Memory distillation footer (DESIGN-TOKEN-OPT §4.3): same copy as the other
+// providers — dsh memory rides personaPrefix instead of a file, the marker
+// protocol is identical.
+export const MEMORY_DISTILL_FOOTER = [
+  '',
+  '---',
+  '沉淀规则：本轮若产生了跨会话有价值的结论（业务口径、操作路径、用户偏好、已确认的事实或决定），在回复最末尾另起一行输出沉淀标记（同事看不到这行，系统会自动收集进上面的记忆）：',
+  '<!--wao-memory:问题关键词 → 结论（≤100字）-->',
+  '可以多行多条；没有值得沉淀的就完全不输出，绝不为输出而输出。日常寒暄、一次性的查数结果不要沉淀。',
+].join('\n');
+
 export const RIPGREP_GUIDANCE = [
   '代码检索一律使用 rg（ripgrep）而非 grep/find。示例：rg -t js \'pattern\'、rg -n "text" src/。',
   `rg 未安装时先执行：${rgInstallHint()}。`,
@@ -92,6 +103,7 @@ export function combinePersonaPrefix(operatorPrompt, plan = []) {
         sections.push([
           `【WAO 跨会话记忆：${entry.name}】`,
           ...(Array.isArray(c.notes) && c.notes.length > 0 ? c.notes : ['（暂无条目）']),
+          MEMORY_DISTILL_FOOTER,
         ].join('\n'));
         break;
       case 'tool':

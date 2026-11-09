@@ -51,10 +51,19 @@ export const RIPGREP_GUIDANCE = [
   `rg 未安装时先执行：${rgInstallHint()}。`,
 ].join('\n');
 
+export const MEMORY_DISTILL_FOOTER = [
+  '',
+  '---',
+  '沉淀规则：本轮若产生了跨会话有价值的结论（业务口径、操作路径、用户偏好、已确认的事实或决定），在回复最末尾另起一行输出沉淀标记（同事看不到这行，系统会自动收集进上面的记忆）：',
+  '<!--wao-memory:问题关键词 → 结论（≤100字）-->',
+  '可以多行多条；没有值得沉淀的就完全不输出，绝不为输出而输出。日常寒暄、一次性的查数结果不要沉淀。',
+].join('\n');
+
 export const memoryMarkdown = (entry) => [
   `## WAO 跨会话记忆：${entry.name}`,
   '',
   ...((entry.content?.notes ?? []).flatMap((n, i) => [...(i > 0 ? [''] : []), n])),
+  MEMORY_DISTILL_FOOTER,
 ].join('\n');
 
 // V9 (§9, verified 2026-11-07): pi TOLERATES unknown top-level keys in
