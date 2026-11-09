@@ -129,7 +129,9 @@ export async function checkRemoteUpdate(currentCommit) {
   } catch (err) {
     error = `无法连接 GitHub（${err.message || '网络超时'}）`;
   }
-  const hasUpdate = Boolean(remote?.sha && currentCommit && remote.sha !== currentCommit);
+  // currentCommit 未知（zip 首装、无 version.json/.git/WAO_COMMIT）时也放行为
+  // 可更新——首次升级会写入 version.json，之后的比对就走正常路径。
+  const hasUpdate = Boolean(remote?.sha && (!currentCommit || remote.sha !== currentCommit));
   return {
     currentCommit,
     currentVersion: pkgVersion(),
