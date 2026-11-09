@@ -95,11 +95,10 @@ export function waitProcessExit(pid, timeoutMs = 15000) {
 export function killProcess(pid) {
   if (!pid || pid <= 0) return;
   try {
-    if (process.platform === 'win32') {
-      execFileSync('taskkill', ['/PID', String(pid), '/F', '/T'], { stdio: 'ignore', timeout: 10000 });
-    } else {
-      process.kill(pid, 'SIGKILL');
-    }
+    // Node 原生 kill = TerminateProcess 单进程——绝不能用 taskkill /T：/T 走
+    // 进程树会把派生本更新器的自己一并杀掉（真机实测踩坑：日志止于
+    // "stopping parent"，updater 自尽，服务停机无人接管）。
+    process.kill(pid);
   } catch { /* already gone or access denied — waitProcessExit handles the rest */ }
 }
 
