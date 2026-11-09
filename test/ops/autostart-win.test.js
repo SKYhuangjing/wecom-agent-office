@@ -55,3 +55,41 @@ test('launcher preserves --lan flag when lan=true', () => {
   const cmd = buildWinAutostartCmd({ ...CASE, lan: true });
   assert.ok(cmd.includes('start --data-dir "C:\\Users\\1data\\wao\\data" --lan'), 'launcher retains --lan flag in cmd');
 });
+
+// start 时启动器刷新（参数漂移修复，2026-11-09）：启用一刻烘焙的参数会随
+// 运行形态漂移（先启用自启、后开 --lan → 旧 cmd 无 --lan，重启登录即丢
+// LAN）。planAutostartRefresh 是 start 流程的决策面：只在 win32 且已启用时
+// 重写，内容用当前 lan 重烘焙。
+import { planAutostartRefresh } from '../../src/index.js';
+
+test('planAutostartRefresh: win32+enabled writes launcher with CURRENT lan', () => {
+  const plan = planAutostartRefresh({ platform: 'win32', enabled: true, dataDir: 'C:\\wao\\data', lan: true });
+  assert.equal(plan.write, true, 'refresh planned');
+  assert.equal(plan.path, 'C:\\wao\\data\\win-autostart.cmd', 'launcher path pinned in data dir');
+  assert.ok(plan.content.includes('start --data-dir "C:\\wao\\data" --lan'), 'current lan re-baked (drift fixed)');
+});
+
+test('planAutostartRefresh: enabled but lan now off — old --lan must NOT survive', () => {
+  const plan = planAutostartRefresh({ platform: 'win32', enabled: true, dataDir: 'C:\\wao\\data', lan: false });
+  assert.equal(plan.write, true);
+  assert.ok(!plan.content.includes('--lan'), 'launcher regenerated without --lan');
+});
+
+test('planAutostartRefresh: skips when autostart not enabled (never creates a stray cmd)', () => {
+  const plan = planAutostartRefresh({ platform: 'win32', enabled: false, dataDir: 'C:\\wao\\data', lan: true });
+  assert.equal(plan.write, false);
+  assert.equal(plan.path, undefined);
+});
+
+test('planAutostartRefresh: non-win32 platforms never write', () => {
+  for (const platform of ['darwin', 'linux']) {
+    const plan = planAutostartRefresh({ platform, enabled: true, dataDir: '/tmp/wao/data', lan: false });
+    assert.equal(plan.write, false, `${platform} skipped`);
+  }
+});
+
+test('planAutostartRefresh: dataDir passes through verbatim (absolute by contract)', () => {
+  const plan = planAutostartRefresh({ platform: 'win32', enabled: true, dataDir: 'C:\\wao\\data', lan: false });
+  assert.equal(plan.write, true);
+  assert.equal(plan.path, 'C:\\wao\\data\\win-autostart.cmd', 'no host-platform path.join (POSIX test host would emit forward slashes)');
+});

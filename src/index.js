@@ -775,6 +775,22 @@ const portOf = (flags, fallback) => {
   return n;
 };
 
+// start 时刷新 win32 自启启动器（若已启用）：启用一刻烘焙的参数会随运行
+// 形态漂移（11-09 真机实例：先启用自启、后开 --lan，data/win-autostart.cmd
+// 仍是旧参数——重启登录即丢 LAN）。每次 start 用当前参数重写，保证「下一次
+// 登录拉起」=「这一次的运行形态」。纯决策函数（依赖注入）供单测；
+// dataDir 契约=绝对路径（start 传 kernel.status().dataDir，与启用路径同源），
+// 路径拼接用 Windows 分隔符显式拼接（本函数可能在非 win32 上被单测调用，
+// path.join 在那里会产出正斜杠）。
+export function planAutostartRefresh({ platform, enabled, dataDir, lan }) {
+  if (platform !== 'win32' || !enabled || !dataDir) return { write: false };
+  return {
+    write: true,
+    path: [dataDir, 'win-autostart.cmd'].join('\\'),
+    content: buildWinAutostartCmd({ execPath: process.execPath, repoRoot, dataDir, lan: lan === true }),
+  };
+}
+
 const cmdStart = async (flags) => {
   const isLan = flags.lan === true || flags.host === '0.0.0.0' || process.env.WAO_LAN === '1';
   const defaultHost = isLan ? '0.0.0.0' : (process.env.WAO_HOST || '127.0.0.1');
@@ -792,6 +808,17 @@ const cmdStart = async (flags) => {
   // belongs in data/logs/wao.log like every other lifecycle fact, not on bare
   // stdout where the log tail would miss it.
   kernel.log.info(`wao v${pkgVersion()} listening on http://${host}:${st.port}${lanNote} (pid ${process.pid}, data ${st.dataDir})`);
+  // win32 自启参数漂移修复：见 planAutostartRefresh 注释。best-effort，失败
+  // 只记日志不阻断启动。
+  try {
+    const plan = planAutostartRefresh({ platform: process.platform, enabled: winRunValue() != null, dataDir: st.dataDir, lan: isLan });
+    if (plan.write) {
+      atomicWrite(plan.path, plan.content);
+      kernel.log.info(`autostart launcher refreshed with current args (lan=${isLan})`);
+    }
+  } catch (err) {
+    kernel.log.info(`autostart launcher refresh failed (ignored): ${err?.message ?? err}`);
+  }
   // Graceful stop (§1): SIGINT/SIGTERM run the four-phase teardown, then exit.
   let signalled = false;
   const shutdown = () => {

@@ -21,6 +21,12 @@
 ## 待启动
 
 - **W3 资产系统**(skill/memory/MCP/prompt+工具类,per-provider 物化管线;RTK 并入)——设计文档先行,详见 [v2 计划](superpowers/plans/2026-11-07-wao-v2.md)
+- **Token 优化产品化**(2026-11-09 PC1 生产实测沉淀,详见 [DESIGN-TOKEN-OPT.md](DESIGN-TOKEN-OPT.md)):
+  - P1-A 工具装备一键供给(设置页「工具装备」卡:rtk/rg 装备态+一键安装(镜像回退)+重启服务刷 PATH;今日人工 40 分钟 → 一键)
+  - P1-B 省 token 装备包(bot 向导默认勾选绑 rtk+ripgrep,资产库 seed 预置)
+  - P2-A 会话策略+记忆层(TTL 会话路由替代 62k 历史重放;memory 资产=FAQ 沉淀机制化,轮后蒸馏)
+  - P2-B test 探针轮可观测(落台账/过中间件,优化验证不等生产流量)
+  - ✅ 已随本日落地:win-autostart 参数漂移修复(`planAutostartRefresh` 每次 start 用当前参数重写启动器,689/689 绿)
 
 ## 搁置(Shelved)
 
