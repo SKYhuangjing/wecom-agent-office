@@ -3,7 +3,7 @@
 // 回写语义）；装备台 = per-bot 绑定面（GET /api/bots 的 assets 摘要 +
 // POST/DELETE /api/bots/:id/assets + POST /api/bots/:id/rematerialize-assets，
 // 警示条与工具装备态徽章来自 /api/agents assetWarnings/assetTools——后者经
-// manifest.tools 回显，§7.1/§7.2）。公司话词表（§8.1 P2 裁定 rev.2）：
+// manifest.tools 回显，§7.1/§7.2）。标准术语词表（README §4.2）：
 // 徽章与文案只用「配发」(mode:'shared') /「私发」(mode:'exclusive')；卸下装备
 // =unbind，重新物化=rematerialize，下架=DELETE 资产；技术词（type/mode 原值、
 // 落盘路径）收进 tooltip/副标题——双层语言，运维不歧义。
@@ -170,7 +170,7 @@ export default {
   component({ WAO }) {
     const { h, useState, useEffect, api, useAgents } = WAO;
     ensurePageStyle();
-    const { agents } = useAgents(); // 装备警示条（assetWarnings）与同事名
+    const { agents } = useAgents(); // 工具警示条（assetWarnings）与机器人名
 
     const [assets, setAssets] = useState(null);
     const [bots, setBots] = useState(null);
@@ -232,7 +232,7 @@ export default {
       }
     }, [pendingEdit, assets]);
 
-    // 装备台默认选中第一位同事（选定后不随列表漂移）
+    // 工具配置默认选中第一台机器人（选定后不随列表漂移）
     useEffect(() => {
       if (view === 'equip' && botId == null && bots != null && bots.length > 0) setBotId(bots[0].id);
     }, [view, botId, bots]);
@@ -320,7 +320,7 @@ export default {
       }
     };
 
-    // 哪些同事绑着这件资产（下架确认层与绑定数 tooltip 共用）
+    // 哪些机器人绑着这件资产（下架确认层与绑定数 tooltip 共用）
     const holdersOf = (assetId) => bots.flatMap((b) => (Array.isArray(b.assets) ? b.assets : [])
       .filter((x) => x?.assetId === assetId)
       .map((x) => ({ bot: b, mode: x.mode })));

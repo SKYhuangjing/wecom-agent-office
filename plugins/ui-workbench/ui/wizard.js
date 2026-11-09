@@ -24,7 +24,7 @@ const ID_MAX = 64; // 与服务端 BOT_ID_RE（≤64 字符）对齐
 const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 
 // 通信渠道（channel）卡片元数据：/api/ports 的 channels 只有 {id, owner,
-// accountSchema}（没有展示名），公司话标签在这里维护；未登记的渠道退回 id
+// accountSchema}（没有展示名），标准术语标签在这里维护；未登记的渠道退回 id
 // 原文（双层语言：技术词收进副标题，运维不歧义）。
 const CHANNEL_META = {
   wecom: {
@@ -62,13 +62,13 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
   const [done, setDone] = useState(null); // created bot record (sanitized echo)
   const [submitting, setSubmitting] = useState(false);
   const [submitErrors, setSubmitErrors] = useState(null);
-  const [bindFailures, setBindFailures] = useState([]); // 入职后配发失败清单（不阻断入职）
+  const [bindFailures, setBindFailures] = useState([]); // 创建后绑定工具失败清单（不阻断创建）
   const [assets, setAssets] = useState(null); // null=读取中 []=空清单
   useEffect(() => {
     let alive = true;
     api('/api/assets')
       .then((data) => { if (alive) setAssets(Array.isArray(data?.assets) ? data.assets : []); })
-      .catch(() => { if (alive) setAssets([]); }); // 资产面不可用不拦入职——这步可跳过
+      .catch(() => { if (alive) setAssets([]); }); // 资产面不可用不拦创建——这步可跳过
     return () => { alive = false; };
   }, []);
   const [draft, setDraft] = useState(() => {
@@ -86,7 +86,7 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
   });
   const channelSchema = ports?.channels?.find((c) => c.id === draft.channel)?.accountSchema ?? [];
   const providerSchema = ports?.providers?.find((p) => p.id === draft.provider)?.configSchema ?? [];
-  // 所选岗位是否支持装备（/api/ports assets:false = provider 无 materializeAssets）
+  // 所选引擎是否支持工具（/api/ports assets:false = provider 无 materializeAssets）
   const providerSupportsAssets = ports?.providers?.find((p) => p.id === draft.provider)?.assets !== false;
 
   // 换渠道即换凭证面：account 表单按新渠道的 accountSchema 重建。
@@ -101,8 +101,8 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
       ...d,
       provider: id,
       providerConfig: fieldsFromSchema(ports?.providers?.find((p) => p.id === id)?.configSchema),
-      // 换到不支持装备的岗位（provider 无 materializeAssets，/api/ports
-      // assets:false）：清掉已勾选——留着只会在入职后逐件绑定失败。
+      // 换到不支持工具的引擎（provider 无 materializeAssets，/api/ports
+      // assets:false）：清掉已勾选——留着只会在创建后逐件绑定失败。
       ...(ports?.providers?.find((p) => p.id === id)?.assets === false ? { equip: [] } : {}),
     }));
   };
@@ -131,8 +131,8 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
     if (which === 1 && draft.provider === '') errs.push('请选择一个 Agent 引擎');
     if (which === 2) {
       // v2 必选：至少一件。两种「无装备可配」放行——公司一件资产都没登记过
-      // （新部署；资产面故障同样回空清单，不能拦入职），或所选岗位不支持装
-      // 备（整面已禁勾，不能卡死入职）。
+      // （新部署；资产面故障同样回空清单，不能拦创建），或所选引擎不支持工
+      // 备（整面已禁勾，不能卡死创建）。
       if (assets != null && assets.length > 0 && providerSupportsAssets && draft.equip.length === 0) {
         errs.push('请至少配置一件工具——新机器人不能什么都不会');
       }
@@ -162,7 +162,7 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
         channel: draft.channel, account: account.values,
         allowedUsers: allowed, provider: draft.provider, providerConfig: providerConfig.values,
       });
-      // 第 3.5 步装备：入职成功后逐件配发——失败不回滚入职（人已办进来了），
+      // 第 3.5 步工具：创建成功后逐件绑定——失败不回滚创建，
       // 成功页点名哪些没配上、到资产科装备台补配。Agent 自建资产（origin:mcp）
       // 固定私发——服务端 §8.1 分级拒 shared（盲评 P2-4：默认改配发后这里不能
       // 让 Agent 资产踩 400）。
@@ -186,7 +186,7 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
     }
   };
 
-  // —— 成功页：工牌预览 + 去办公室看看 ————————————————————————————
+  // —— 成功页：ID 卡预览 + 去办公室看看 ————————————————————————————
   if (done != null) {
     const meta = providerMeta(done.provider);
     const joined = fmtDate(done.createdAt);
@@ -269,7 +269,7 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
   } else if (step === 2) {
     // 第 3 步（v2 必选）：配发装备。推荐装备包按类型分组一键整包勾选，逐件
     // 清单仍可精挑（默认配发·跟源更新，与装备台口径一致）。至少一件才能下一
-    // 步——例外见 stepErrors。所选岗位不支持装备（provider 无 materializeAssets）
+    // 步——例外见 stepErrors。所选引擎不支持工备（provider 无 materializeAssets）
     // 时整面禁勾（/api/ports assets:false——判定源同绑定校验面 checkBind）。
     const toggleEquip = (id, on) => setDraft((d) => ({
       ...d,
@@ -360,7 +360,7 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
         })),
       h('p', { className: 'wb-hint' }, '其余引擎参数按默认值创建，之后可在机器人配置里细调。'));
   } else {
-    // 第 5 步（v2 渠道化）：先选 IM 渠道（卡片，同技能岗位样式），选中后在其
+    // 第 5 步（v2 渠道化）：先选 IM 渠道（卡片，同引擎卡片样式），选中后在其
     // 下方按该渠道 accountSchema 动态渲染凭证字段（/api/ports channels——目前
     // 只有企微一家）。仅一个渠道时默认已选（draft 初始化取 channels[0]）。
     const channels = ports?.channels ?? [];

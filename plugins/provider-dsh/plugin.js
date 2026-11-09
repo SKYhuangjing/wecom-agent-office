@@ -219,7 +219,7 @@ export default {
         if (typeof bot?.id !== 'string' || bot.id === '') throw new Error('materializeAssets: bot.id is required');
         if (typeof pc.cwd !== 'string' || pc.cwd === '') throw new Error(`materializeAssets: bot ${bot.id} has no providerConfig.cwd`);
         for (const entry of plan ?? []) {
-          if (entry?.type === 'tool' && entry?.content?.kind === 'rtk') throw new Error('dsh 岗位不支持 rtk 工具资产（rtk 支持列表不含 dsh，F27）');
+          if (entry?.type === 'tool' && entry?.content?.kind === 'rtk') throw new Error('dsh 引擎不支持 rtk 工具资产（rtk 支持列表不含 dsh，F27）');
         }
         const profile = pc.profile || `wecom-${bot.id}`;
         const writes = [{

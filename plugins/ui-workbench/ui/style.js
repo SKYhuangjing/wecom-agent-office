@@ -296,7 +296,7 @@ const CSS = `
 }
 .wb-editor { padding-bottom: 20px; } /* sticky 栏有自己的负 margin 贴底，非 sticky 编辑器保持底边距 */
 
-/* 技能岗位三部门卡片 */
+/* 引擎卡片 */
 .wb-dept-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
 .wb-dept-card {
   position: relative; display: flex; flex-direction: column; gap: 6px;

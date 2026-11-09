@@ -1,7 +1,7 @@
 // 机器人 (v2 导航收敛): bot 列表 + 创建向导（_legacy/wizard.js）+ 详情视图。
 // 详情四个 tab——会话（_legacy/session.js 按 bot 过滤）/ 日志（_legacy/
 // timeline.js 按 bot 过滤）/ 工具（_legacy/assets.js 装备台精简为 per-bot）/
-// 设置（_legacy/bots.js 的编辑表单：schema 驱动 + 岗前测试）——外加「发送
+// 设置（_legacy/bots.js 的编辑表单：schema 驱动 + 测试运行）——外加「发送
 // 消息」按钮（_legacy/push.js 精简为 dialog：选会话→填内容→发送）。
 // 跨页交接沿用 sessionStorage handoff（overview/PunchClock 跳入）；深链
 // ?select=new&step=N（向导）/ ?select=<botId>&tab=session|logs|tools|settings
@@ -377,7 +377,7 @@ const DetailTools = ({ WAO, botId }) => {
 };
 
 // —— 设置 tab（_legacy/bots.js 的编辑表单原样搬移：分组折叠 + sticky 保存栏 +
-// 岗前测试；只把「选择谁」从外部传入固定）——
+// 测试运行；只把「选择谁」从外部传入固定）——
 const DetailSettings = ({ WAO, bot, ports, onSaved, onDeleted, focusTest }) => {
   const { h, useState, useEffect, api } = WAO;
   const [draft, setDraft] = useState(null);
@@ -775,7 +775,7 @@ export default {
     };
 
     let editor = null;
-    // ?select=new&step=N 直达入职向导第 N 步（1-5，截图基线用；越界回第 1 步）
+    // ?select=new&step=N 直达创建向导第 N 步（1-5，截图基线用；越界回第 1 步）
     const initialStep = (() => {
       const n = Number(new URLSearchParams(location.search).get('step'));
       return Number.isInteger(n) && n >= 1 && n <= 5 ? n - 1 : 0;

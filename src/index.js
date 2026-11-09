@@ -391,8 +391,13 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
       // 启用：生成启动器（烘焙绝对路径）+ 写用户级 Run 键（免管理员）；禁用：
       // 删值，值本就不缺视为已达目标态（幂等），reg 真不可用才 409。
       if (enabled) {
-        const launcher = join(dir, 'win-autostart.cmd');
-        atomicWrite(launcher, buildWinAutostartCmd({ execPath: process.execPath, repoRoot, dataDir: dir }));
+        // launcher 与 dataDir 都钉成绝对路径：dir 可为相对（默认 cwd/data），
+        // 登录时 Run 键的 cwd 是 System32，相对路径会落到别处/找不到 cmd。
+        const absDataDir = resolve(dir);
+        const launcher = join(absDataDir, 'win-autostart.cmd');
+        atomicWrite(launcher, buildWinAutostartCmd({
+          execPath: process.execPath, repoRoot, dataDir: absDataDir,
+        }));
         execFileSync('reg', ['add', WIN_RUN_KEY, '/v', AUTOSTART_LABEL, '/t', 'REG_SZ', '/d', launcher, '/f'], { stdio: 'ignore' });
       } else {
         try {

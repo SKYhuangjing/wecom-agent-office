@@ -1,7 +1,7 @@
-// 人事部 (company-metaphor redesign P2): 花名册（化身头像+状态）+ 入职向导
-// + 员工档案编辑（分组折叠+sticky 保存栏+岗前测试）+ 离职面谈 + 调休/返岗。
+// 机器人管理: 列表（化身头像+状态）+ 创建向导
+// + 配置编辑（分组折叠+sticky 保存栏+测试运行）+ 删除确认 + 暂停/启用。
 // 数据面不变：GET /api/ports（schema）+ GET /api/bots（脱敏记录）；表单仍由
-// schema 驱动（form.js）。双层语言：主层公司话，技术词（bot id、provider
+// schema 驱动（form.js）。双层语言：主层标准术语，技术词（bot id、provider
 // 名、schema 字段）收进 tooltip/副标题。
 import { ensurePageStyle } from '../style.js';
 import { fieldsFromSchema, SchemaFields, serializeSchema } from '../form.js';
@@ -29,7 +29,7 @@ const draftFromRecord = (bot, ports) => ({
   allowedUsers: Array.isArray(bot.allowedUsers) ? bot.allowedUsers.join('\n') : '',
 });
 
-// 员工档案的分组折叠（基础/工牌凭证/岗位配置/高级）
+// 配置的分组折叠（基础/机器人 ID/引擎配置/高级）
 export const Group = ({ WAO, title, sub, open, onToggle, children }) => {
   const { h } = WAO;
   return h('section', { className: `wb-group${open ? ' open' : ''}` },
@@ -80,7 +80,7 @@ export default {
 
     useEffect(() => { reload(); }, []);
 
-    // 工作台交接（编辑/试跑/去入职）+ ?select= 直达（截图用）
+    // 工作台交接（编辑/试跑/去创建）+ ?select= 直达（截图用）
     useEffect(() => {
       let handoff = null;
       try { handoff = JSON.parse(sessionStorage.getItem(HANDOFF_KEY) ?? 'null'); } catch { handoff = null; }
@@ -206,7 +206,7 @@ export default {
     };
 
     let editor = null;
-    // ?select=new&step=N 直达入职向导第 N 步（1-5，截图基线用；越界回第 1 步）
+    // ?select=new&step=N 直达创建向导第 N 步（1-5，截图基线用；越界回第 1 步）
     const initialStep = (() => {
       const n = Number(new URLSearchParams(location.search).get('step'));
       return Number.isInteger(n) && n >= 1 && n <= 5 ? n - 1 : 0;

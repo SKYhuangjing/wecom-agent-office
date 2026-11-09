@@ -230,7 +230,7 @@ export default {
       },
 
       // materializeConfig's counterpart: DELETE /api/bots/:id takes the bot's
-      // materialized models.json with it — but sessions/ (the 员工档案's
+      // materialized models.json with it — but sessions/ (会话数据
       // conversation history) stays on disk, unlike the dsh profile which has
       // no side artifacts. Best-effort by contract; removeBotModels returns
       // removed:false when nothing was there (never an error).

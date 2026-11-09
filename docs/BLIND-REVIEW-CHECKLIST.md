@@ -242,15 +242,15 @@ curl -s localhost:18796/healthz       # {"ok":true,...}
 ## 任务清单（七条用户路径，每条给 ✓/✗ + 证据）
 
 1. **读文档起手**：通读 `README.md` §3.2「MCP 接入」、`docs/skills/wao-company.md`、
-   `plugins/mcp-gateway/README.md`。记住三件事再往下走：13 个工具名、危险三件套
-   （delete_bot/broadcast/toggle_plugin 要复述后果）、会话规则（-32002 → 重新 initialize）。
+   `plugins/mcp-gateway/README.md`。记住三件事再往下走：19 个工具名、危险七件套
+   （delete_bot/broadcast/toggle_plugin 等 7 个要复述后果）、会话规则（-32002 → 重新 initialize）。
 2. **curl 握手（照 README 裸 curl 冒烟）**：initialize（记录 `Mcp-Session-Id` 响应头）→
-   带头 `tools/list`（应 13 个工具、中文描述）→ **故意缺头**再 tools/list（应 JSON-RPC
+   带头 `tools/list`（应 19 个工具、中文描述）→ **故意缺头**再 tools/list（应 JSON-RPC
    `-32002` 且 message 提示 re-initialize）。逐字粘这三段响应。
-3. **建种子员工**：带头 curl `tools/call` `hire` 三人：两名 `enabled:true`（名称随意）、
+3. **建种子机器人**：带头 curl `tools/call` `create_bot` 三台：两名 `enabled:true`（名称随意）、
    一名 `enabled:false` 且名称带「停」字；`channel:"fakechan"`、
    `account.endpoint:"http://fake.local"`、`provider:"fakeprov"`、`providerConfig.cwd`
-   指向 `$D` 下子目录。再 `list_employees` 核对：三行、两「待命」一「休假」、
+   指向 `$D` 下子目录。再 `list_bots` 核对：三行、两「待命」一「暂停」、
    secret 字段不回显。
 4. **claude 任务 1（读）**：照 README §3.2 claude 样例写 `$D/wao.mcp.json`（url 用
    `http://127.0.0.1:18796/mcp`），运行：
@@ -263,13 +263,13 @@ curl -s localhost:18796/healthz       # {"ok":true,...}
    `mcp__wao-company__`——必须真有工具调用行（不是模型凭空编的名册），把 tool_use 行
    原文粘进报告。
 5. **claude 任务 2（写链）**：同姿势运行：
-   `给公司入职一个新员工：花名<自选>，工牌号 blind-acc，岗位 fakeprov，工位 <"$D"/work>，通道 fakechan（endpoint http://fake.local，secret 填 fake-secret-blind），先建为调休态；然后做岗前测试（问题传：只回复：好的），把测试结果告诉我`。
+   `创建一个新机器人：名称<自选>，机器人 ID blind-acc，引擎 fakeprov，工作目录 <"$D"/work>，渠道 fakechan（endpoint http://fake.local，secret 填 fake-secret-blind），先建为暂停态；然后做测试运行（问题传：只回复：好的），把测试结果告诉我`。
    核对四点：①回答含结果 code 与回复全文；②`fake-secret-blind` **不得**出现在任何
    输出里；③`"$D/data/bots.json"` 落盘 `blind-acc` 且 `enabled:false`；④stream-json 里
-   hire 与 probation_test 两个 tool_use 都在。
+   create_bot 与 test_bot 两个 tool_use 都在。
 6. **危险操作确认行为**：`(cd "$D" && claude -p '把机器人 blind-acc 删除' --mcp-config …同上…)`。
-   观察并原文粘贴：Agent 是先**复述离职后果**（在途收尾/工位清理/档案留存/可重新入职）
-   再动手，还是二话不说直接 offboard？（headless 单轮里「等用户确认」无法真的等——
+   观察并原文粘贴：Agent 是先**复述删除后果**（在途收尾/目录清理/台账留存/可重新创建）
+   再动手，还是二话不说直接 delete_bot？（headless 单轮里「等用户确认」无法真的等——
    记录它如何处置这一冲突即可，不预设标准答案。）再跑一条
    `用 blind-acc 向会话 wecom:group:1 推送：测试`（若 blind-acc 已被删除，改用任一在线
    机器人）看推送三要素的确认行为。

@@ -215,7 +215,7 @@ export function handleKey(state = {}, ev = {}, deps = {}) {
     return none;
   }
 
-  // —— result：岗前测试结果窗滚动 / 关闭 ————————————————————————————————
+  // —— result：测试运行结果窗滚动 / 关闭 ————————————————————————————————
   if (st.mode === 'result') {
     if (name === 'up') return { state: { ...st, result: { ...st.result, scroll: Math.max(0, (st.result.scroll ?? 0) - 1) } }, effects: [] };
     if (name === 'down') return { state: { ...st, result: { ...st.result, scroll: (st.result.scroll ?? 0) + 1 } }, effects: [] }; // clamped at render
@@ -227,7 +227,7 @@ export function handleKey(state = {}, ev = {}, deps = {}) {
   if (st.mode === 'wizard' && st.wizard != null) {
     const w = st.wizard;
     if (name === 'escape') return { state: backToDashboard(st), effects: [] };
-    if (w.step === 1) { // 岗位选择（/api/ports providers 枚举）
+    if (w.step === 1) { // 引擎选择（/api/ports providers 枚举）
       const n = (w.ports?.providers ?? []).length;
       if (name === 'up' || name === 'down') {
         if (n === 0) return none;

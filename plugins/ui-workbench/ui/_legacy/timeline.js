@@ -1,9 +1,9 @@
 // 工作日志 (company-metaphor redesign P3): recent activity stream over the SDK
 // hook useTimeline(botId, windowMin) — SSE run/* nudges the refresh, a 5s poll
 // is the fallback. Rows arrive oldest-first; the list renders newest-on-top.
-// 每行带上同事的化身（头像即化身——日志里也是那张脸）；kind 用公司话
-// （开工/步骤/工具/思考/工单/收工），技术原值收进 title。bot picker 是
-// 全部同事+单人，窗口 5/15/30 分钟。
+// 每行带上机器人的化身（头像即化身——日志里也是那张脸）；kind 用标准术语
+// （开始/步骤/工具/思考/消息/结束），技术原值收进 title。bot picker 是
+// 全部机器人+单台，窗口 5/15/30 分钟。
 import { ensurePageStyle } from '../style.js';
 import { bannerText } from './list.js';
 import { Avatar, providerMeta } from '../hr.js';
@@ -27,7 +27,7 @@ export default {
     const { h, useState, useEffect, useAgents, useTimeline } = WAO;
     ensurePageStyle();
     const { agents, error: agentsError } = useAgents();
-    const [botId, setBotId] = useState(''); // '' = 全部同事
+    const [botId, setBotId] = useState(''); // '' = 全部机器人
     const [windowMin, setWindowMin] = useState(15);
     const { rows, error } = useTimeline(botId === '' ? null : botId, windowMin);
 

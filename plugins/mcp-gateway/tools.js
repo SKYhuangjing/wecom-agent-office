@@ -364,7 +364,7 @@ const TOOLS = [
     async run({ services, args, log }) {
       const kops = kopsNow(services);
       // Impact BEFORE the flip: which ON-DUTY bots lose their channel/
-      // provider port. Off-duty (休假) bots are already offline — counting
+      // provider port. Paused bots are already offline — counting
       // them as "taken down by this flip" would overstate the impact. null =
       // impact UNKNOWN (engine service unavailable or the tally failed); the
       // flip below is authoritative either way.

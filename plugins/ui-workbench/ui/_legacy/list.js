@@ -1,6 +1,6 @@
-// 今日工作 (company-metaphor redesign P3): live 同事卡片——化身头像(provider
-// 色环)+岗位称呼+状态(工作中 provider 色脉动/待命/休假)+工作汇报(SSE 进度行)
-// +今日统计。开关文案=调休/返岗。数据来自 useAgents（SSE+5s 轮询）；retry
+// 今日状态: 实时机器人卡片——化身头像(provider
+// 色环)+引擎名+状态(工作中 provider 色脉动/待命/离线)+进度行(SSE)
+// +今日统计。开关文案=暂停/启用。数据来自 useAgents（SSE+5s 轮询）；retry
 // 重挂内层组件让硬失败可手动重试。
 import { ensurePageStyle } from '../style.js';
 import { Avatar, STATUS_LABEL, statusTitle, providerMeta } from '../hr.js';
@@ -86,8 +86,8 @@ const WorkbenchInner = ({ WAO, retry }) => {
               h('div', { className: 'wb-sub', title: `${meta.label}（provider ${a.provider ?? '?'}）· 渠道 ${a.channel ?? '?'} · 机器人 ID ${a.id}` },
                 `${meta.label} · ${a.id}`)),
             badge,
-            // P2-4: 在岗同事带离岗原因，但 provider/渠道端口消失的调休同事此前
-            // 毫无信号——橙点在灰色「休假」之外点名原因（title）。
+            // P2-4: 在线机器人带离线原因，但 provider/渠道端口消失的暂停机器人此前
+            // 毫无信号——橙点在灰色「离线」之外点名原因（title）。
             a.providerMissing === true ? h('span', {
               className: 'wb-dot-warn', title: '它的引擎插件已不存在（插件管理里对应插件被停用）',
             }) : null,

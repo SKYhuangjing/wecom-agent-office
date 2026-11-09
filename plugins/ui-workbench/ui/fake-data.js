@@ -147,7 +147,7 @@ export const FAKE = {
     {
       id: 'main-bot', name: '主号机器人', enabled: true, channel: 'wecom',
       account: { botId: '1000002', wsUrl: 'wss://openws.work.weixin.qq.com' },
-      provider: 'dsh', createdAt: now - 62 * 24 * 3600_000, // 入职两个月
+      provider: 'dsh', createdAt: now - 62 * 24 * 3600_000, // 创建两个月
       providerConfig: { cwd: '/Users/sky/work/main', permission: 'workspace-write', progressCoT: true },
       assets: [
         { assetId: 'ast-skl001', name: 'wao-company', type: 'skill', mode: 'shared', origin: 'operator' },
@@ -168,7 +168,7 @@ export const FAKE = {
     {
       id: 'bot-3', name: '归档机器人', enabled: false, channel: 'wecom',
       account: { botId: '1000004' },
-      provider: 'codex', createdAt: now - 200 * 24 * 3600_000, // 老员工：createdAt 后补的规则之前入职
+      provider: 'codex', createdAt: now - 200 * 24 * 3600_000, // 老机器人：createdAt 后补的规则之前创建
       providerConfig: { cwd: '/Users/sky/work/bot3' },
     },
   ],
@@ -415,6 +415,6 @@ export const FAKE_API = {
   },
   '/api/mcp/skill': {
     ok: true, filename: 'wao-company.md',
-    content: '---\nname: wao-company\ndescription: 操作 wecom-agent-office（wao）机器人公司：经 MCP server「wao-company」做日常巡检、入职新 bot、调岗改配置、调休返岗、办离职、发广播、部门（插件）启停、查工单与工作日志、资产配发。\n---\n\n（harness 摘录——全文见仓库 docs/skills/wao-company.md）\n\n你是 wao 公司的运营助手。操作面经 MCP server `wao-company` 暴露（19 个工具）。\n\n## 常用意图 → 工具\n\n- 「看看机器人状态」→ list_bots\n- 「帮我暂停 main」→ set_enabled\n- 「给 main 发一条推送」→ broadcast（危险：先复述会话与内容）\n',
+    content: '---\nname: wao-company\ndescription: 操作 wecom-agent-office（wao）机器人平台：经 MCP server「wao-company」做日常巡检、创建机器人、改配置、暂停启用、删除、推送、插件启停、查会话历史与活动日志、资产绑定。\n---\n\n（harness 摘录——全文见仓库 docs/skills/wao-company.md）\n\n你是 wao 平台的运维助手。操作面经 MCP server `wao-company` 暴露（19 个工具）。\n\n## 常用意图 → 工具\n\n- 「看看机器人状态」→ list_bots\n- 「帮我暂停 main」→ set_enabled\n- 「给 main 发一条推送」→ broadcast（危险：先复述会话与内容）\n',
   },
 };

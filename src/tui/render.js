@@ -20,7 +20,7 @@ const paint = (text, ...codes) =>
 // an 80-col terminal never wraps a frame line.
 const ANSI_RE = /\x1b\[[0-9;?]*[A-Za-z]/g;
 
-// 终端注入清洗（评审 W2 T3 #2）：一切数据源字符串（员工名/日志行/岗前
+// 终端注入清洗（评审 W2 T3 #2）：一切数据源字符串（机器人名/日志行/测试
 // finalText/API error/chatKey）都是不可信输入——含 ESC 序列的文本进了帧就
 // 能劫持运维终端（OSC 52 可写剪贴板、CSI 可改色/清屏；聊天用户文本会进
 // wao.log 被日志窗 tail）。sanitizeTerminal 剥掉 OSC/CSI/其余 ESC 序列与
@@ -237,7 +237,7 @@ const inputRow = (width, input) => {
 
 // —— content panes (each fills contentBudget rows at most) —————————————————
 
-// 仪表盘主体：员工卡列表 + 日志尾随窗（l 放大：5 行 ↔ 半屏）。
+// 仪表盘主体：机器人卡列表 + 日志尾随窗（l 放大：5 行 ↔ 半屏）。
 const dashboardPane = (width, budget, { agents, selectedIdx, now, logTail, logZoom }) => {
   const out = [];
   const logCap = logZoom ? Math.max(LOG_WINDOW_ROWS, Math.floor(budget / 2)) : LOG_WINDOW_ROWS;
@@ -257,7 +257,7 @@ const dashboardPane = (width, budget, { agents, selectedIdx, now, logTail, logZo
       let stCode = a?.enabled === false ? CODE.gray : st.code;
       if (a?.enabled !== false && a?.status === 'offline' && a?.reason) label = `${label}·${a.reason}`;
       // 长名截断：名字最多占 width-30 列（窄端保底 8），把余宽留给
-      // [状态]/岗位部门——截掉名字尾巴比截掉状态可读。
+      // [状态]/引擎名——截掉名字尾巴比截掉状态可读。
       const name = a?.name ?? a?.id ?? '?';
       let shownName = name;
       if (dispWidth(name) > Math.max(8, width - 30)) {
@@ -345,7 +345,7 @@ const resultPane = (width, budget, result) => {
   return out;
 };
 
-// 选择列表（广播目标会话；向导的岗位选择复用同一形状）。
+// 选择列表（广播目标会话；向导的引擎选择复用同一形状）。
 const pickPane = (width, budget, pick) => {
   const out = [];
   out.push(composeLine(width, [{ t: pick.title ?? '选择', c: [CODE.bold] }]));
@@ -387,7 +387,7 @@ const wizardPane = (width, budget, w) => {
         { t: shown, c: [CODE.bold] },
         { t: '▌', c: [CODE.reverse] },
       ], [CODE.reverse]));
-    } else if (i === 1) { // 岗位：已选=值，未到=占位
+    } else if (i === 1) { // 引擎：已选=值，未到=占位
       const done = w.fields?.provider != null;
       out.push(composeLine(width, [
         { t: `${done ? '✓' : '·'} ${WIZARD_LABELS[i]}：`, c: [CODE.dim] },

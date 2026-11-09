@@ -1,5 +1,5 @@
-// hr.js — 人事部共享件 (company-metaphor redesign P2): provider 岗位元数据、
-// 「头像即化身」的 React 装配、公司话状态标签。UI 主层一律公司话，技术词
+// hr.js — 机器人元数据共享件: provider 引擎元数据、
+// 「头像即化身」的 React 装配、标准术语状态标签。UI 主层标准术语，技术词
 // （provider id、status 原值、chatKey…）收进 tooltip/副标题——双层语言，
 // 运维不歧义。
 import { ensurePageStyle } from './style.js';

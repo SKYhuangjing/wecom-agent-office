@@ -136,7 +136,7 @@ curl -X POST localhost:8792/api/plugins/<id>/disable|enable   # 禁/启用某插
 > dsh bot 的 profile 物化是**即时**的：创建/修改 dsh bot 就把 profile 写到
 > `~/.dsh/profiles/<profile>/`（即使 bot 停用）；`DELETE /api/bots/<id>` 会清理该目录。
 > pi bot 同理即时物化 models.json 到 `~/.pi/agent-wao-<botId>/`（文件只含 `$变量名`
-> 引用不含密钥）；`DELETE` 只删 models.json，`sessions/` 会话档案保留（离职留档）。
+> 引用不含密钥）；`DELETE` 只删 models.json，`sessions/` 会话数据保留（删除机器人时留档）。
 
 ### 3.1 无人值守运维（launchd / systemd / NSSM）
 
@@ -227,14 +227,14 @@ Windows 上优先用 dsh/codex（提示词走 stdin）或把人设写成单行�
 
 - **会话生命周期**：`initialize` 响应头下发 `Mcp-Session-Id`（uuid）→ 之后每个请求必须带该头
   （响应回显同值）；缺失/未知/已终结 → JSON-RPC `-32002`。会话不过期（单用户），只有
-  DELETE 与服务重启/部门重组（四阶段 reload 会重建全部插件路由）会让其失效——收到
+  DELETE 与服务重启/插件重载（四阶段 reload 会重建全部插件路由）会让其失效——收到
   `-32002` 重新 `initialize` 即恢复。
 - **错误分层**：协议错误＝HTTP 200 + JSON-RPC error（`-32700` 解析 / `-32600` 形状 /
   `-32601` 方法未知 / `-32602` 工具名或参数形状 / `-32603` 内部 / `-32002` 会话）；传输错误＝
-  HTTP 状态码（405 / 415 非 JSON / 413 超 256KB）。**业务失败不是协议错误**：校验 400（如重复入职 `bot id already exists`）/
+  HTTP 状态码（405 / 415 非 JSON / 413 超 256KB）。**业务失败不是协议错误**：校验 400（如重复创建 `bot id already exists`）/
   查无 404 / 离线广播 409 以 `result.isError:true` + 中文原因返回（Agent 可读可转述）。
 - **输出双形态**：每工具 `content[].text`（中文摘要）+ `structuredContent`（结构化数据）；
-  secret 永不回显（`__MASKED__` 语义同 §3）。当前回环无鉴权（§2 边界同样适用）。
+  secret 永不回显（`__MASKED__` 语义同 §3）。当前回环鉴权由 `WAO_TOKEN` 控制（设置后所有 /api 与 /mcp 请求需带 Authorization Bearer 或 X-WAO-Token 头；healthz/静态面豁免，见 §2）。
 
 控制台里也有同款引导：**总览页引导卡**（一键复制 MCP 配置）与**设置 → AI 操作** section（三家配置复制/下载、19 个工具清单、skill 文件下载、MCP 连通性测试，实时显示活跃 AI 会话数——数据来自 mcp-gateway 的 `GET /api/mcp`）。
 
@@ -254,7 +254,7 @@ Windows 上优先用 dsh/codex（提示词走 stdin）或把人设写成单行�
 ```
 
 ```sh
-claude --mcp-config wao.mcp.json "列出在岗员工并告诉我谁在休假"
+claude --mcp-config wao.mcp.json "列出机器人并告诉我谁离线"
 ```
 
 ```sh
@@ -325,7 +325,7 @@ curl -si -X POST localhost:8792/mcp -H 'content-type: application/json' \
 - **备份**：停服 → `cp -R <DATA_DIR> <备份>/` → 重启；不想停服时可直接热备
   `bots.json` / `assets.json`（tmp+rename 原子写，任意时刻 cp 不会撕裂）与 `ledger/`（追加型）。
 - **恢复**：停服 → 备份覆盖 `data/` → 重启 → `node src/index.js doctor --data-dir <DATA_DIR>` 验证 →
-  `/api/agents` 确认每 bot 在岗。
+  `/api/agents` 确认每 bot 在线。
 - **版本回滚**：`git log --oneline` 找上一个可用 commit → `git checkout <hash>` →
   `launchctl kickstart -k gui/$(id -u)/com.wecom-agent-office`（代码升级只有进程重启可信）→
   `bash test/probe.sh --check` 对基线。
@@ -419,7 +419,7 @@ curl -si -X POST localhost:8792/mcp -H 'content-type: application/json' \
 必须列后果清单并要求显式确认（删除输入名称）；④ 「真实送达企微」「仅文本问答对
 迁移」「不进引擎链、不记台账」这类后果/边界说明一个字不减。化身（DiceBear
 notionists，CC0，全离线打包进 shell）由 `WAO.avatar(botId,{size,mood})` 出内联
-SVG，同一机器人 ID 在办公室 3D/卡片/列表/日志行/工牌上都是同一张脸；状态栏页头
+SVG，同一机器人 ID 在办公室 3D/卡片/列表/日志行/ID 卡上都是同一张脸；状态栏页头
 （活钟 · 在线 N/M · 今日消息 X）全站可见。可达性：全站 focus-visible 焦点环、
 prefers-reduced-motion 全关动画（画布动画由 ofscene 的 reduced 标志接管）、
 ≤900px 侧栏折顶。

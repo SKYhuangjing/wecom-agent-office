@@ -433,7 +433,7 @@ export default {
           ? h('div', { className: 'of-empty' },
             h('div', { className: 'card' },
               h('p', null, '空的办公室——第一台机器人创建后就会搬进来'),
-              h('p', { className: 'muted' }, '去「机器人」页创建，它将出现在工位上')))
+              h('p', { className: 'muted' }, '去「机器人」页创建，它将出现在办公室里')))
           : null,
         selAgent ? (() => {
           const off = isOff(selAgent);
