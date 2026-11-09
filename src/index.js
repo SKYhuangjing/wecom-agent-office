@@ -751,7 +751,8 @@ const cmdDoctor = async (flags) => {
   if (process.env.WAO_TOKEN !== undefined) {
     if (process.env.WAO_TOKEN === '') {
       mark('!', 'auth', 'WAO_TOKEN 设置为空——鉴权未启用（需非空值才生效）');
-    } else {      const base = `http://${host}:${port}`;
+    } else {
+      const base = `http://${host}:${port}`;
       const probe = async (headers) => {
         try {
           return await fetch(`${base}/api/state`, { headers, signal: AbortSignal.timeout(2000) });
