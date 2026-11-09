@@ -1,5 +1,4 @@
-# 预览素材说明（临时）
+# 3D 工位棚视觉素材说明
 
-`office-loop.mp4` / `office-poster.jpg` 来自腾讯 Marvis 官网公开 loop，**仅本地 UX 预览**，不定稿、不进发布物。
-
-定稿前请换成自有成片，或删掉本目录视频以回退到 `stage-film.js` SVG 工位棚。
+- `office-poster.jpg` / `office-studio-bespoke.jpg`: **自主原创 3D 白棚工位高精渲染母带**（无第三方版权依赖，纯白高调无影棚，2x3 工位阵列，黑曜石剪影人偶与模型厂商识别色项圈）。
+- 规格符合 `docs/OFFICE-STUDIO-SPEC.md`。

@@ -47,6 +47,7 @@ mkdirSync(join(dist, 'vendor'), { recursive: true });
 cpSync(join(webDir, 'vendor'), join(dist, 'vendor'), { recursive: true });
 mkdirSync(join(dist, 'assets', 'harness-lib'), { recursive: true });
 cpSync(join(webDir, 'harness-lib'), join(dist, 'assets', 'harness-lib'), { recursive: true });
+try { cpSync(join(webDir, 'assets'), join(dist, 'assets'), { recursive: true }); } catch {}
 
 // 「头像即化身」(redesign P1): bundle the DiceBear avatar into an ESM lib the
 // harness stub imports same-origin (./avatar-lib.js), so harness screenshots
