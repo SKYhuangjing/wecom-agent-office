@@ -91,7 +91,7 @@
 | [PLUGIN-DEV.md](docs/PLUGIN-DEV.md) | 插件开发全契约（ctx/四层版本协商/复制即契约） |
 | docs/launchd.plist | 四占位模板（⚠️ 占位符**无尖括号**，替换按 token 名） |
 | .superpowers/sdd/×3 | 三里程碑 SDD 台账（全部裁定/遗留/盲评记录） |
-| HANDOFF.md.archive-m1m3 | 本稿之前的逐里程碑追加式旧稿（历史细节查这里） |
+| docs/archive/HANDOFF.md.archive-m1m3 | 本稿之前的逐里程碑追加式旧稿（历史细节查这里；根目录过程报告同归 docs/archive/） |
 
 **接手者必须知道的裁定**：①升级=kickstart 进程重启（非 reload）②内核 849→1164 行（2026-11-09）>800 预算=如实申报不重构 ③台账 consumedSeq 四规约是切换正确性支柱（改前先读 DESIGN §7+反例测试）④四 provider runner 是复制即契约（改一家跑四家契约套件）⑤UI 双层语言：2026-11-08 起**标准术语主层**/技术词详情层（词表=README §4.2；11-06「公司话主层」裁定作废；2026-11-09 MCP 12 工具同步改名，server 名 `wao-company` 保留）。
 

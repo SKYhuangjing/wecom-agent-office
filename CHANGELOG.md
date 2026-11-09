@@ -4,13 +4,22 @@
 
 ## [Unreleased]
 
+### Changed — 术语全量收口 + 安全默认（2026-11-09）
+
+- **MCP 12 工具改名**（标准术语，README §4.2；server 名 `wao-company` 与 skill 文件名不变）：list_employees→list_bots、get_employee→get_bot、hire→create_bot、update_employee→update_bot、offboard→delete_bot、set_duty→set_enabled、probation_test→test_bot、list_departments→list_plugins、department_toggle→toggle_plugin（参数 departmentId→pluginId）、work_log→get_ledger、work_timeline→get_timeline、company_state→get_state；结构化键 departments/employee(s)/affectedEmployees/off-duty 同步 → plugins/bot(s)/affectedBots/paused。skill 文档与盲评清单同步重写。
+- **office3d 文案迁移标准术语**（在岗/休假/花名册/工单/服务同事/档案 → 工作中/离线/机器人列表/消息/服务用户/会话）；工牌标签 innerHTML→textContent（bot 名防注入，XSS 修复）。
+- **WAO_TOKEN 生产启用**：launchd 实例注入令牌（API/MCP 裸访问 401；healthz/静态面豁免；doctor 实测生效）；CUTOVER 检查单增 #8；docs/launchd.plist 模板加示例。
+- 文档对齐实测：README/HANDOFF（666 用例/契约×5/33 张基线/内核 1164 行/真实企微已切换 11-06/四家 provider+cursor）；头部加「数字类以实跑为准」声明。
+- TUI 验收脚本断言对齐新文案；attach/detach 断言改指 data/logs/wao.log；生产帧存档重采 ×3。
+- 根目录过程产物归档 docs/archive/；新增最小 CI（npm test + 契约×5）。
+
 ### Added — UI：AI 操作能力引导（MCP/Skill onboarding，2026-11-08）
 
 Web 是看的，MCP/Skill 是操作的——控制台三处主动引导把 AI Agent 接到 WAO：
 
 - **总览引导卡**：复制 MCP 配置 / 查看完整指南；状态行按 `/api/mcp` 实时显示「✓ N 个 AI 会话活跃」或未连接引导文案。
 - **设置「AI 操作」section**（第一 section）：MCP 端点与 Claude / Codex / ZCode 三家接入配置（一键复制 / 下载 .json/.toml；控制台已存令牌时配置自动附 `X-WAO-Token` 头）+ 19 个 MCP 工具清单（7 个高危标记）+ `wao-company` skill 文件下载/复制 + MCP 连通性测试（无会话探测，不占会话名额）。
-- **机器人详情 AI 提示行**：set_duty / broadcast 直达话术示例，一键跳设置 → AI 操作。
+- **机器人详情 AI 提示行**：set_enabled / broadcast 直达话术示例（原名 set_duty，11-09 术语收口改名），一键跳设置 → AI 操作。
 - **mcp-gateway**：新增 `GET /api/mcp`（会话数 + 工具清单）与 `GET /api/mcp/skill`（仓库 skill 文档全文）两个只读端点供 UI 使用（走同一 WAO_TOKEN 鉴权；MCP 协议面 `tools/list` 形状不变）。
 - 测试：test/mcp/protocol.test.js 新增 /api/mcp 状态面用例；截图基线 30→33 张（settings AI section ×浅/深 + 工具清单展开态）。
 

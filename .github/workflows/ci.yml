@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 全量测试（node --test）
+        run: npm test
+
+      - name: provider 契约（fake-bin 套件 ×5）
+        run: |
+          set -e
+          for p in dsh claude codex pi cursor; do
+            echo "== contract: provider-$p =="
+            npm run contract -- --plugin "plugins/provider-$p"
+          done
+
+      - name: 汇总
+        if: failure()
+        run: echo "::error::测试或契约未全绿——对照 README §5 测试矩阵本地复跑"
