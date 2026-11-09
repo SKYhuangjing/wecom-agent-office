@@ -100,6 +100,17 @@ export class SessionCache {
     this._persist();
   }
 
+  // TTL 判据刷新（盲评 P1-1）：lastAt 语义=「距上一轮」，不是「会话创建年龄」。
+  // 原生续会话（--resume 同一 sessionId）不会走 upsert，若只在 upsert 盖戳，
+  // 活跃对话也会在启动 45 分钟后被强制退役。每个 SETTLED 轮次 touch 一次。
+  touch(chatKey, provider) {
+    const entry = this._data[chatKey]?.cache?.[provider];
+    if (!entry) return false; // 没有会话不创造（fresh 会话由 upsert 负责）
+    entry.lastAt = Date.now();
+    this._persist();
+    return true;
+  }
+
   setCurrent(chatKey, provider) {
     const rec = this._rec(chatKey);
     rec.current = provider;

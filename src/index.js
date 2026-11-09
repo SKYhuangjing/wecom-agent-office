@@ -609,6 +609,14 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
   //        立即应答 installing，GET 轮询进度；装完提示重启服务刷 PATH。
   // restart = 派生更新器 --restart-only（无下载无覆写，只杀旧进程+原参数拉起）。
   const toolsRegistryFile = () => join(resolve(dir), 'tools.json');
+  // 盲评 P1-3：安装是后台任务，服务重启/断电会把它永远留在 installing——
+  // GET 展示与 POST 409 守卫都按「超时即失败」自愈（20 分钟 > SFX 600s 上限）。
+  const STALE_INSTALL_MS = 20 * 60 * 1000;
+  const effectiveInstall = (entry) => (entry?.state === 'installing'
+    && typeof entry.startedAt === 'number'
+    && Date.now() - entry.startedAt > STALE_INSTALL_MS
+      ? { ...entry, state: 'failed', error: '安装中断（服务重启或超时）——请重试' }
+      : entry);
   http.register({
     prefix: '/api/service/tools', owner: 'kernel', handler: (req, res) => {
       if (req.method === 'GET') {
@@ -617,7 +625,7 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
           .filter((spec) => spec.platforms.includes(process.platform))
           .map((spec) => {
             const probe = probeTool(spec, whichBin);
-            const entry = reg[spec.id] ?? null;
+            const entry = effectiveInstall(reg[spec.id] ?? null);
             return {
               id: spec.id, label: spec.label, description: spec.description,
               bin: spec.bin, version: spec.version,
@@ -637,7 +645,7 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
         if (!planCheck.ok) return json(res, 400, { ok: false, error: planCheck.reason });
         const regFile = toolsRegistryFile();
         const reg = readToolsRegistry(regFile);
-        if (reg[id]?.state === 'installing') {
+        if (effectiveInstall(reg[id])?.state === 'installing') {
           return json(res, 409, { ok: false, error: `${id} 正在安装中（${new Date(reg[id].startedAt ?? 0).toLocaleTimeString()} 开始）——稍候用 GET 查进度` });
         }
         reg[id] = { state: 'installing', startedAt: Date.now() };

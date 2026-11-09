@@ -115,3 +115,11 @@ test('every provider memory writer carries the distillation footer (marker proto
     assert.ok(text.includes('跨会话记忆'), `${name} keeps the section header`);
   }
 });
+
+
+test('extractMemoryUpdates tolerates CRLF line endings (windows-shaped model output)', () => {
+  const text = '结论。\r\n<!--wao-memory:Q → A-->\r\n';
+  const { cleanText, entries } = extractMemoryUpdates(text);
+  assert.deepEqual(entries, ['Q → A']);
+  assert.ok(!cleanText.includes('wao-memory'), 'marker stripped despite CRLF');
+});

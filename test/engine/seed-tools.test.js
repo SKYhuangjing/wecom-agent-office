@@ -48,15 +48,17 @@ test('seedBuiltinToolAssets: idempotent on double run', () => {
   assert.equal(doc.assets.length, 2);
 });
 
-test('tokenSaverIds: rtk + ripgrep for claude-like providers; dsh gets ripgrep only', () => {
+test('tokenSaverIds: rtk pre-checked only where its dedicated-dir requirement is sound (盲评 P1-4)', () => {
   const assets = [
     { id: 'a1', type: 'tool', content: { kind: 'rtk' } },
     { id: 'a2', type: 'tool', content: { kind: 'ripgrep' } },
     { id: 'a3', type: 'skill', content: { name: 'x' } },
     { id: 'a4', type: 'tool', content: { kind: 'cost-tracker' } },
   ];
-  assert.deepEqual(tokenSaverIds(assets, 'claude'), ['a1', 'a2']);
-  assert.deepEqual(tokenSaverIds(assets, 'dsh'), ['a2'], 'dsh bind face refuses rtk');
+  assert.deepEqual(tokenSaverIds(assets, 'claude'), ['a1', 'a2'], 'claude: auto claudeConfigDir → both');
+  assert.deepEqual(tokenSaverIds(assets, 'pi'), ['a1', 'a2'], 'pi: WAO-namespaced default dir → both');
+  assert.deepEqual(tokenSaverIds(assets, 'dsh'), ['a2'], 'dsh: rtk unsupported by bind face');
+  assert.deepEqual(tokenSaverIds(assets, 'codex'), ['a2'], 'codex: no codexHome default — pre-checking rtk guarantees a bind failure');
   assert.deepEqual(tokenSaverIds(null, 'claude'), []);
   assert.deepEqual(tokenSaverIds([], 'claude'), []);
 });

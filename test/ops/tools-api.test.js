@@ -188,3 +188,49 @@ test('GET /api/service/tools: platform-filtered rows with probe state; POST refu
     rmSync(fakes, { recursive: true, force: true });
   }
 });
+
+
+// —— 盲评修复回归 ———————————————————————————————————————————————————————
+test('P1-3: a stale installing entry self-heals to failed (GET display + POST no longer 409)', async () => {
+  const fakes = mkdtempSync(join(tmpdir(), 'wao-stale-fakes-'));
+  const dataDir = mkdtempSync(join(tmpdir(), 'wao-stale-data-'));
+  mkdirSync(join(fakes, 'channel-fake'), { recursive: true });
+  writeFileSync(join(fakes, 'channel-fake', 'plugin.js'), FAKE_CHANNEL);
+  writeFileSync(join(fakes, 'channel-fake', 'package.json'), '{"type":"module"}\n');
+  // 21 分钟前开始安装（> 20min 上限）——服务重启把它永远留在了 installing
+  writeToolsRegistry(join(dataDir, 'tools.json'), { rtk: { state: 'installing', startedAt: Date.now() - 21 * 60 * 1000 } });
+  const kernel = await createKernel({ port: 0, dataDir, pluginsDirs: [fakes, join(repoRoot, 'plugins')] });
+  try {
+    const url = (p2) => `http://127.0.0.1:${kernel.http.port}${p2}`;
+    const list = await (await fetch(url('/api/service/tools'))).json();
+    const rtk = list.tools.find((t) => t.id === 'rtk');
+    assert.equal(rtk.install.state, 'failed', 'stale installing displays as failed');
+    assert.match(rtk.install.error, /安装中断/);
+    // POST 不再 409：stale 条目放行重试（mac 上 rtk 走 brew 计划——这里只验
+    // 不被 409 卡死；真安装不发生：随后立即断言状态并停核）
+    const again = await fetch(url('/api/service/tools'), {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'rtk' }),
+    });
+    assert.notEqual(again.status, 409, 'stale installing no longer blocks a retry');
+    await again.json();
+  } finally {
+    await kernel.stop();
+    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(fakes, { recursive: true, force: true });
+  }
+});
+
+test('P0-1: brew install runs through the ASYNC seam (never a sync freeze)', async () => {
+  const calls = [];
+  const entry = await installTool('rtk', {
+    platform: 'darwin', // → brew plan
+    registryFile: join(mkdtempSync(join(tmpdir(), 'wao-brew-')), 'tools.json'),
+    stageDir: join(tmpdir(), 'wao-brew-stage-'),
+    spawnCliImpl: async (bin, args) => { calls.push([bin, ...args]); },
+    which: () => '/opt/homebrew/bin/rtk',
+    log: () => {},
+  });
+  assert.deepEqual(calls, [['brew', 'install', '-q', 'rtk']], 'async seam invoked exactly once');
+  assert.equal(entry.state, 'installed');
+  assert.equal(entry.path, '/opt/homebrew/bin/rtk');
+});

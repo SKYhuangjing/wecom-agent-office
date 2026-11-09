@@ -498,6 +498,11 @@ export async function defaultRunTurn(bot, msg, ac) {
     if (result?.sessionId && !(result.aborted && sessionIdWasNull)) {
       if (sessionIdWasNull || result.sessionId !== sessionId) {
         cache.upsert(chatKey, provider, { sessionId: result.sessionId, bornCwd }, maxSeqAtBuild);
+      } else {
+        // 原生续会话（同 sessionId）不走 upsert——TTL 判据 lastAt 必须在这里
+        // 刷新，否则「距上轮」退化成「会话年龄」，活跃对话 45 分钟后被误退役
+        // （盲评 P1-1）。
+        cache.touch(chatKey, provider);
       }
     }
     // markDirty AFTER the upsert: upsert resets dirty on the entry it writes,
@@ -626,9 +631,12 @@ export async function defaultRunTurn(bot, msg, ac) {
         };
         const base = maskFn(result.finalText || EMPTY_DONE_TEXT);
         const finalize = async (text) => maskFn(await runOnOutbound(text, outCtx));
+        // 中间件（含记忆蒸馏）必须吃「全文」：标记协议约定在回复末尾，若先按
+        // 3500 字截断再蒸馏，长回复的标记会被截掉、沉淀静默丢失（盲评 P1-2）。
+        // 顺序 = 先蒸馏/掩码（finalize 全文）→ 再按通道上限截断展示。
         if (backgroundMode && pushable) await sendPush(await finalize(base));
-        else if (streaming) await sendProgress(await finalize(truncateTo(base, TRUNC_FINAL)), true);
-        else await sendReply(await finalize(truncateTo(base, TRUNC_FINAL)));
+        else if (streaming) await sendProgress(truncateTo(await finalize(base), TRUNC_FINAL), true);
+        else await sendReply(truncateTo(await finalize(base), TRUNC_FINAL));
         break;
       }
       case 'aborted': {

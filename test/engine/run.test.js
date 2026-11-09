@@ -1042,3 +1042,39 @@ test('turn flow: within TTL the session resumes natively (the resume we WANT to 
   assert.equal(h.runner.calls[1].sessionId, 's1', 'native resume inside the window');
   assert.equal(h.runner.calls[1].prompt, 'b');
 });
+
+
+// —— 盲评修复回归 ———————————————————————————————————————————————————————
+test('P1-1: native resume REFRESHES lastAt — TTL measures recency, not session age', async () => {
+  const h = makeHarness({ steps: [COMPLETE(), COMPLETE()] });
+  await h.send('第一条');
+  // 44 分钟前：窗口内 → 第二轮原生续会话；续会话不 upsert，必须 touch
+  h.cache._data[K].cache.codex.lastAt = Date.now() - 44 * 60_000;
+  await h.send('第二条');
+  assert.equal(h.runner.calls[1].sessionId, 's1', 'within TTL → native resume');
+  const refreshed = h.cache.get(K).cache.codex.lastAt;
+  assert.ok(Date.now() - refreshed < 5000, `lastAt refreshed on resume (recency), got age ${Date.now() - refreshed}ms`);
+  // 刷新后：再过 3 分钟也绝不该退役（活跃对话不被会话年龄误杀）
+  h.cache._data[K].cache.codex.lastAt = Date.now() - 44 * 60_000 - 1000; // 建会话后 45min 的老会话，但每轮都在 touch
+  await h.send('第三条');
+  assert.equal(h.runner.calls[2].sessionId, 's1', 'a chat ACTIVE every turn keeps resuming regardless of session age');
+});
+
+test('P1-2: middleware sees the FULL text; the channel frame gets the truncated version', async () => {
+  const seenByMiddleware = [];
+  const mw = {
+    maskOutbound: (t) => t,
+    onOutbound: async (text) => { seenByMiddleware.push(text.length); return text; },
+  };
+  // harness limit maxContentChars=100 — a 300-char base must be truncated for
+  // the channel but delivered WHOLE to the onOutbound chain (distill markers
+  // live at the tail; truncating first would silently eat them).
+  const long = [COMPLETE({ finalText: '长'.repeat(300) })];
+  const rec = fakeAdapter({});
+  const h = makeHarness({ steps: long, middleware: mw, adapter: rec });
+  await h.send('长回复');
+  assert.equal(seenByMiddleware.length, 1);
+  assert.equal(seenByMiddleware[0], 300, 'onOutbound received the untruncated text');
+  const finalFrame = rec.frames.filter((f) => f.method === 'progress' && f.finish).pop() || rec.frames[rec.frames.length - 1];
+  assert.ok(String(finalFrame?.text ?? '').length < 300 + 30, `the channel frame IS truncated (${String(finalFrame?.text ?? '').length})`);
+});

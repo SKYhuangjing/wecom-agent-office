@@ -28,7 +28,9 @@ export function extractMemoryUpdates(text) {
   }
   const entries = [];
   const keptLines = [];
-  for (const line of text.split('\n')) {
+  // CRLF-tolerant (盲评 Note)：按 \r?\n 切行，行内正则的 $ 语义才不吃尾随 \r。
+  const normalized = text.replace(/\r\n/g, '\n');
+  for (const line of normalized.split('\n')) {
     const m = MARKER_LINE_RE.exec(line);
     if (m == null) { keptLines.push(line); continue; }
     const payload = m[1].trim().slice(0, DISTILL_MAX_NOTE_CHARS);

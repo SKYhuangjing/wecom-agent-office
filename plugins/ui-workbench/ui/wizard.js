@@ -58,7 +58,12 @@ const errorLines = (message) => String(message ?? '').split('; ').filter((s) => 
 // 取消——默认≠强制。
 export const tokenSaverIds = (assetsList, providerId) => (assetsList ?? [])
   .filter((a) => a?.type === 'tool'
-    && (a?.content?.kind === 'ripgrep' || (a?.content?.kind === 'rtk' && providerId !== 'dsh')))
+    && (a?.content?.kind === 'ripgrep'
+      // rtk 预选只在「专属目录无忧」的引擎：claude（createBot 自动配
+      // claudeConfigDir）、pi（WAO 命名空间默认目录）。dsh 不支持 rtk；
+      // codex 无 codexHome 默认值，预选=创建页必现一条绑定失败（盲评 P1-4）
+      // ——codex 用户可手动勾选并自行配置 codexHome。
+      || (a?.content?.kind === 'rtk' && (providerId === 'claude' || providerId === 'pi'))))
   .map((a) => a.id);
 
 export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated, initialStep = 0 }) => {
