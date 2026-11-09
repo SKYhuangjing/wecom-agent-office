@@ -44,7 +44,18 @@ iex (New-Object Net.WebClient).DownloadString('<URL>')
 6. **登录时 PATH/cwd 陷阱（自启动的实现依据）**——注册表 Run 键触发时
    cwd=`C:\Windows\System32`、PATH 未必含 node。WAO 的自启动因此**在启用一刻
    生成 `%USERPROFILE%\wao\data\win-autostart.cmd`**，烘焙绝对 node.exe 路径与
-   `--data-dir`（默认 data 目录跟 cwd 走，见 §3）。
+   `--data-dir`（默认 data 目录跟 cwd 走，见 §3）。`dataDir` 即使是相对路径
+   （`--data-dir data`）也会在启用时被 `resolve` 成绝对路径再写入 cmd——登录时
+   cwd 漂移不会把数据写到 System32。
+7. **PS 5.1 `Invoke-WebRequest -Method Post` 偶发 `IndexOutOfRangeException`**——
+   装机脚本里向 `/api/*` POST 时遇到（GET 正常）。改用 `curl.exe`（Win10 1803+
+   自带）配 `Set-Content` 写 JSON 文件 + `--data-binary @file`，绕开 PowerShell
+   对 JSON 花括号/引号的转义陷阱。`reg query` 查不存在的值返回非零退出码，在
+   `$ErrorActionPreference='Stop'` 下会抛 `NativeCommandError`（这是"值不存在"
+   的正常表现，别当故障）。
+8. **远控剪贴板通道污染**——经 UU 远程等粘贴长命令时，剪贴板可能被别的进程
+   改写（实测混入过 Vite 日志、提单文本）。粘贴后**先截图核对再回车**；带 `/`
+   的 URL 用粘贴而非 `typeText`（后者会把 `/` 吃成 `?`）。
 
 ## 3. 开机自启动（win32 原生支持）
 
