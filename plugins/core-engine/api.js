@@ -11,7 +11,7 @@ import {
   bindingSummary, bindAsset, buildPlan, maskAsset, newAssetId, rematerializeBots,
   restoreMaskedContent, saveAssets, unbindAsset, validateAsset,
 } from './assets.js';
-import { DRAIN_REFUSAL_TEXT } from './engine.js';
+import { DRAIN_REFUSAL_TEXT, createUsageAccumulator } from './engine.js';
 
 const BODY_LIMIT_BYTES = 64 * 1024;
 const TEST_PROMPT = '回复：收到';
@@ -656,18 +656,23 @@ async function testBotOp(state, id, reqBody) {
     : barePlan;
   const runner = port.createRunner({ bot, providerConfig: bot.providerConfig, assets, log: state.log });
   let events = 0;
+  // usage 累计（P2-B）：与引擎轮同一方言归一器——岗前测试直接回 Token 读数，
+  // token 优化的前后对比不再等生产流量。
+  const usageAcc = createUsageAccumulator();
   const result = await runner.run({
     prompt,
     sessionId,
     signal: new AbortController().signal,
     timeoutMs: TEST_TIMEOUT_MS,
-    onEvent: () => { events++; },
+    onEvent: (ev) => { events++; usageAcc.observe(ev); },
   });
+  usageAcc.observeResult(result);
   const body = {
     code: result?.code ?? 'error',
     finalText: result?.finalText ?? '',
     sessionId: result?.sessionId ?? null,
     events,
+    usage: usageAcc.summary(),
   };
   // A failed probe answers "why?" inline (P2 review): machine-readable
   // reason/detail (stderrTail truncated — a full dump belongs in the log, not

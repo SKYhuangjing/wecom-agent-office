@@ -26,7 +26,7 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 // load — the FAKE_PROVIDER template bakes the absolute paths in.
 const sentinelRoot = mkdtempSync(join(tmpdir(), 'wao-plugin-sentinel-'));
 const SENTINEL = {};
-for (const name of ['fail', 'rm-fail', 'hang', 'err', 'bye', 'tmp2']) {
+for (const name of ['fail', 'rm-fail', 'hang', 'err', 'bye', 'tmp2', 'usage-probe']) {
   SENTINEL[name] = join(sentinelRoot, name);
   mkdirSync(SENTINEL[name]);
 }
@@ -115,6 +115,12 @@ export default {
               };
             }
             if (onEvent) onEvent({ type: 'text', text: '好的：' + prompt });
+            // usage-probe sentinel: emit ONE usage event (snake_case — exercises
+            // the accumulator's dialect normalization) so the test-endpoint
+            // usage assertion has real numbers without touching other flows.
+            if (bot.providerConfig?.cwd === ${S('usage-probe')} && onEvent) {
+              onEvent({ type: 'usage', usage: { input_tokens: 13811, output_tokens: 412 } });
+            }
             return { ok: true, code: 'completed', finalText: 'fake 完成：' + prompt, aborted: false, sessionId: sessionId || 'session-fake-' + bot.id, reason: null, detail: { exitCode: 0 } };
           },
           async readHistory() { return { turns: [], truncated: false, warnings: [] }; },
@@ -494,8 +500,22 @@ test('POST /api/bots/:id/test optional body.sessionId resumes that session; junk
   assert.equal((await post('/api/bots/b1/test', { sessionId: ['x'] })).status, 400);
 });
 
-test('POST /api/bots/:id/test optional body.prompt reaches the runner; junk 400; empty string → default', async () => {
-  // The fake runner RECORDS every prompt it received (globalThis log, same
+test('POST /api/bots/:id/test answers usage readout (P2-B): dialect-normalized, cumulative sources', async () => {
+  // The probe previously reported events count only — token optimizations had
+  // to wait for production traffic to measure. Now the response carries the
+  // same usage summary the engine's ledger row would get.
+  assert.equal((await post('/api/bots', { ...BOT_B1, id: 'usagebot', providerConfig: { cwd: SENTINEL['usage-probe'], mode: 'a' } })).status, 200);
+  const body = await (await post('/api/bots/usagebot/test', {})).json();
+  assert.equal(body.code, 'completed');
+  // fake runner emits ONE snake_case usage event → normalized camelCase summary
+  assert.deepEqual(body.usage, {
+    inputTokens: 13811, outputTokens: 412, cacheReadTokens: 0, totalTokens: 14223,
+  });
+  // cleanup: later tests assert the exact bots.json registry contents
+  assert.equal((await fetch(url('/api/bots/usagebot'), { method: 'DELETE' })).status, 200);
+});
+
+test('POST /api/bots/:id/test optional body.prompt reaches the runner; junk 400; empty string → default', async () => {  // The fake runner RECORDS every prompt it received (globalThis log, same
   // shape as the materialize/removeConfig recordings) — the assertion reads
   // the recording itself, not only the echoed finalText.
   const lastPrompt = async () => globalThis.__waoFakePrompts?.at(-1);
