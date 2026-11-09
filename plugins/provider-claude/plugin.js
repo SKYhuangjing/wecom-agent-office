@@ -127,7 +127,7 @@ export default {
         { key: 'permissionMode', label: '权限模式（--permission-mode）', type: 'enum', options: PERMISSION_MODES, default: 'default' },
         { key: 'allowedTools', label: '允许的工具（列表，逗号拼接传 --allowedTools）', type: 'list' },
         { key: 'env', label: '注入子进程的环境变量（值必须是字符串）', type: 'object' },
-        { key: 'prompt', label: '人设（多行，--append-system-prompt）', type: 'string' },
+        { key: 'prompt', label: '人设（多行，--append-system-prompt）', type: 'string', multiline: true, rows: 5 },
         // progressStyle/progressText (2026-11-06 拟人播报)：进度行风格与播报
         // 文案，core-engine 出站面消费（polite=企微只播报一句「思考中…请稍
         // 等」，不露思维链/工具内容；cot=旧 §6.1 详细汇报）。

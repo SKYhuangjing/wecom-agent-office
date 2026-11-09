@@ -100,11 +100,37 @@ export function SchemaFields({ WAO, schema, state, onChange, editingExisting }) 
             onChange: (e) => set(e.target.value),
           });
           break;
-        default: // string / untyped
-          control = h('input', {
-            type: 'text', className: 'wb-input', value,
+        case 'multiline':
+        case 'text':
+          control = h('textarea', {
+            className: 'wb-textarea',
+            rows: item.rows ?? 5,
+            style: { lineHeight: '1.5', fontFamily: 'inherit' },
+            value,
+            placeholder: item.placeholder ?? '输入人设或说明…',
             onChange: (e) => set(e.target.value),
           });
+          break;
+        default: { // string / untyped
+          const isMultiline = item.multiline === true
+            || item.rows != null
+            || key === 'prompt'
+            || /多行|人设/.test(label);
+          control = isMultiline
+            ? h('textarea', {
+                className: 'wb-textarea',
+                rows: item.rows ?? 5,
+                style: { lineHeight: '1.5', fontFamily: 'inherit' },
+                value,
+                placeholder: item.placeholder ?? (key === 'prompt' ? '输入该机器人的系统人设与业务指令…' : ''),
+                onChange: (e) => set(e.target.value),
+              })
+            : h('input', {
+                type: 'text', className: 'wb-input', value,
+                onChange: (e) => set(e.target.value),
+              });
+          break;
+        }
       }
       return h('div', { key, className: 'wb-field' }, labelEl, control,
         hint ?? (item.type === 'password' && editingExisting

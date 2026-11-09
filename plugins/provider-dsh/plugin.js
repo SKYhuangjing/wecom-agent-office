@@ -127,7 +127,7 @@ export default {
         { key: 'profile', label: 'dsh profile 名（默认 wecom-<botId>）', type: 'string' },
         { key: 'model', label: '模型 {provider, model, baseURL?, api?, apiKeyEnv?, apiKey?, contextWindow?, maxTokens?}', type: 'object' },
         { key: 'permission', label: '权限', type: 'enum', options: PERMS, default: 'workspace-write' },
-        { key: 'prompt', label: '人设（多行，写入 profile system-prompt personaPrefix）', type: 'string' },
+        { key: 'prompt', label: '人设（多行，写入 profile system-prompt personaPrefix）', type: 'string', multiline: true, rows: 5 },
         { key: 'writableDirs', label: '沙箱额外可写目录（绝对路径列表）', type: 'list' },
         { key: 'compaction', label: '自动压缩 {enabled?, thresholdRatio?, headroomTokens?, retainRatio?}', type: 'object' },
         // progressStyle/progressText (2026-11-06 拟人播报)：进度行风格与播报
