@@ -18,7 +18,7 @@ const TEST_PROMPT = '回复：收到';
 // 60s: the codex probe measured ~25s on the real gateway (M2 T4) — at 30s
 // that left only ~5s of margin, so a slow-gateway day tipped the probe into
 // timeout. No test pins this value (M2 终审 follow-up).
-const TEST_TIMEOUT_MS = 60_000;
+const TEST_TIMEOUT_MS = 120_000;
 
 const httpError = (status, message) => {
   const err = new Error(message);
