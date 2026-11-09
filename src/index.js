@@ -11,7 +11,7 @@ import net from 'node:net';
 import { execFile, execFileSync } from 'node:child_process';
 import { accessSync, chmodSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, networkInterfaces, hostname } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createLogger } from './kernel/log.js';
 import { atomicWrite, lockDataDir, readJson, writeJson } from './kernel/config.js';
@@ -42,20 +42,38 @@ const winRunValue = () => {
   return m ? m[1].trim() : null;
 };
 
+// 本机局域网地址自发现（纯函数，供状态面、AI 操作端点与日志 banner 呈现）：
+// 获取所有非 internal 的 IPv4 地址与本地主机名，方便跨机访问。
+export function getLanAddresses() {
+  const ips = [];
+  try {
+    const ifaces = networkInterfaces();
+    for (const name of Object.keys(ifaces)) {
+      for (const info of ifaces[name] ?? []) {
+        if (!info.internal && info.family === 'IPv4') ips.push(info.address);
+      }
+    }
+  } catch { /* best effort */ }
+  let hname = '';
+  try { hname = hostname(); } catch { /* best effort */ }
+  return { hostname: hname, lanIps: ips };
+}
+
 // win32 自启动启动器（纯函数，test/ops/autostart-win.test.js 锁内容）。登录时
 // Run 键的 cwd 是 System32、PATH 未必含 node——启用一刻把绝对路径全部烘焙进
 // cmd：cd 到仓库根、--data-dir 钉死数据目录、stdout/stderr 追加到数据目录日志
 //（boot 失败也留痕）。CRLF 是 cmd 解释器的行要求。
-export function buildWinAutostartCmd({ execPath, repoRoot: root, dataDir }) {
+export function buildWinAutostartCmd({ execPath, repoRoot: root, dataDir, lan = false }) {
   const q = (p) => `"${p}"`;
   // Windows 分隔符显式拼接：本函数可能在非 win32 上被调用（生成/测试），
   // path.join 在那里会产出正斜杠，混进 cmd 文件不伦不类。
   const w = (...p) => p.join('\\');
+  const lanFlag = lan ? ' --lan' : '';
   return [
     '@echo off',
     `cd /d ${q(root)}`,
     `if not exist ${q(w(dataDir, 'logs'))} mkdir ${q(w(dataDir, 'logs'))}`,
-    `${q(execPath)} ${q(w(root, 'src', 'index.js'))} start --data-dir ${q(dataDir)} >> ${q(w(dataDir, 'logs', 'autostart.log'))} 2>&1`,
+    `${q(execPath)} ${q(w(root, 'src', 'index.js'))} start --data-dir ${q(dataDir)}${lanFlag} >> ${q(w(dataDir, 'logs', 'autostart.log'))} 2>&1`,
     '',
   ].join('\r\n');
 }
@@ -136,7 +154,8 @@ export const sweepOrphanChildren = async ({ pid = process.pid, log, execFileFn =
 // `token` (P1 auth, DESIGN §13 预留接口): defaults to $WAO_TOKEN; a non-empty
 // value gates every non-public HTTP path behind Bearer/X-WAO-Token (see
 // kernel/http.js). Empty/unset = loopback no-auth, unchanged.
-export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, pluginsDirs, log, token } = {}) {
+export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, pluginsDirs, log, token, lan = false, allowedHosts = null } = {}) {
+  const isLanMode = lan === true || host === '0.0.0.0' || process.env.WAO_LAN === '1';
   const dir = dataDir ?? defaultDataDir();
   // data/ is owner-only (DESIGN §3/§13): bots.json/ledger/sessions carry
   // secrets and conversation content. Create the dir 0700, and tighten an
@@ -168,6 +187,8 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
   const http = createHttpShell({
     log: logger, webDir,
     auth: authToken !== '' ? { token: authToken } : null,
+    lan: isLanMode,
+    allowedHosts,
     // P2 /healthz enrichment: version always; bots summary when an 'engine'
     // service (core-engine) is live — read per probe so reloads stay current.
     healthExtra: () => {
@@ -194,6 +215,7 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
   // through the service container instead of a new ctx surface.
   services.register('ports', portRegistry);
   services.register('paths', { dataDir: dir });
+  services.register('network', { getLanAddresses, isLanMode, host, port });
 
   const startedAt = Date.now();
   const uptimeSec = () => Math.round((Date.now() - startedAt) / 1000);
@@ -290,7 +312,13 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
   http.register({
     prefix: '/api/state', owner: 'kernel', handler: (req, res) => {
       if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' }, { Allow: 'GET' });
-      json(res, 200, { ok: true, uptimeSec: uptimeSec(), pid: process.pid, dataDir: dir, plugins: pluginList(), uiPlugins: uiPlugins() });
+      const lanInfo = getLanAddresses();
+      json(res, 200, {
+        ok: true, uptimeSec: uptimeSec(), pid: process.pid, dataDir: dir,
+        port: http.port, host, lanMode: isLanMode,
+        lanIps: lanInfo.lanIps, hostname: lanInfo.hostname,
+        plugins: pluginList(), uiPlugins: uiPlugins(),
+      });
     },
   });
   // Page-plugin static hosting (DESIGN §9): /api/ui/<id>/<file> serves the
@@ -356,11 +384,12 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
     }
     if (process.platform === 'win32') {
       // Run 键两态：值在=已启用（指向启用时生成的 data/win-autostart.cmd），
-      // 值不在=未启用。只管登录拉起；KeepAlive/崩溃自愈语义仍属 NSSM（README §3.1）。
+      // 值不在=未启用。系统原生支持无需外部安装模板（installed: true）。
+      // 只管登录拉起；KeepAlive/崩溃自愈语义仍属 NSSM（README §3.1）。
       const val = winRunValue();
       if (val == null) {
-        return { supported: true, installed: false, enabled: false, mechanism: 'registry Run (user)',
-          detail: '未启用——POST enabled:true 随登录启动（仅登录拉起，无崩溃自愈）' };
+        return { supported: true, installed: true, enabled: false, mechanism: 'registry Run (user)',
+          detail: '未启用（随用户登录启动，仅登录拉起，无崩溃自愈）' };
       }
       return { supported: true, installed: true, enabled: true, mechanism: 'registry Run (user)', detail: val };
     }
@@ -396,7 +425,7 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
         const absDataDir = resolve(dir);
         const launcher = join(absDataDir, 'win-autostart.cmd');
         atomicWrite(launcher, buildWinAutostartCmd({
-          execPath: process.execPath, repoRoot, dataDir: absDataDir,
+          execPath: process.execPath, repoRoot, dataDir: absDataDir, lan: isLanMode,
         }));
         execFileSync('reg', ['add', WIN_RUN_KEY, '/v', AUTOSTART_LABEL, '/t', 'REG_SZ', '/d', launcher, '/f'], { stdio: 'ignore' });
       } else {
@@ -573,19 +602,23 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
 
 // --- CLI (thin on purpose: parse, delegate, exit) ---------------------------
 
-const USAGE = 'usage: wao [start [--port N] [--host H] [--data-dir DIR] | tui [--port N] [--host H] [--data-dir DIR] | doctor [--port N] [--host H] [--data-dir DIR] | version]';
+const USAGE = 'usage: wao [start [--port N] [--host H] [--data-dir DIR] [--lan] | tui [--port N] [--host H] [--data-dir DIR] | doctor [--port N] [--host H] [--data-dir DIR] [--lan] | version]';
 const pkgVersion = () => JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 // Strict parsing (reject beats silent correction): an unknown flag or a flag
 // without a value is a typo'd command line, not an invitation to guess.
 const parseFlags = (raw) => {
-  const known = new Set(['port', 'host', 'data-dir']);
+  const known = new Set(['port', 'host', 'data-dir', 'lan']);
   const flags = {};
   for (let i = 0; i < raw.length; i++) {
     const arg = raw[i];
     if (!arg.startsWith('--')) return { error: `unexpected argument: ${arg}` };
     const name = arg.slice(2);
     if (!known.has(name)) return { error: `unknown flag: ${arg}` };
+    if (name === 'lan') {
+      flags.lan = true;
+      continue;
+    }
     const value = raw[i + 1];
     if (value === undefined || value.startsWith('--')) return { error: `${arg} requires a value` };
     flags[name] = value;
@@ -604,16 +637,22 @@ const portOf = (flags, fallback) => {
 };
 
 const cmdStart = async (flags) => {
+  const isLan = flags.lan === true || flags.host === '0.0.0.0' || process.env.WAO_LAN === '1';
+  const defaultHost = isLan ? '0.0.0.0' : (process.env.WAO_HOST || '127.0.0.1');
+  const host = flags.host ?? defaultHost;
   const kernel = await createKernel({
     port: portOf(flags, 8792),
-    host: flags.host ?? '127.0.0.1',
+    host,
     dataDir: flags['data-dir'],
+    lan: isLan,
   });
   const st = kernel.status();
+  const lanInfo = getLanAddresses();
+  const lanNote = lanInfo.lanIps.length > 0 ? ` (LAN: ${lanInfo.lanIps.map((ip) => `http://${ip}:${st.port}`).join(', ')})` : '';
   // Through the logger (timestamped, level info, file+stderr): the boot banner
   // belongs in data/logs/wao.log like every other lifecycle fact, not on bare
   // stdout where the log tail would miss it.
-  kernel.log.info(`wao v${pkgVersion()} listening on http://${flags.host ?? '127.0.0.1'}:${st.port} (pid ${process.pid}, data ${st.dataDir})`);
+  kernel.log.info(`wao v${pkgVersion()} listening on http://${host}:${st.port}${lanNote} (pid ${process.pid}, data ${st.dataDir})`);
   // Graceful stop (§1): SIGINT/SIGTERM run the four-phase teardown, then exit.
   let signalled = false;
   const shutdown = () => {

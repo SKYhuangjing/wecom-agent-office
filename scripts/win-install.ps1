@@ -17,12 +17,14 @@
 #                                  (fallback when GitHub/nodejs.org are slow/blocked;
 #                                   serves node-v<NODE_VERSION>-win-x64.zip and magpie.exe)
 #   -Magpie       switch           also install magpie CLI + headless gateway (fresh, no credentials)
+#   -Lan          switch           bind 0.0.0.0 and admit private LAN IPs / hostname
 param(
   [string]$NodeVersion = '22.23.4',
   [string]$RepoZip = 'https://codeload.github.com/SKYhuangjing/wecom-agent-office/zip/refs/heads/main',
   [string]$InstallRoot = "$env:USERPROFILE\wao",
   [string]$Mirror = '',
-  [switch]$Magpie
+  [switch]$Magpie,
+  [switch]$Lan
 )
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -71,7 +73,8 @@ if ($missing.Count -gt 0) {
 
 Write-Output '=== [5/5] doctor + start detached ==='
 node .\src\index.js doctor
-Start-Process node -ArgumentList '.\src\index.js', 'start' -RedirectStandardOutput wao.out.log -RedirectStandardError wao.err.log -WindowStyle Hidden
+$startArgs = if ($Lan) { @('.\src\index.js', 'start', '--lan') } else { @('.\src\index.js', 'start') }
+Start-Process node -ArgumentList $startArgs -RedirectStandardOutput wao.out.log -RedirectStandardError wao.err.log -WindowStyle Hidden
 Start-Sleep -Seconds 5
 $hz = (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8792/healthz).Content
 Write-Output "HEALTHZ=$hz"

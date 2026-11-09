@@ -73,21 +73,25 @@ export const AiGuideAside = ({ WAO }) => {
     ? (status.sessions > 0 ? `${status.sessions} 个 AI 会话活跃` : '网关在线，等待 AI 连接')
     : '网关不可达';
 
+  const lanHint = status?.lanIps?.length > 0
+    ? `；跨电脑使用请点「接入指南」切换局域网 IP (${status.lanIps[0]})`
+    : '';
+
   return h('div', { className: 'side-ai' },
     h('div', { className: 'side-ai-head' },
       h(IconEl, { h, name: 'plug', size: 13 }),
       h('span', null, '用 AI 操作')),
     h('div', {
       className: `side-ai-status side-ai-${dot}`,
-      title: `${mcpUrl()}${error != null ? `\n探测原因：${apiErrText(error)}` : ''}`,
+      title: `${mcpUrl()}${lanHint}${error != null ? `\n探测原因：${apiErrText(error)}` : ''}`,
     }, h('span', { className: 'side-ai-dot' }), line),
     h('div', { className: 'side-ai-actions' },
       h('button', {
-        className: 'side-ai-btn', title: `复制 MCP 配置 JSON（${mcpUrl()}）`,
+        className: 'side-ai-btn', title: `复制当前 MCP 配置（${mcpUrl()}${lanHint}）`,
         onClick: () => void onCopy(),
       }, copied === 'ok' ? '✓ 已复制' : copied === 'fail' ? '复制失败' : '复制配置'),
       h('button', {
-        className: 'side-ai-btn', title: '设置 → AI 操作：三家 CLI 的完整接入配置',
+        className: 'side-ai-btn', title: '设置 → AI 操作：三家 CLI 配置、局域网 IP 切换与完整接入指南',
         onClick: () => goSettingsAi(),
       }, '接入指南')));
 };

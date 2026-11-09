@@ -78,9 +78,15 @@ export default {
           }
           return json(res, 200, { ok: true, filename: 'wao-company.md', content });
         }
+        const netSvc = ctx.services?.get('network');
+        const lanInfo = netSvc?.getLanAddresses?.() ?? { lanIps: [], hostname: '' };
         return json(res, 200, {
           ok: true,
           endpoint: '/mcp',
+          port: ctx.http?.port ?? 8792,
+          lanMode: netSvc?.isLanMode === true,
+          lanIps: lanInfo.lanIps,
+          hostname: lanInfo.hostname,
           sessions: sessionCount(),
           tools: listTools().map(({ name, description }) => ({
             name, description, dangerous: dangerousByName.get(name) === true,

@@ -9,6 +9,7 @@
 import { readFileSync } from 'node:fs';
 import { extname, resolve, sep } from 'node:path';
 import { createServer } from 'node:http';
+import { hostname } from 'node:os';
 
 const HEARTBEAT_MS = 15_000;
 // Kernel built-ins: shadowing them with a plugin handler would be a silent
@@ -68,12 +69,31 @@ export function sendFile(res, file) {
   res.end(data);
 }
 
-// Host-header whitelist (security audit P1-6): the shell is a loopback
+// Host-header whitelist (security audit P1-6): by default the shell is a loopback
 // service. A request whose Host names something else (DNS-rebinding probe,
-// cross-origin smuggling against a name the attacker controls) is refused
-// before any route, auth or static branch runs. '' (HTTP/1.0, no Host) and
-// the IPv6 bracket forms are the only spellings beyond 127.0.0.1/localhost.
-const ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '']);
+// cross-origin smuggling against an attacker-controlled name) is refused
+// before any route, auth or static branch runs.
+// In LAN mode (--lan or WAO_LAN=1 or host=0.0.0.0), private network IPs (RFC 1918,
+// RFC 3927 link-local, IPv6 ULA/link-local), .local mDNS names, and local hostname
+// are also admitted so co-workers and remote AI agents can reach the console safely.
+const ALLOWED_LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]', '::1', '']);
+
+export function isPrivateOrLocalIp(ip) {
+  if (typeof ip !== 'string') return false;
+  const clean = ip.replace(/^\[|\]$/g, '').trim().toLowerCase();
+  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(clean)) return true;
+  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(clean)) return true;
+  if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(clean)) return true;
+  const m172 = /^172\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(clean);
+  if (m172) {
+    const octet = Number(m172[1]);
+    if (octet >= 16 && octet <= 31) return true;
+  }
+  // IPv6 ULA (fc00::/7) or link-local (fe80::/10)
+  if (/^[fF][cCdDeE][0-9a-fA-F]{2}:/.test(clean)) return true;
+  return false;
+}
+
 const hostOf = (req) => String(req.headers?.host ?? '').toLowerCase().replace(/:\d+$/, '');
 
 // The one 404 shape every static miss answers with (kept next to sendFile so
@@ -114,11 +134,32 @@ const tokenOf = (req, url) => {
   return '';
 };
 
-export function createHttpShell({ log, webDir = null, auth = null, healthExtra = null } = {}) {
+export function createHttpShell({ log, webDir = null, auth = null, healthExtra = null, lan = false, allowedHosts = null } = {}) {
   const routes = new Map(); // prefix -> { handler, owner }
   const sse = new Set(); // live client records { res, close }; Set delete is idempotent
   const startedAt = Date.now(); // /healthz uptime base
   const authToken = typeof auth?.token === 'string' && auth.token !== '' ? auth.token : null;
+  const isLan = lan === true || process.env.WAO_LAN === '1';
+  const customAllowed = new Set(
+    (allowedHosts ?? [])
+      .concat((process.env.WAO_ALLOWED_HOSTS ?? '').split(/[,;]/))
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean)
+  );
+  let localHost = '';
+  try { localHost = hostname().toLowerCase(); } catch { /* ignore */ }
+
+  const isAllowedHost = (h) => {
+    if (ALLOWED_LOOPBACK.has(h)) return true;
+    if (customAllowed.has(h)) return true;
+    if (isLan) {
+      if (isPrivateOrLocalIp(h)) return true;
+      if (h.endsWith('.local')) return true;
+      if (localHost && h === localHost) return true;
+    }
+    return false;
+  };
+
   let server = null;
 
   const json = (res, code, obj, extra = {}) => {
@@ -154,7 +195,7 @@ export function createHttpShell({ log, webDir = null, auth = null, healthExtra =
     }
     // Host gate ahead of every branch (auth included — an unexpected Host
     // never learns whether a token would have worked).
-    if (!ALLOWED_HOSTS.has(hostOf(req))) {
+    if (!isAllowedHost(hostOf(req))) {
       return json(res, 403, { error: 'forbidden: unexpected Host header' });
     }
     const pathname = url.pathname;

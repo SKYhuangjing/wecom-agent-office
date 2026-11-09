@@ -391,3 +391,26 @@ test('Host whitelist: unexpected Host → 403; loopback hosts (with port) serve 
     }
   } finally { await t.close(); }
 });
+
+test('Host whitelist in LAN mode: admits private IPs and local hostname, still refuses evil domain', async () => {
+  const { log } = fakeLog();
+  const shell = createHttpShell({ log, lan: true });
+  shell.register({ prefix: '/api/ping', owner: 'test', handler: jsonHandler({ ok: 1 }) });
+  const srv = createServer(shell.handle);
+  await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve));
+  const port = srv.address().port;
+  try {
+    for (const lanHost of ['10.10.127.243', '10.0.0.1:8792', '192.168.1.9', '172.16.5.4', '169.254.1.2', 'box.local']) {
+      const raw = await rawReq(port, lanHost, '/api/ping');
+      assert.match(raw.split('\r\n')[0], /^HTTP\/1\.1 200 /, `LAN host ${lanHost} should pass in lan mode`);
+    }
+    // Public domains or rebind probes are STILL blocked in LAN mode
+    for (const evil of ['evil.com', '127.0.0.1.evil.com', 'attacker.org']) {
+      const raw = await rawReq(port, evil, '/api/ping');
+      assert.match(raw.split('\r\n')[0], /^HTTP\/1\.1 403 /, `evil host ${evil} must still be refused 403 in lan mode`);
+    }
+  } finally {
+    srv.closeAllConnections?.();
+    await new Promise((r) => srv.close(r));
+  }
+});

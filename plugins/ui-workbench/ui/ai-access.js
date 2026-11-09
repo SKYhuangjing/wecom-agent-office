@@ -13,8 +13,13 @@
 
 export const MCP_SERVER_ID = 'wao-company';
 
-// 同源拼端点绝对地址（harness/截图也无假——origin 就是当前服务）。
-export const mcpUrl = () => {
+// 同源拼端点绝对地址；提供 customBase 时支持生成局域网/自定义域名端点。
+export const mcpUrl = (customBase) => {
+  if (customBase) {
+    let base = String(customBase).trim();
+    if (!base.startsWith('http://') && !base.startsWith('https://')) base = `http://${base}`;
+    return base.replace(/\/+$/, '') + '/mcp';
+  }
   try { return `${location.origin}/mcp`; } catch { return 'http://127.0.0.1:8792/mcp'; }
 };
 

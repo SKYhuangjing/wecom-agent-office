@@ -18,6 +18,10 @@ curl.exe -s -o win-install.ps1 '<URL>'
 Set-ExecutionPolicy -Scope Process Bypass -Force; & .\win-install.ps1
 # 同时装 magpie 网关（全新空装，不带任何凭证）：
 #   ... -Magpie
+# 启用局域网模式（绑定 0.0.0.0 并允许私网 IP 访问，方便其他电脑通过 AI 操作此机器）：
+#   ... -Lan
+# 组合使用：
+#   .\win-install.ps1 -Magpie -Lan
 ```
 
 脚本幂等，产物：
@@ -60,6 +64,12 @@ Set-ExecutionPolicy -Scope Process Bypass -Force; & .\win-install.ps1
 8. **远控剪贴板通道污染**——经 UU 远程等粘贴长命令时，剪贴板可能被别的进程
    改写（实测混入过 Vite 日志、提单文本）。粘贴后**先截图核对再回车**；带 `/`
    的 URL 用粘贴而非 `typeText`（后者会把 `/` 吃成 `?`）。
+9. **跨设备 / 局域网访问（--lan 模式）**——默认仅监听 `127.0.0.1` 且严格拦截
+   非回环 Host 头（防 DNS-Rebinding）。从局域网其他电脑访问时必须以 `--lan`
+   （或环境变量 `WAO_LAN=1`）启动，绑定 `0.0.0.0` 并放行 RFC 1918 私网 IP
+   （10.x, 192.168.x, 172.16-31.x）与本机主机名；恶意公网域名依然被 403 阻断。
+   Web 控制台的「设置 → AI 操作」会自动探测本机局域网 IP 与主机名，支持一键切换
+   生成的 Claude / Codex / ZCode MCP 端点，免去手工查 IP / 域名的麻烦。
 
 ## 3. 开机自启动（win32 原生支持）
 

@@ -80,7 +80,24 @@ const AiSection = ({ WAO }) => {
   const [skillBusy, setSkillBusy] = useState(false);
   const [probe, setProbe] = useState(null); // { ok, note } | { ok: false, error }
   const [probeBusy, setProbeBusy] = useState(false);
-  const url = mcpUrl();
+  const port = status?.port ?? (typeof location !== 'undefined' ? location.port || '8792' : '8792');
+  const lanIps = Array.isArray(status?.lanIps) ? status.lanIps : [];
+  const hostname = status?.hostname ?? '';
+  const lanMode = status?.lanMode === true;
+  const [hostChoice, setHostChoice] = useState('origin');
+  const [customHost, setCustomHost] = useState('');
+
+  let effectiveOrigin = '';
+  if (hostChoice === 'origin') {
+    effectiveOrigin = typeof location !== 'undefined' ? location.origin : `http://127.0.0.1:${port}`;
+  } else if (hostChoice === 'custom') {
+    effectiveOrigin = customHost.trim() || `http://127.0.0.1:${port}`;
+  } else if (hostChoice === 'hostname' && hostname) {
+    effectiveOrigin = `http://${hostname}:${port}`;
+  } else {
+    effectiveOrigin = `http://${hostChoice}:${port}`;
+  }
+  const url = mcpUrl(effectiveOrigin);
   const tokened = mcpAuth();
 
   // skill 拉取（点按需、不轮询）：失败就地显示原因，不装作有数据。
@@ -113,6 +130,49 @@ const AiSection = ({ WAO }) => {
       '检测到本控制台已存有访问令牌：下方三家配置已自动附上 X-WAO-Token 头。')
       : h('p', { className: 'wb-hint', style: { margin: '0 0 12px' } },
         '服务设置了 WAO_TOKEN 时，配置会自动附上访问头（令牌以你在控制台输入过的为准）。'),
+
+    h('div', { className: 'wb-card', style: { padding: '12px 16px', margin: '0 0 16px' } },
+      h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 } },
+        h('span', { style: { fontSize: 13, fontWeight: 600 } }, '接入端点网络地址'),
+        h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' } },
+          h('button', {
+            className: `wb-btn ${hostChoice === 'origin' ? 'wb-btn-primary' : ''}`,
+            style: { padding: '3px 10px', fontSize: 12 },
+            onClick: () => setHostChoice('origin'),
+          }, `当前访问 (${typeof location !== 'undefined' ? (location.hostname || '127.0.0.1') : '127.0.0.1'})`),
+          lanIps.map((ip) => h('button', {
+            key: ip,
+            className: `wb-btn ${hostChoice === ip ? 'wb-btn-primary' : ''}`,
+            style: { padding: '3px 10px', fontSize: 12 },
+            title: '从局域网其他机器配置 AI Agent 时点此切换',
+            onClick: () => setHostChoice(ip),
+          }, `局域网 IP (${ip})`)),
+          hostname && hostname !== 'localhost' ? h('button', {
+            className: `wb-btn ${hostChoice === 'hostname' ? 'wb-btn-primary' : ''}`,
+            style: { padding: '3px 10px', fontSize: 12 },
+            onClick: () => setHostChoice('hostname'),
+          }, `主机名 (${hostname})`) : null,
+          h('button', {
+            className: `wb-btn ${hostChoice === 'custom' ? 'wb-btn-primary' : ''}`,
+            style: { padding: '3px 10px', fontSize: 12 },
+            onClick: () => setHostChoice('custom'),
+          }, '自定义…'),
+        )),
+      hostChoice === 'custom' ? h('div', { style: { marginTop: 8 } },
+        h('input', {
+          className: 'wb-input',
+          style: { width: '100%', maxWidth: 360, fontSize: 12 },
+          placeholder: `例如 10.10.127.243:${port} 或 my-domain.com:${port}`,
+          value: customHost,
+          onChange: (e) => setCustomHost(e.target.value),
+        })) : null,
+      !lanMode && typeof location !== 'undefined' && (location.hostname === '127.0.0.1' || location.hostname === 'localhost')
+        ? h('p', { className: 'wb-hint', style: { margin: '8px 0 0' } },
+            '💡 跨电脑使用 AI 操作此服务？当前服务仅监听在 127.0.0.1。请在启动时加 --lan（或环境变量 WAO_LAN=1）以开放局域网连接。')
+        : lanMode
+          ? h('p', { className: 'wb-hint', style: { margin: '8px 0 0', color: 'var(--ok, #16a34a)' } },
+              '✓ 局域网模式已开启（允许私网 IP 与主机名访问），从外部机器连接请选择上方的「局域网 IP」。')
+          : null),
 
     h(ConfigBox, {
       WAO, title: 'MCP 端点', code: url,
@@ -294,18 +354,19 @@ const SystemInfo = ({ WAO }) => {
         row('开机自启动',
           autostart == null ? h('span', { className: 'wb-hint' }, '读取中…')
           : autostart.error != null ? h('span', { className: 'wb-field-error' }, `读取失败：${autostart.error}`)
-          : !autostart.supported || !autostart.installed ? h('span', { className: 'wb-hint' }, autostart.detail)
-          : h('label', {
-              className: 'wb-switch',
-              title: autostart.enabled
-                ? '已开启：系统启动（用户登录）时自动运行 WAO——点击关闭。不影响当前运行，崩溃自愈不受此控'
-                : '已关闭：系统启动时不会自动运行——点击开启（当前运行不受影响）',
-            },
-            h('input', {
-              type: 'checkbox', checked: autostart.enabled === true, disabled: asBusy,
-              onChange: (e) => void toggleAutostart(e.target.checked),
-            }),
-            h('span', { className: 'wb-track' })),
+          : !autostart.supported || (!autostart.installed && autostart.mechanism !== 'registry Run (user)')
+            ? h('span', { className: 'wb-hint' }, autostart.detail)
+            : h('label', {
+                className: 'wb-switch',
+                title: autostart.enabled
+                  ? '已开启：系统启动（用户登录）时自动运行 WAO——点击关闭。不影响当前运行，崩溃自愈不受此控'
+                  : '已关闭：系统启动时不会自动运行——点击开启（当前运行不受影响）',
+              },
+              h('input', {
+                type: 'checkbox', checked: autostart.enabled === true, disabled: asBusy,
+                onChange: (e) => void toggleAutostart(e.target.checked),
+              }),
+              h('span', { className: 'wb-track' })),
           autostart?.mechanism ?? undefined),
         row('页面插件', uiPlugins.length > 0
           ? uiPlugins.map((p) => p?.id).filter(Boolean).join('、')

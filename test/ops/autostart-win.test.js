@@ -42,9 +42,6 @@ test('paths with spaces stay quoted', () => {
 });
 
 test('launcher receives an ABSOLUTE dataDir (setAutostart resolves relative cwd/data)', () => {
-  // buildWinAutostartCmd 是纯函数，调用方（setAutostart）负责 resolve(dir)——
-  // 这里锁住"传进来的就是绝对路径"这一契约：相对路径会把登录时 System32
-  // 当 cwd，data 目录漂移。Content check: no '\.' segments, drive-rooted.
   const cmd = buildWinAutostartCmd({
     execPath: 'C:\\tools\\node.exe',
     repoRoot: 'C:\\wao',
@@ -52,4 +49,9 @@ test('launcher receives an ABSOLUTE dataDir (setAutostart resolves relative cwd/
   });
   assert.ok(cmd.includes('start --data-dir "C:\\wao\\data"'), 'absolute --data-dir baked');
   assert.ok(!cmd.includes('--data-dir "data"'), 'never a bare relative data dir');
+});
+
+test('launcher preserves --lan flag when lan=true', () => {
+  const cmd = buildWinAutostartCmd({ ...CASE, lan: true });
+  assert.ok(cmd.includes('start --data-dir "C:\\Users\\1data\\wao\\data" --lan'), 'launcher retains --lan flag in cmd');
 });

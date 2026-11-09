@@ -383,6 +383,7 @@ export const FAKE_API = {
   '/healthz': { ok: true, version: '0.1.0' },
   '/api/state': {
     ok: true, uptimeSec: 93725, pid: 4242, dataDir: '/Users/sky/.local/share/wao',
+    port: 8792, host: '0.0.0.0', lanMode: true, lanIps: ['192.168.1.100'], hostname: 'office-node-1',
     plugins: FAKE_PLUGINS, uiPlugins: [{ id: 'ui-workbench' }, { id: 'ui-office3d' }],
   },
   // —— v2 AI 操作引导（/api/mcp · /api/mcp/skill，mcp-gateway 提供）————————
@@ -390,7 +391,7 @@ export const FAKE_API = {
   // 截图只要看清单形状，不必背全文）；sessions: 2 让引导卡/状态行展示
   // 「已连接」形态（未连接形态在 ?state=error 基线里以 stub 缺席自然出现）。
   '/api/mcp': {
-    ok: true, endpoint: '/mcp', sessions: 2,
+    ok: true, endpoint: '/mcp', port: 8792, lanMode: true, lanIps: ['192.168.1.100'], hostname: 'office-node-1', sessions: 2,
     tools: [
       { name: 'list_bots', description: '查看在线机器人清单：状态/进度/消息统计（只读）' },
       { name: 'get_bot', description: '按机器人 ID 查详情：配置摘要/工作目录/消息统计（只读）' },
