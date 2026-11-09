@@ -6,12 +6,16 @@
 
 ## 1. 一条命令安装（推荐）
 
-在有网可达的 Windows 上，任意 PowerShell 里跑（`iex` 免落盘；或下载后
-`powershell -ExecutionPolicy Bypass -File win-install.ps1`）：
+在有网可达的 Windows 上，任意 PowerShell 里跑（`Set-ExecutionPolicy -Scope Process
+Bypass -Force; & .\win-install.ps1` 最稳——PS 5.1 默认禁 `.ps1`，`iex` 对
+`(New-Object Net.WebClient).DownloadString(...)` 形态会 ParserError）：
 
 ```powershell
 # 把 <URL> 换成本仓库 scripts/win-install.ps1 的 raw 地址；内网慢可加 -Mirror http://<局域网镜像>:8899
-iex (New-Object Net.WebClient).DownloadString('<URL>')
+# PS 5.1：先下载、进程级 Bypass、再执行（iex 对方法调用链会 ParserError；
+# 脚本本体纯 ASCII + UTF-8 BOM，避免中文注释被按 GBK 解码导致 ParseException）
+curl.exe -s -o win-install.ps1 '<URL>'
+Set-ExecutionPolicy -Scope Process Bypass -Force; & .\win-install.ps1
 # 同时装 magpie 网关（全新空装，不带任何凭证）：
 #   ... -Magpie
 ```
@@ -91,3 +95,27 @@ iex (New-Object Net.WebClient).DownloadString('<URL>')
 - **provider CLI 未预装**：dsh/claude/codex/pi 需另装后才能建对应岗位 bot；
   doctor 对缺失只给提示级 `!`。
 - **IE 引擎残留的机器**：`Invoke-WebRequest` 记得带 `-UseBasicParsing`。
+
+
+## 6. 把已有 WAO/magpie 配置迁到新机器（不依赖任何一台"源 Mac"常在线）
+
+新机器**全新装机**默认源全在公网（nodejs.org / codeload.github.com / npmjs /
+GitHub releases），`-Mirror` 只是可选回退——不需要源机器在线。需要搬运的只有
+**私有数据**：企微 botId/secret、magpie 订阅登录态、资产/台账。规范做法：
+
+1. **WAO**：源机器打包 `data/bots.json`（含 secret）、`data/assets.json`、
+   `data/assets/<botId>/` 物化文件；目标机器落回 `wao/data/`，把 bot 的
+   `providerConfig.cwd` 改成目标机器路径。⚠️ 同一套企微凭证在两处同时启用会
+   **单连接互踢**——要么停用源机器 bot，要么换新凭证。
+2. **magpie**：用官方 `magpie backup --sign-ins <file>`（口令经 stdin 非交互喂入）
+   生成密封文件，自己保管/传输；目标 `magpie restore --no-sign-ins <file>` 只导
+   providers/settings。订阅登录态在 `logins.json` 里是**独立记录数组**，可以精确
+   只挑需要的几条覆盖 `%APPDATA%\magpie\logins.json`（比全量导入再删干净）。
+3. **provider CLI**：bot 走 magpie 网关时还要装对应 CLI（如 `npm.cmd i -g
+   @anthropic-ai/claude-code`）并落 `~/.claude/settings.json` 的
+   `ANTHROPIC_BASE_URL=http://127.0.0.1:3425` + `ANTHROPIC_AUTH_TOKEN`。
+4. 传输走 UU 文件传输/自带 U 盘等任意通道即可；脚本用 `$PSScriptRoot` 自定位，
+   三个文件放同一文件夹，落到哪个目录都能跑。
+
+**本次实践（2026-11-09）**：PC1 上 `main`/`bot2` 复制并启用，Mac 生产两 bot 按用户
+接受被互踢离线；magpie 只保留 `plugin:workbuddy` / `plugin:workbuddy-ai` 两条订阅。
