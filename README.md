@@ -158,6 +158,8 @@ curl -s localhost:8792/healthz          # 确认起来
 | 场景 | 手段 | 为什么 |
 |---|---|---|
 | **在线一键升级（多端通用）** | 打开 Web 控制台「设置 → 系统信息」，点「检查更新」→「一键升级」 | 跨平台平滑升级：自动比对 GitHub 远程最新 Commit，下载解压、保护 `data/` 目录不被改动、依赖变动自动 npm install、自适应对应平台（macOS launchd / Linux systemd / Windows 独立更新器）平滑重启服务并在就绪后无缝刷新页面 |
+| **工具装备一键安装（11-09）** | 「设置 → 系统信息 → 工具装备」：rtk / ripgrep / Git Bash（win）状态徽章 + 一键安装（钉版 SHA256 门禁、`WAO_DOWNLOAD_MIRROR` 镜像回退、装完一键「重启服务」刷新 PATH） | 把 11-09 PC1 上 40 分钟的人工装备（慢网截断/PATH/重启）变成三次点击；win 上 Git Bash 是 claude hook 的执行前提 |
+| **会话 TTL + 记忆蒸馏（11-09）** | bot `providerConfig.sessionTtlMin`（默认 45min，0=永不）控制 `--resume` 会话退役；绑 memory 资产的 bot 自动获得 FAQ 沉淀：回复末尾标记被中间件剥离并写回记忆，容量 LRU 守恒 | 实测闲聊一条从 76k（62k 纯历史重放）降到 ~16k；「沉淀成 F&Q 文档」从人设空话变成闭环机制（详见 docs/DESIGN-TOKEN-OPT.md） |
 | **代码升级（macOS launchd 命令行手动）** | `launchctl kickstart -k gui/$(id -u)/com.wecom-agent-office` | in-process reload 刷不掉 ESM 模块缓存：plugin.js 内部静态 import 的子模块（runner.js 等）reload 后仍是旧代码——已验。kickstart 走完整四阶段停机（在跑任务补终帧、孤儿扫尾）+ KeepAlive 自愈，是唯一可信的换代码路径 |
 | **代码升级（Linux systemd 命令行手动）** | `systemctl --user restart wao` | 同理进程重启使新模块代码生效 |
 | **配置级变化**（plugins.json 启用表、新插件目录、bot CRUD） | `POST /api/service/reload` 或对应 API | 四阶段热重载足够：重扫目录/重读启用表/重建 bot 运行时，进程不停、在跑消息有维护终帧 |

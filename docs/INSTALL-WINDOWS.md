@@ -37,6 +37,13 @@ Set-ExecutionPolicy -Scope Process Bypass -Force; & .\win-install.ps1
 装完自检：浏览器开 `http://127.0.0.1:8792`，或
 `Invoke-WebRequest http://127.0.0.1:8792/healthz` 应返回 `{"ok":true,...}`。
 
+**工具装备（省 token 三件套）**：设置 → 系统信息 →「工具装备」卡可一键安装
+rtk / ripgrep / Git Bash（钉版+SHA256 门禁，直连慢/被截断时设
+`WAO_DOWNLOAD_MIRROR=http://<局域网镜像>:8899` 回退；装完点「重启服务生效」）。
+Windows 上 **Git Bash 是 claude bot 的 hook 前置**——缺 bash 时 rtk 等
+PreToolUse hook 静默不生效、Bash 工具降级 cmd（11-09 实证）；`wao doctor`
+对三件缺失都会告警。
+
 ## 2. 坑位清单（脚本已处理，手工安装必读）
 
 1. **PowerShell 执行策略默认禁脚本**——`npm` 是 `npm.ps1` shim，直接调会报
@@ -95,6 +102,8 @@ Set-ExecutionPolicy -Scope Process Bypass -Force; & .\win-install.ps1
 | 自检 | `node .\src\index.js doctor`（win32 显示 autostart 状态行；dsh/claude/codex/pi CLI 缺失为提示级——建对应岗位 bot 前装 CLI） |
 | 停止 | 找 pid：`netstat -ano | findstr :8792` → `taskkill /PID <pid>`（SIGKILL 等价，孤儿扫尾由下次启动兜底）；优雅停止优先前台实例 Ctrl+C |
 | 升级（标准推荐） | 打开 Web 控制台「设置 → 系统信息」，点「检查更新」→「一键升级」（全自动下载解压、保护数据目录、平滑重启服务、页面自动刷新，零黑框） |
+| 工具装备 | 「设置 → 系统信息 → 工具装备」一键装 rtk/ripgrep/Git Bash；装完「重启服务」刷新 PATH |
+| 会话成本 | bot 的 `providerConfig.sessionTtlMin`（默认 45 分钟）控制会话退役——闲聊/隔夜消息不再付全量历史重放（实测一条"hi"从 76k 降到 ~16k） |
 | 升级（手动兜底） | 重下 codeload zip 覆盖 `wao\`（**必须保留 `data\`**），重启进程 |
 | 日志 | `data\logs\wao.log`（10MB×5 轮转）+ `wao.out.log`/`wao.err.log`（分离进程 stdout/stderr）+ `data\logs\updater.log`（在线升级日志） |
 

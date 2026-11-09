@@ -30,7 +30,7 @@ LAN 模式）——已手工补参，并落地代码修复（`planAutostartRefre
 
 ## 3. 产品化缺口（每个新用户都会遇到）
 
-### P1-A 工具装备一键供给
+### P1-A 工具装备一键供给（✅ 2026-11-09 已实施，0166dfc）
 
 现状痛点：rtk/rg 二进制缺失时绑定虽成功但 `unavailable`（指引装上即生效）——
 但「装上」这一步今天花了 40 分钟人工（GitHub 慢→截断 zip→LAN 镜像重下→PATH→
@@ -56,17 +56,17 @@ LAN 模式）——已手工补参，并落地代码修复（`planAutostartRefre
 - **重启服务刷新 PATH 的动作产品化**：安装完成后一键「重启服务」（复用
   updater 的重启通道，前端 healthz 轮询自动刷新——与一键升级同款 UX）
 
-### P1-B 省 token 装备包默认推荐
+### P1-B 省 token 装备包默认推荐（✅ 已实施：seed 按 kind 判重 / 向导默认勾选 / claude 新建自动 claudeConfigDir）
 
 - bot 创建向导（简版/完整版）加「省 token 装备包」勾选项（**默认勾选**）：
   绑 rtk + ripgrep 两资产；claude bot 顺带建议配专属 `claudeConfigDir`
 - 资产库预置这两条 operator 资产（首次启动 seed，而非依赖手工 MCP 创建）
 
-### P2-A 会话策略与记忆层（FAQ 沉淀的机制化）
+### P2-A 会话策略与记忆层（✅ 已实施：sessionTtlMin TTL 路由 + distill 中间件，00b9f61/03d082c）
 
 见 §4 设计。
 
-### P2-B 测试路径可观测
+### P2-B 测试路径可观测（✅ 已实施：test 轮响应含 usage，c8b76ff）
 
 `POST /api/bots/:id/test` 探针轮不落台账、不过 cost-tracker 中间件——优化
 前后对比只能等真实生产消息。建议：test 轮也走 `middleware.onOutbound`

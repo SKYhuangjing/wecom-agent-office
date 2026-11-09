@@ -2,7 +2,16 @@
 
 仓库版本史（Keep a Changelog 1.1 格式；各插件明细见 `plugins/*/CHANGELOG.md`）。
 
+
 ## [Unreleased]
+
+### Added — Token 优化全量落地（2026-11-09 深夜，c8b76ff..0166dfc，723/723）
+
+- **P2-B** 岗前测试轮回 usage 读数（方言归一累计器，优化验证不等生产流量）。
+- **P2-A** 会话 TTL 退役（`sessionTtlMin` 默认 45min，0=永不）+ 记忆蒸馏闭环（wao-memory 标记协议→中间件剥离→memory 资产 LRU 写回→自动重物化）。
+- **P1-B** rtk/ripgrep 工具资产 seed（kind 判重）+ 创建向导默认勾选「省 token 装备包」+ claude 新建自动专属 claudeConfigDir（网关 settings 预拷）。
+- **P1-A** 工具装备一键供给：设置页「工具装备」卡（rtk/ripgrep/Git Bash；SHA256 门禁+镜像回退+SFX/brew）+ `POST /api/service/restart`（updater `--restart-only`）+ doctor 前置告警（win 缺 bash=claude hook 静默失效）。
+- **fix** win-autostart 参数漂移：每次 start 用当前参数重写启动器（真机实例：先启用后开 `--lan`，重启丢 LAN）。
 
 ### Changed — 术语全量收口 + 安全默认（2026-11-09）
 
