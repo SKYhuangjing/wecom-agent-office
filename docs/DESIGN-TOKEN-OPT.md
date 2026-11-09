@@ -41,6 +41,9 @@ LAN 模式）——已手工补参，并落地代码修复（`planAutostartRefre
 - 一键安装：下载（GitHub releases 直连 + `WAO_DOWNLOAD_MIRROR` 回退，复用
   win-install.ps1 的 -Mirror 模式）→ 落 `%USERPROFILE%\tools\<name>\` →
   SHA256 校验 → 用户级 PATH（注册表，拒绝 setx 截断）→ 提示重启服务
+- **`WAO_DOWNLOAD_MIRROR` 同时覆盖一键升级的 codeload zip**（11-09 夜二次实测：
+  PC1 直连 GitHub 再度超时/静默截断，POST /api/service/update 的 zip 地址写死
+  服务端，慢网机器无回退路径——镜像变量应同时喂 updater 的 --zip-url）
 - 版本登记 `data/tools.json`（已装版本/来源/时间），doctor 漂移检查
 - **重启服务刷新 PATH 的动作产品化**：安装完成后一键「重启服务」（复用
   updater 的重启通道，前端 healthz 轮询自动刷新——与一键升级同款 UX）
