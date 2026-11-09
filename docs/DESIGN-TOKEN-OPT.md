@@ -18,7 +18,7 @@
 
 | 动作 | 实现 | 验证 |
 |---|---|---|
-| rtk hook 装备 | 资产 `rtk`(tool) 绑定 main；manifest `state:armed, mode:wao-hook`；`settings.json` 注入 `PreToolUse(Bash)→rtk hook claude` | 绑定回执+manifest+settings 三面核对；W3-T3 基线 -18%/轮 |
+| rtk hook 装备 | 资产 `rtk`(tool) 绑定 main；manifest `state:armed, mode:wao-hook`；`settings.json` 注入 `PreToolUse(Bash)→rtk hook claude` | **win32 实盘正向证明（11-09 夜）**：`rtk gain` 出账 `2 commands / saved 86 tok (84.3%)`；大输出命令（git status 等）节省按 W3-T3 基线 -18%/轮起步 |
 | ripgrep 检索指引 | 资产 `ripgrep`(tool, extraHints=fms 定制) 绑定 main；manifest `state:available 15.2.0` | 测试轮「亏舱费相关文件」1:33 完成，deadFreight 语义映射直定位 4 模块（对比此前 35 次盲扫） |
 | 人设精简+效率约定 | PATCH prompt：删无机制的「沉淀F&Q文档」空指令；加「闲聊直接答/检索从窄到宽命中即停/回复只给结论」 | 测试轮"hi" 6.1s，回复符合新人设 |
 | 会话树隔离 | 新增 `claudeConfigDir=C:\Users\1data\wao\data\claude-config\main`（settings/.claude.json 拷贝保留 magpie 网关路由） | 重定向后 `claude -p` 回 REDIRECT-OK；三个测试会话 .jsonl 全落新目录 |
@@ -35,6 +35,14 @@ LAN 模式）——已手工补参，并落地代码修复（`planAutostartRefre
 现状痛点：rtk/rg 二进制缺失时绑定虽成功但 `unavailable`（指引装上即生效）——
 但「装上」这一步今天花了 40 分钟人工（GitHub 慢→截断 zip→LAN 镜像重下→PATH→
 重启服务刷新进程环境）。每个 Windows/新机器用户都会撞同一堵墙。
+
+**win32 关键实证（11-09 夜排障链）**：rtk hook 绑定后一直不生效，逐层探针定位
+根因=**claude-code 在 win32 执行 PreToolUse hook 依赖 bash**；无 Git Bash 时 hook
+静默不跑、Bash 工具也降级成 cmd。装 Git for Windows（用户级 portable）+ PATH 后
+立即恢复：`echo $0`→`/usr/bin/bash`，`rtk gain` 开始记账。且 rtk 改写产物
+（`rtk git status`）本身也需要 git 在 PATH。⇒ **Windows 上 claude bot 的装备
+前置=git-bash + rg + rtk 三件套**，一键供给必须覆盖 git-bash，doctor 对其缺失
+应告警（当前只探 CLI 不探 bash）。
 
 设计要点（`GET/POST /api/service/tools` + 设置页「工具装备」卡）：
 - doctor/设置页聚合展示 rtk/rg 装备态（数据源=manifest.tools，已存在）
