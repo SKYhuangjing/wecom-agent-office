@@ -1078,3 +1078,24 @@ test('P1-2: middleware sees the FULL text; the channel frame gets the truncated 
   const finalFrame = rec.frames.filter((f) => f.method === 'progress' && f.finish).pop() || rec.frames[rec.frames.length - 1];
   assert.ok(String(finalFrame?.text ?? '').length < 300 + 30, `the channel frame IS truncated (${String(finalFrame?.text ?? '').length})`);
 });
+
+test('P1-2 regression: middleware TAIL appendage (cost-tracker 📊) survives the final truncation', async () => {
+  // 保尾截断：长回复经中间件追加尾注后，通道帧既要截断主体、也要让尾部追加物
+  // 活着（纯掐头会把 📊 行一起截掉——盲评 P1-2 回归）。
+  const FOOTER = '\n\n---\n📊 Token：输入 1 · 输出 2';
+  const mw = {
+    maskOutbound: (t) => t,
+    onOutbound: async (text) => text + FOOTER,
+  };
+  const rec = fakeAdapter({});
+  const h = makeHarness({
+    steps: [COMPLETE({ finalText: '内'.repeat(300) })],
+    middleware: mw, adapter: rec,
+  });
+  await h.send('长回复');
+  const finalFrame = rec.frames.filter((f) => f.method === 'progress' && f.finish).pop() || rec.frames[rec.frames.length - 1];
+  const out = String(finalFrame?.text ?? '');
+  assert.ok(out.includes('📊 Token：输入 1 · 输出 2'), `tail footer survived the cut: ...${out.slice(-80)}`);
+  assert.ok(out.length < 300 + FOOTER.length + 40, `and the body IS still truncated (${out.length})`);
+  assert.ok(out.includes('…'), 'the cut is visible to the reader');
+});

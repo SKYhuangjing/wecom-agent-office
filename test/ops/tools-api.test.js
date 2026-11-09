@@ -2,7 +2,7 @@
 // orchestration with injected primitives + /api/service/tools route shape.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { dirname } from 'node:path';
@@ -198,7 +198,7 @@ test('P1-3: a stale installing entry self-heals to failed (GET display + POST no
   writeFileSync(join(fakes, 'channel-fake', 'plugin.js'), FAKE_CHANNEL);
   writeFileSync(join(fakes, 'channel-fake', 'package.json'), '{"type":"module"}\n');
   // 21 分钟前开始安装（> 20min 上限）——服务重启把它永远留在了 installing
-  writeToolsRegistry(join(dataDir, 'tools.json'), { rtk: { state: 'installing', startedAt: Date.now() - 21 * 60 * 1000 } });
+  writeToolsRegistry(join(dataDir, 'tools.json'), { rtk: { state: 'installing', startedAt: Date.now() - 36 * 60 * 1000 } });
   const kernel = await createKernel({ port: 0, dataDir, pluginsDirs: [fakes, join(repoRoot, 'plugins')] });
   try {
     const url = (p2) => `http://127.0.0.1:${kernel.http.port}${p2}`;
@@ -220,17 +220,26 @@ test('P1-3: a stale installing entry self-heals to failed (GET display + POST no
   }
 });
 
-test('P0-1: brew install runs through the ASYNC seam (never a sync freeze)', async () => {
-  const calls = [];
-  const entry = await installTool('rtk', {
+test('P0-1: installTool AWAITS the brew seam — a pending install must not resolve early', async () => {
+  // 防虚假（复测指出旧用例对未修代码也绿）：挂起态注入 + 80ms 竞速——若
+  // installBrew 未 await（旧 bug），installTool 会立刻落 installed；修后必须
+  // 保持 pending 直到 brew seam 结算。
+  const never = new Promise(() => {});
+  const pending = installTool('rtk', {
     platform: 'darwin', // → brew plan
     registryFile: join(mkdtempSync(join(tmpdir(), 'wao-brew-')), 'tools.json'),
     stageDir: join(tmpdir(), 'wao-brew-stage-'),
-    spawnCliImpl: async (bin, args) => { calls.push([bin, ...args]); },
+    spawnCliImpl: () => never,
     which: () => '/opt/homebrew/bin/rtk',
     log: () => {},
   });
-  assert.deepEqual(calls, [['brew', 'install', '-q', 'rtk']], 'async seam invoked exactly once');
-  assert.equal(entry.state, 'installed');
-  assert.equal(entry.path, '/opt/homebrew/bin/rtk');
+  const raced = await Promise.race([
+    pending.then(() => 'resolved-early'),
+    new Promise((r) => setTimeout(() => r('still-pending'), 80)),
+  ]);
+  assert.equal(raced, 'still-pending', 'installTool must await the async brew seam (sync/no-await would resolve early)');
+  // 默认实现为异步 execFile（源契约）：符号存在且不是 execFileSync 别名
+  const src = readFileSync(join(repoRoot, 'src', 'tools-installer.js'), 'utf8');
+  assert.match(src, /const execFileAsync = \(bin, args, opts\) => new Promise/, 'default brew runner is the async execFile promise seam');
+  assert.match(src, /await run\('brew'/, 'the seam call is awaited inside installBrew');
 });

@@ -3,7 +3,7 @@
 // extract/flatten → PATH (PowerShell, user registry) → data/tools.json
 // registry. Every exec/spawn/fs primitive is injectable so the orchestration
 // is unit-testable without touching the network or the real PATH.
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import {
   cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync,
 } from 'node:fs';
@@ -131,14 +131,18 @@ export function appendUserPath(dirs) {
 }
 
 // brew install (darwin/linux) — Homebrew owns PATH; no manual PATH edits.
+// MUST stay awaited-async（盲评 P0-1 二次确认）：同步 execFileSync 会冻结整个
+// 事件循环（所有 bot/SSE/healthz）数分钟，连 POST 应答都出不去；installTool
+// 也必须 await 本函数，否则会在安装完成前就写 installed 状态。
+const execFileAsync = (bin, args, opts) => new Promise((resolve, reject) => {
+  execFile(bin, args, opts, (err) => (err ? reject(err) : resolve()));
+});
 async function installBrew(plan, { log, spawnCliImpl }) {
-  const run = spawnCliImpl ?? ((bin, args) => {
-    // default: inherit nothing, generous cap — brew can compile from source.
-    execFileSync(bin, args, { stdio: 'ignore', timeout: 900_000 });
-    return true;
-  });
+  const run = spawnCliImpl ?? ((bin, args) => execFileAsync(bin, args, {
+    stdio: 'ignore', timeout: 900_000, // generous cap — brew can compile from source
+  }));
   log?.(`brew install ${plan.formula}（可能需要数分钟）`);
-  run('brew', ['install', '-q', plan.formula]);
+  await run('brew', ['install', '-q', plan.formula]);
   return { installDir: null, pathEntries: [] };
 }
 

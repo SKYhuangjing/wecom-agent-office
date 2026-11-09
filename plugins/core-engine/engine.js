@@ -277,6 +277,15 @@ export async function defaultRunTurn(bot, msg, ac) {
     if (typeof text !== 'string' || text.length <= maxContentChars) return text ?? '';
     return text.slice(0, maxContentChars) + (marker ?? TRUNC_PROGRESS);
   };
+  // FINAL 帧专用「保尾截断」（盲评 P1-2 回归）：中间件输出约定挂在文本尾部
+  // （记忆蒸馏残留说明/cost-tracker 的 📊 尾行）——纯掐头会把尾注一起截掉。
+  // 头部保留主体、尾部保留 240 字（尾注+末句），中间以省略标记衔接。
+  const truncateFinalKeepingTail = (text, marker) => {
+    if (typeof text !== 'string' || text.length <= maxContentChars) return text ?? '';
+    const tailKeep = Math.min(240, Math.max(0, maxContentChars - 40));
+    const headKeep = Math.max(0, maxContentChars - tailKeep - 24);
+    return text.slice(0, headKeep) + (marker ?? TRUNC_FINAL) + '\n' + text.slice(-tailKeep);
+  };
   // Mask BEFORE truncating: a truncation-split secret would dodge the pattern.
   const outboundText = (text, marker = TRUNC_PROGRESS) => truncateTo(maskFn(text), marker);
 
@@ -631,12 +640,12 @@ export async function defaultRunTurn(bot, msg, ac) {
         };
         const base = maskFn(result.finalText || EMPTY_DONE_TEXT);
         const finalize = async (text) => maskFn(await runOnOutbound(text, outCtx));
-        // 中间件（含记忆蒸馏）必须吃「全文」：标记协议约定在回复末尾，若先按
-        // 3500 字截断再蒸馏，长回复的标记会被截掉、沉淀静默丢失（盲评 P1-2）。
-        // 顺序 = 先蒸馏/掩码（finalize 全文）→ 再按通道上限截断展示。
+        // 中间件契约（盲评 P1-2 及其回归修复）：中间件吃「全文」（蒸馏标记在
+        // 尾部，先截断=沉淀静默丢失）；随后 FINAL 帧用「保尾截断」——中间件的
+        // 尾部追加物（cost-tracker 的 📊 行）也要在通道帧里活着。
         if (backgroundMode && pushable) await sendPush(await finalize(base));
-        else if (streaming) await sendProgress(truncateTo(await finalize(base), TRUNC_FINAL), true);
-        else await sendReply(truncateTo(await finalize(base), TRUNC_FINAL));
+        else if (streaming) await sendProgress(truncateFinalKeepingTail(await finalize(base)), true);
+        else await sendReply(truncateFinalKeepingTail(await finalize(base)));
         break;
       }
       case 'aborted': {
