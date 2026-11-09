@@ -23,6 +23,9 @@ import * as loader from './kernel/loader.js';
 import { runTUI } from './tui.js';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// P1-A 工具装备一键供给（DESIGN-TOKEN-OPT）：纯规格 + 可注入执行器
+import { TOOL_SPECS, planInstall } from './tools-spec.js';
+import { installTool, probeTool, readToolsRegistry, writeToolsRegistry } from './tools-installer.js';
 const defaultDataDir = () => process.env.WAO_HOME || join(process.cwd(), 'data');
 
 // 开机自启动的键名/注册表键（createKernel 的 autostart API 与 doctor 共用）。
@@ -600,6 +603,94 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
       }
     },
   });
+  // —— P1-A 工具装备（DESIGN-TOKEN-OPT §P1-A）——————————————————————————————
+  // GET  = 装备态聚合（whichBin+--version 探测 + data/tools.json 登记态）
+  // POST = {id} 后台安装（下载镜像回退+SHA256 门禁+PATH 注册表追加）——
+  //        立即应答 installing，GET 轮询进度；装完提示重启服务刷 PATH。
+  // restart = 派生更新器 --restart-only（无下载无覆写，只杀旧进程+原参数拉起）。
+  const toolsRegistryFile = () => join(resolve(dir), 'tools.json');
+  http.register({
+    prefix: '/api/service/tools', owner: 'kernel', handler: (req, res) => {
+      if (req.method === 'GET') {
+        const reg = readToolsRegistry(toolsRegistryFile());
+        const tools = Object.values(TOOL_SPECS)
+          .filter((spec) => spec.platforms.includes(process.platform))
+          .map((spec) => {
+            const probe = probeTool(spec, whichBin);
+            const entry = reg[spec.id] ?? null;
+            return {
+              id: spec.id, label: spec.label, description: spec.description,
+              bin: spec.bin, version: spec.version,
+              state: entry?.state === 'installing' ? 'installing' : probe.state,
+              path: probe.path, detectedVersion: probe.version,
+              install: entry, // registry entry (installing/installed/failed + error)
+            };
+          });
+        return json(res, 200, { ok: true, platform: process.platform, tools });
+      }
+      if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' }, { Allow: 'GET, POST' });
+      return readServiceBody(req).then(async (body) => {
+        let parsed = {};
+        try { parsed = JSON.parse(body.toString('utf8') || '{}'); } catch { return json(res, 400, { ok: false, error: 'body 必须是 JSON' }); }
+        const id = parsed?.id;
+        const planCheck = planInstall(id, process.platform, { mirror: process.env.WAO_DOWNLOAD_MIRROR });
+        if (!planCheck.ok) return json(res, 400, { ok: false, error: planCheck.reason });
+        const regFile = toolsRegistryFile();
+        const reg = readToolsRegistry(regFile);
+        if (reg[id]?.state === 'installing') {
+          return json(res, 409, { ok: false, error: `${id} 正在安装中（${new Date(reg[id].startedAt ?? 0).toLocaleTimeString()} 开始）——稍候用 GET 查进度` });
+        }
+        reg[id] = { state: 'installing', startedAt: Date.now() };
+        writeToolsRegistry(regFile, reg);
+        // 后台安装：不占 HTTP 超时；状态机落 tools.json（installed/failed）
+        void installTool(id, {
+          registryFile: regFile,
+          stageDir: join(resolve(dir), '.tools-stage', id),
+          mirror: process.env.WAO_DOWNLOAD_MIRROR,
+          which: whichBin,
+          log: (m) => logger.info(`tools: ${id} ${m}`),
+        }).then((entry) => {
+          logger.info(`wao: tool ${id} installed → ${entry.path ?? 'PATH'}（重启服务后本进程生效）`);
+        }).catch((err) => {
+          const reg2 = readToolsRegistry(regFile);
+          reg2[id] = { state: 'failed', error: String(err?.message ?? err), failedAt: Date.now() };
+          writeToolsRegistry(regFile, reg2);
+          logger.warn?.(`wao: tool ${id} install FAILED: ${err?.message ?? err}`);
+        });
+        return json(res, 200, { ok: true, id, state: 'installing', restartRequired: true,
+          message: `${id} 后台安装中（下载→校验→解压→PATH）；完成后「重启服务」使当前进程生效` });
+      }).catch((err) => json(res, 500, { ok: false, error: err.message || String(err) }));
+    },
+  });
+  http.register({
+    prefix: '/api/service/restart', owner: 'kernel', handler: (req, res) => {
+      if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' }, { Allow: 'POST' });
+      try {
+        // 同款零风险重启通道：更新器只做「杀旧进程 + 原参数拉起 + 探活」，
+        // 无下载无覆写（--restart-only）。用于 PATH 刷新等需要新进程环境的变更。
+        const restartMode = detectRestartMode();
+        const updaterArgs = [
+          join(repoRoot, 'scripts', 'updater.js'),
+          '--restart-only',
+          '--parent-pid', String(process.pid),
+          '--target-dir', repoRoot,
+          '--data-dir', resolve(dir),
+          '--port', String(http.port),
+          '--host', host,
+          '--restart-mode', restartMode,
+        ];
+        if (isLanMode) updaterArgs.push('--lan');
+        const child = spawn(process.execPath, updaterArgs, { detached: true, stdio: 'ignore', cwd: repoRoot, env: process.env });
+        child.unref();
+        logger.info(`wao: restart delegated to detached updater (mode=${restartMode}), pid=${child.pid}`);
+        return json(res, 200, { ok: true, message: '服务重启中（十几秒），页面就绪后自动刷新', restartMode });
+      } catch (err) {
+        logger.error('wao: restart failed', err);
+        return json(res, 500, { ok: false, error: err.message || String(err) });
+      }
+    },
+  });
+
   // Plugin runtime enable/disable (DESIGN §8 kernel-native): body-less POST
   // flips the enable table in plugins.json (atomic read-modify-write, other
   // options preserved) and drives the four-phase reload — disable of a core
@@ -993,6 +1084,18 @@ const cmdDoctor = async (flags) => {
     const found = whichBin(cli);
     if (found != null) mark('✓', `cli ${cli}`, `present (${found})`);
     else mark('!', `cli ${cli}`, 'not found in PATH (informational — provider runs needing it will fail)');
+  }
+  // P1-A 工具装备（DESIGN-TOKEN-OPT）：rtk/rg 是工具资产的装备前提；win32 的
+  // bash 是 claude hook 执行前提（11-09 PC1 实证：缺 bash 时 hook 静默不跑、
+  // Bash 工具降级 cmd）。设置页「工具装备」卡可一键安装。
+  for (const spec of Object.values(TOOL_SPECS)) {
+    if (!spec.platforms.includes(process.platform)) continue;
+    const found = whichBin(spec.bin);
+    if (found != null) mark('✓', `tool ${spec.id}`, `present (${found})`);
+    else mark('!', `tool ${spec.id}`, `not found — 设置页「工具装备」一键安装（${spec.description}）`);
+  }
+  if (process.platform === 'win32' && whichBin('bash') == null) {
+    mark('!', 'tool bash (claude hooks)', 'win32 上 claude-code 经 bash 执行 PreToolUse hook——缺 bash 时 rtk 等 hook 静默不生效，Bash 工具降级 cmd（一键安装 git-bash）');
   }
 
   // Claim+release probe with the REAL lock: a live holder (second instance)

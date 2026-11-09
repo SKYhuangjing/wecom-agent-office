@@ -381,7 +381,15 @@ export const FAKE_API = {
   ])),
   // —— v2 设置页（系统信息 section）————————————————————————————————————
   '/healthz': { ok: true, version: '0.1.0' },
-  '/api/service/update': {
+  '/api/service/tools': (body) => (body === undefined ? {
+          ok: true, platform: 'darwin',
+          tools: [
+            { id: 'rtk', label: 'rtk', bin: 'rtk', version: '1.2.0', state: 'available', path: '/Users/demo/.local/bin/rtk', detectedVersion: 'rtk 1.1.0', description: 'Token 瘦身 hook：PreToolUse 拦截 Bash 命令输出过滤（实测单轮 -18%）', install: null },
+            { id: 'ripgrep', label: 'ripgrep', bin: 'rg', version: '15.2.0', state: 'missing', path: null, detectedVersion: null, description: '代码检索：rg 关键词定位（Bash/Grep 工具的底层引擎）', install: null },
+          ],
+        } : { ok: true, id: body?.id ?? 'ripgrep', state: 'installing', restartRequired: true, message: '后台安装中（下载→校验→解压→PATH）' }),
+        '/api/service/restart': (body) => ({ ok: true, message: '服务重启中（十几秒），页面就绪后自动刷新', restartMode: 'detached' }),
+        '/api/service/update': {
     ok: true,
     currentCommit: 'b1f39ba',
     currentVersion: '0.1.0',

@@ -286,6 +286,11 @@ const SystemInfo = ({ WAO }) => {
   const [checkBusy, setCheckBusy] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [updateMsg, setUpdateMsg] = useState(null);
+  // 工具装备（/api/service/tools，P1-A）：rtk/rg/git-bash 装备态 + 一键安装
+  const [tools, setTools] = useState(null);
+  const [toolsBusy, setToolsBusy] = useState(null); // id of the installing tool
+  const [toolsMsg, setToolsMsg] = useState(null);
+  const [restarting, setRestarting] = useState(false);
 
   const checkUpdate = async () => {
     if (checkBusy) return;
@@ -354,6 +359,71 @@ const SystemInfo = ({ WAO }) => {
       setAsBusy(false);
     }
   };
+
+  const installTool = async (id) => {
+    if (toolsBusy != null) return;
+    setToolsBusy(id);
+    setToolsMsg(null);
+    try {
+      const res = await api('/api/service/tools', { id });
+      setToolsMsg(res?.message || `${id} 安装中…`);
+      // 后台安装：轮询装备态直到 installing 消失（最多 15 分钟）
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts++;
+        try {
+          const t = await api('/api/service/tools');
+          setTools(t);
+          const row = (t?.tools ?? []).find((x) => x.id === id);
+          if (row?.install?.state === 'installed' || row?.install?.state === 'failed') {
+            clearInterval(poll);
+            setToolsBusy(null);
+            if (row.install.state === 'failed') setToolsMsg(`安装失败：${row.install.error ?? '详见服务日志'}`);
+          }
+        } catch { /* transient */ }
+        if (attempts > 300) { clearInterval(poll); setToolsBusy(null); setToolsMsg('安装仍在后台进行，稍后刷新查看。'); }
+      }, 3000);
+    } catch (err) {
+      setToolsMsg(`触发安装失败：${err?.message ?? String(err)}`);
+      setToolsBusy(null);
+    }
+  };
+
+  const restartService = async () => {
+    if (restarting) return;
+    if (!window.confirm('确认重启 WAO 服务？\n\n所有机器人将短暂离线十几秒，页面就绪后自动刷新（用于安装工具后刷新 PATH 等场景）。')) return;
+    setRestarting(true);
+    setToolsMsg('服务重启中…页面将在就绪后自动刷新。');
+    try {
+      await api('/api/service/restart', {});
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts++;
+        try {
+          const hz = await fetch('/healthz', { cache: 'no-store' });
+          if (hz.ok) {
+            clearInterval(poll);
+            setToolsMsg('✓ 服务已恢复，正在刷新控制台…');
+            setTimeout(() => { window.location.reload(); }, 1200);
+            return;
+          }
+        } catch { /* rebooting */ }
+        if (attempts > 40) {
+          clearInterval(poll);
+          setToolsMsg('等待服务重启超时，请确认服务已启动后手动刷新页面。');
+          setRestarting(false);
+        }
+      }, 1500);
+    } catch (err) {
+      setToolsMsg(`触发重启失败：${err?.message ?? String(err)}`);
+      setRestarting(false);
+    }
+  };
+
+  const refreshTools = async () => {
+    try { setTools(await api('/api/service/tools')); } catch { setTools({ error: '工具装备态不可用' }); }
+  };
+  useEffect(() => { void refreshTools(); }, []);
 
   const refresh = async () => {
     setError(null);
@@ -437,6 +507,37 @@ const SystemInfo = ({ WAO }) => {
               style: { marginTop: 4, padding: '6px 10px', fontSize: 12 },
             }, updateMsg) : null),
           '/healthz & GitHub main'),
+        row('工具装备',
+          tools == null ? h('span', { className: 'wb-hint' }, '读取中…')
+          : tools.error != null ? h('span', { className: 'wb-hint' }, tools.error)
+          : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+            ...(tools.tools ?? []).map((t) => h('div', {
+              key: t.id, style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
+            },
+              h('span', { className: 'wb-mono', style: { fontWeight: 600, minWidth: 64 } }, t.label),
+              t.state === 'available'
+                ? h('span', { className: 'wb-hint', style: { color: 'var(--ok, #16a34a)' } },
+                    `✓ 已装备${t.detectedVersion ? `（${t.detectedVersion}）` : ''}`)
+                : t.state === 'installing'
+                  ? h('span', { className: 'wb-hint', style: { color: 'var(--warn, #eab308)' } }, '⏳ 后台安装中…')
+                  : h('span', { className: 'wb-hint', style: { color: 'var(--warn, #eab308)' } },
+                      `✗ 未安装${t.install?.state === 'failed' ? `（上次失败：${(t.install.error ?? '').slice(0, 60)}）` : ''}`),
+              t.state === 'available' ? null : h('button', {
+                className: 'wb-btn wb-btn-sm',
+                disabled: toolsBusy != null || t.state === 'installing',
+                onClick: () => void installTool(t.id),
+                title: '下载→SHA256 校验→解压→用户 PATH（后台进行，慢网络可能需要数分钟）',
+              }, toolsBusy === t.id ? '安装中…' : '一键安装'),
+              h('span', { className: 'wb-hint', style: { fontSize: 12 } }, t.description),
+            )),
+            // 任一工具经安装器装上后，当前进程的 PATH 不含新目录——重启服务才生效
+            (tools.tools ?? []).some((t) => t.install?.state === 'installed') ? h('button', {
+              className: 'wb-btn wb-btn-primary wb-btn-sm',
+              disabled: restarting,
+              onClick: () => void restartService(),
+            }, restarting ? '重启中…' : '重启服务使装备生效') : null,
+            toolsMsg ? h('div', { className: 'wb-hint', style: { fontSize: 12, padding: '4px 0' } }, toolsMsg) : null),
+          'rtk/ripgrep/git-bash——省 token 与检索的装备前提；win 的 claude hook 依赖 bash'),
         row('运行时间', h('span', { className: 'wb-mono' }, uptime), '自服务启动起（实时走秒）'),
         row('进程', state?.pid != null ? h('span', { className: 'wb-mono' }, `pid ${state.pid}`) : '—'),
         row('数据目录', state?.dataDir != null

@@ -6,6 +6,8 @@
 //      serving — zero downtime during download), then kill parent, overlay, restart.
 //   B. --stage-dir mode: the stage is already prepared by the caller; wait for
 //      parent exit, overlay, restart.
+//   C. --restart-only mode (P1-A): NO download, NO overlay — kill the parent
+//      and restart it with its own args (PATH refreshes, config reloads).
 //
 // Steps (zip-url mode):
 // 1. Download the zip from --zip-url into data/.update-stage/ (no HTTP timeout
@@ -26,14 +28,14 @@ import {
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const parseArgs = (argv) => {
+export const parseArgs = (argv) => {
   const flags = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a.startsWith('--')) {
       const k = a.slice(2);
-      if (k === 'lan') {
-        flags.lan = true;
+      if (k === 'lan' || k === 'restart-only') {
+        flags[k] = true;
         continue;
       }
       flags[k] = argv[i + 1];
@@ -158,6 +160,7 @@ export function probeHealth(url, timeoutMs = 20000) {
 export async function runUpdater(argv = process.argv.slice(2)) {
   const flags = parseArgs(argv);
   const parentPid = Number(flags['parent-pid'] || 0);
+  const restartOnly = flags['restart-only'] === true;
   const stageDir = flags['stage-dir'] ? resolve(flags['stage-dir']) : null;
   const zipUrl = flags['zip-url'] || '';
   const targetDir = flags['target-dir'] ? resolve(flags['target-dir']) : null;
@@ -168,8 +171,8 @@ export async function runUpdater(argv = process.argv.slice(2)) {
   const lan = flags.lan === true;
   const restartMode = flags['restart-mode'] || 'auto';
 
-  if ((!stageDir && !zipUrl) || !targetDir || !dataDir) {
-    console.error('updater: missing required --stage-dir/--zip-url, --target-dir, or --data-dir');
+  if ((!restartOnly && !stageDir && !zipUrl) || !targetDir || !dataDir) {
+    console.error('updater: missing required --stage-dir/--zip-url/--restart-only, --target-dir, or --data-dir');
     process.exit(1);
   }
 
@@ -180,13 +183,15 @@ export async function runUpdater(argv = process.argv.slice(2)) {
     try { writeFileSync(logFile, line, { flag: 'a' }); } catch { /* ignore */ }
   };
 
-  log(`updater started: parentPid=${parentPid}, restartMode=${restartMode}, targetCommit=${targetCommit}, mode=${zipUrl ? 'zip-url' : 'stage-dir'}`);
+  log(`updater started: parentPid=${parentPid}, restartMode=${restartMode}, targetCommit=${targetCommit}, mode=${restartOnly ? 'restart-only' : zipUrl ? 'zip-url' : 'stage-dir'}`);
 
   try {
     // —— Phase 1: prepare the stage (parent keeps serving — zero downtime here) ——
 
     let src = stageDir;
-    if (zipUrl) {
+    if (restartOnly) {
+      src = null; // nothing to prepare
+    } else if (zipUrl) {
       const stage = join(dataDir, '.update-stage');
       mkdirSync(stage, { recursive: true });
       const zipPath = join(stage, 'wao-update.zip');
@@ -215,13 +220,18 @@ export async function runUpdater(argv = process.argv.slice(2)) {
 
     // —— Phase 3: overlay + deps + version ——
 
-    const oldPkg = join(targetDir, 'package.json');
-    const newPkg = join(src, 'package.json');
-    const shouldNpm = needNpmInstall(oldPkg, newPkg);
+    if (restartOnly) {
+      log('restart-only: skipping overlay/deps/version phases');
+    }
+    const oldPkg = restartOnly ? null : join(targetDir, 'package.json');
+    const newPkg = restartOnly ? null : join(src, 'package.json');
+    const shouldNpm = !restartOnly && needNpmInstall(oldPkg, newPkg);
 
-    log(`copying files from ${src} to ${targetDir} (data/ protected)...`);
-    copyOverlay(src, targetDir);
-    log('file overlay complete');
+    if (!restartOnly) {
+      log(`copying files from ${src} to ${targetDir} (data/ protected)...`);
+      copyOverlay(src, targetDir);
+      log('file overlay complete');
+    }
 
     if (shouldNpm) {
       log('package.json dependencies changed; running npm install --omit=dev...');
@@ -237,14 +247,16 @@ export async function runUpdater(argv = process.argv.slice(2)) {
       }
     }
 
-    const versionFile = join(dataDir, 'version.json');
-    let pkgVer = '0.1.0';
-    try { pkgVer = JSON.parse(readFileSync(join(targetDir, 'package.json'), 'utf8')).version; } catch { /* fallback */ }
-    try {
-      writeFileSync(versionFile, JSON.stringify({ version: pkgVer, commit: targetCommit, updatedAt: Date.now() }, null, 2));
-      log(`version.json updated: commit=${targetCommit}, version=${pkgVer}`);
-    } catch (err) {
-      log(`failed to write version.json: ${err.message}`);
+    if (!restartOnly) {
+      const versionFile = join(dataDir, 'version.json');
+      let pkgVer = '0.1.0';
+      try { pkgVer = JSON.parse(readFileSync(join(targetDir, 'package.json'), 'utf8')).version; } catch { /* fallback */ }
+      try {
+        writeFileSync(versionFile, JSON.stringify({ version: pkgVer, commit: targetCommit, updatedAt: Date.now() }, null, 2));
+        log(`version.json updated: commit=${targetCommit}, version=${pkgVer}`);
+      } catch (err) {
+        log(`failed to write version.json: ${err.message}`);
+      }
     }
 
     // Clean stage
