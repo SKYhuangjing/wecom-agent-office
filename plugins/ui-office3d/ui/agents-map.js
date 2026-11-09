@@ -8,7 +8,7 @@ const PROVIDER_BRAND = {
   codex: { name: 'Codex', color: '#14B8A6' },
 };
 
-export const STATUS_LABEL = { working: '工作中', idle: '待命', offline: '休假' };
+export const STATUS_LABEL = { working: '工作中', idle: '待命', offline: '离线' };
 export const STATUS_DOT = { working: '#3b82f6', idle: '#94a3b8', offline: '#ef4444' };
 
 export function seedOf(key) {
@@ -32,8 +32,8 @@ export function mapAgent(a) {
   const step = a.status === 'working'
     ? (a.progress?.line || '工作中…')
     : a.status === 'idle'
-      ? '待命 · 无进行中工单'
-      : (a.reason || '休假中');
+      ? '待命 · 暂无进行中对话'
+      : (a.reason || '已离线');
   return {
     key: a.id,
     agent: a.name || a.id,

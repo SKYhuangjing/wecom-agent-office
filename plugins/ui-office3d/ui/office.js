@@ -221,7 +221,11 @@ export default {
           }
           const a = byKey[an.key];
           const st = a?.status || 'offline';
-          el.innerHTML = `<i style="background:${STATUS_DOT[st] || '#a1a1aa'}"></i>${a?.name || an.key}`;
+          // 文本走 textContent（bot 名是用户数据，不进 innerHTML——防注入）
+          el.textContent = '';
+          const dot = document.createElement('i');
+          dot.style.background = STATUS_DOT[st] || '#a1a1aa';
+          el.append(dot, a?.name || an.key);
           el.style.left = `${an.x}px`;
           el.style.top = `${an.y}px`;
         }
@@ -395,7 +399,7 @@ export default {
         h('div', { className: 'of-otags', ref: tagsRef }),
         !ready && !bootErr ? h('div', { className: 'of-boot' }, '加载办公室引擎…') : null,
         bootErr ? h('div', { className: 'of-boot' }, `引擎加载失败：${bootErr}`) : null,
-        error != null ? h('div', { className: 'error of-err' }, `加载同事列表失败：${error}`) : null,
+        error != null ? h('div', { className: 'error of-err' }, `加载机器人列表失败：${error}`) : null,
         h('div', { className: 'of-hud' },
           h('div', { className: 'of-seg', role: 'tablist', 'aria-label': '视角' },
             ['2d', 'iso', '3d'].map((d) => h('button', {
@@ -420,16 +424,16 @@ export default {
               }, q === 'medium' ? 'Med' : q[0].toUpperCase() + q.slice(1))))
             : null,
           h('span', { className: 'of-grow' }),
-          h('span', { className: 'of-pill' }, '在岗 ', h('em', null, nWork)),
+          h('span', { className: 'of-pill' }, '工作中 ', h('em', null, nWork)),
           h('span', { className: 'of-pill' }, '待命 ', h('em', null, nIdle)),
-          h('span', { className: 'of-pill' }, '休假 ', h('em', null, nOff)),
+          h('span', { className: 'of-pill' }, '离线 ', h('em', null, nOff)),
         ),
         h('div', { className: 'of-hint' }, hintFor(dim)),
         (agents ?? []).length === 0 && error == null
           ? h('div', { className: 'of-empty' },
             h('div', { className: 'card' },
-              h('p', null, '空的办公室——第一位同事入职后就会搬进来'),
-              h('p', { className: 'muted' }, '去「机器人」页办理入职，它将出现在工位上')))
+              h('p', null, '空的办公室——第一台机器人创建后就会搬进来'),
+              h('p', { className: 'muted' }, '去「机器人」页创建，它将出现在工位上')))
           : null,
         selAgent ? (() => {
           const off = isOff(selAgent);
@@ -445,19 +449,19 @@ export default {
               h('button', { className: 'close', type: 'button', onClick: () => setSel(null) }, '✕')),
             selAgent.progress?.line
               ? h('div', { className: 'line' }, selAgent.progress.line)
-              : h('div', { className: 'sub' }, off && selAgent.reason ? `离岗原因：${selAgent.reason}` : '手上暂无进行中的工单'),
+              : h('div', { className: 'sub' }, off && selAgent.reason ? `离线原因：${selAgent.reason}` : '暂无进行中的对话'),
             selAgent.progress?.startedAt
               ? h('div', { className: 'sub' }, '⏱ 已进行 ' + elapsed(Date.now() - selAgent.progress.startedAt))
               : null,
             h('div', { className: 'sub' },
-              `今日工单 ${selAgent.todayTurns ?? 0} · 服务同事 ${selAgent.users ?? 0} · 档案 ${selAgent.chats ?? 0}`),
+              `今日消息 ${selAgent.todayTurns ?? 0} · 服务用户 ${selAgent.users ?? 0} · 会话 ${selAgent.chats ?? 0}`),
             h('div', { className: 'sub' }, `${pv.name} · ${selAgent.id}`));
         })() : null,
       ),
       h('aside', { className: 'of-side' },
-        h('h2', null, '花名册'),
+        h('h2', null, '机器人列表'),
         mapped.length === 0
-          ? h('p', { style: { color: '#a1a1aa', fontSize: '13px' } }, '暂无同事')
+          ? h('p', { style: { color: '#a1a1aa', fontSize: '13px' } }, '暂无机器人')
           : mapped.map((m) => {
             const st = m.wao.status;
             return h('button', {
