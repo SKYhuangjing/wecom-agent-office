@@ -79,6 +79,10 @@
     <dict>
         <key>PATH</key>
         <string>NODE_DIR:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <!-- 生产建议：API/MCP 访问令牌（非空即启用鉴权，doctor 会实测生效性；不用就删这两行）。
+             设置后 AI CLI 的 MCP 配置需带 Authorization Bearer 或 X-WAO-Token 头（README §3.2）。 -->
+        <key>WAO_TOKEN</key>
+        <string>CHANGE_ME_OR_DELETE</string>
     </dict>
 
     <!-- launchd 侧输出（与 data/logs/wao.log 互补；目录需预先存在：

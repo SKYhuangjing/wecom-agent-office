@@ -32,7 +32,7 @@
 ## 2. 现在去哪里看它
 
 - **Web UI**：http://127.0.0.1:8792 （页头打卡钟=在岗/工单；办公室=公司现场；人事部=入职/离职）
-- **公司话↔技术词对照表**：README §4.2（19 行；UI 主层公司话、详情层技术词，运维不歧义）
+- **标准术语↔技术词对照表**：README §4.2（UI 主层标准术语、详情层技术词；2026-11-08 由公司隐喻还原，2026-11-09 MCP 工具面同步）
 - **自检**：`curl 127.0.0.1:8792/healthz` ｜ `/api/agents`（status: working/idle/offline）
 
 ## 3. 日常运维（无人值守）
@@ -44,7 +44,7 @@
 | 插件启停（=部门开张/歇业） | UI 后勤部门页 或 `POST /api/plugins/:id/enable\|disable`（四阶段 reload；引用它的 bot 立即离线并给原因） |
 | 插件开发 | `plugins/_template/` 三脚手架 + [PLUGIN-DEV.md](docs/PLUGIN-DEV.md) + 契约套件 `npm run contract -- --plugin <dir>`（profiles 控 skip、插件侧无逃逸） |
 | UI 改动 | 红线：`bash test/ui-shot.sh` 截图验证再交付（页面插件=无构建 ES Module、禁 JSX/bare import、React 走 window.WAO；shell/sdk 改后 `node web/build.mjs` 提交 dist） |
-| 全量测试 | `npm test`（414）｜契约 ×4 各 11｜`npm run test:matrix`（真 CLI 四家切换矩阵，pi 腿 9 轮）｜`bash test/accept-m1.sh` / `accept-m2.sh`（真 CLI 验收）｜`bash test/probe.sh --check`（CLI 事件形状漂移检测，四家） |
+| 全量测试 | `npm test`（666，2026-11-09 实测）｜契约 ×5 各 11（含 cursor）｜`npm run test:matrix`（真 CLI 四家切换矩阵，pi 腿 9 轮）｜`bash test/accept-m1.sh` / `accept-m2.sh`（真 CLI 验收）｜`bash test/probe.sh --check`（CLI 事件形状漂移检测，四家） |
 
 ## 4. 高频操作（公司话速查）
 
@@ -66,7 +66,7 @@
 
 ## 6. 质量与验证现状（证据锚点）
 
-- 测试 **417/417**（含 pi-runner 14 项 + pi-history 8 项）；契约套件 dsh/claude/codex/pi **11/11×4 零跳过**；切换矩阵引擎级 7/7（真 CLI，pi 腿 S2-pi/S1-pi 全绿）+ API 冒烟含 pi 腿两轮 PASS（矩阵 run2 全绿；run3 codex 腿因网关慢撞 60s 帽，见 §7）；探针基线四家（`test/probe-baselines/pi*.ndjson`：resume 三腿同 id 回显+记忆延续、history roundtrip 2 turns 0 warnings）；UI 基线 22 张（`test/ui-shots/`，工作流脚本带 ≥5KB 门禁）
+- 测试 **666/666**（2026-11-09 实测）；契约套件 dsh/claude/codex/pi/cursor **11/11×5 零跳过**；切换矩阵引擎级 7/7（真 CLI，pi 腿 S2-pi/S1-pi 全绿）+ API 冒烟含 pi 腿两轮 PASS（矩阵 run2 全绿；run3 codex 腿因网关慢撞 60s 帽，见 §7）；探针基线四家（`test/probe-baselines/pi*.ndjson`：resume 三腿同 id 回显+记忆延续、history roundtrip 2 turns 0 warnings）；UI 基线 33 张（2026-11-09 术语迁移后重截）（`test/ui-shots/`，工作流脚本带 ≥5KB 门禁）
 - **零上下文盲评（pi 专项，11-07）**：首轮报 P0 一个（UI 路径建 pi bot 岗前测试 5/5 失败——`PI_CODING_AGENT_DIR` 只在显式 piAgentDir 时注入，UI 建的 bot 看不到物化的 models.json）+ P1×2/P2×7；**P0 已修**（三层：①runner 恒注入 $PI_CODING_AGENT_DIR——显式 piAgentDir 优先、per-bot 兜底与 models.js 同源公式（根因：UI 建的 bot 看不到物化 models.json）②exit 1 启动失败时 stderr 首行上浮进 errorText ③网关 404 形状（exit 0/无 retry/无 stderr）捕获 message_end.errorMessage——失败诊断从裸「failed」变为真实原因，单测 2 项钉住）+ pi 特有 P2 修复（岗位人设/下拉标签/帮助行/主题色），**原路径复测 PASS**（两轮岗前测试 completed、原生档案可凭 sessionId 调阅、岗位文案/下拉/帮助行核对项全过）；**终验 PASS**（故意错配模型 → 失败文案含 404+magpie knows no model+可用模型列表，可自救；遗留 P2：报错为英文原始 JSON 建议中文化+折叠）。P1×2 为跨 provider 既有 UI 问题，超出本任务范围，见 §7
 - 四场零上下文盲评全 PASS（M1 12 条 / M2 / M3 UI 52 截图 / 终评复验），P0/P1 累计为零
 - 里程碑终审：M1 SHIP / M2 SHIP / M3 SHIP / 全程终评 ISSUES-FOUND→已清零（ack 帧级键控真 bug、归档命名、CHANGELOG、ledger 补记）
@@ -93,7 +93,7 @@
 | .superpowers/sdd/×3 | 三里程碑 SDD 台账（全部裁定/遗留/盲评记录） |
 | HANDOFF.md.archive-m1m3 | 本稿之前的逐里程碑追加式旧稿（历史细节查这里） |
 
-**接手者必须知道的裁定**：①升级=kickstart 进程重启（非 reload）②内核 849 行>800 预算=如实申报不重构 ③台账 consumedSeq 四规约是切换正确性支柱（改前先读 DESIGN §7+反例测试）④四 provider runner 是复制即契约（改一家跑四家契约套件）⑤UI 双层语言（公司话主层/技术词详情层）是文案纪律。
+**接手者必须知道的裁定**：①升级=kickstart 进程重启（非 reload）②内核 849→1164 行（2026-11-09）>800 预算=如实申报不重构 ③台账 consumedSeq 四规约是切换正确性支柱（改前先读 DESIGN §7+反例测试）④四 provider runner 是复制即契约（改一家跑四家契约套件）⑤UI 双层语言：2026-11-08 起**标准术语主层**/技术词详情层（词表=README §4.2；11-06「公司话主层」裁定作废；2026-11-09 MCP 12 工具同步改名，server 名 `wao-company` 保留）。
 
 ## 9. 里程碑史
 
@@ -102,6 +102,8 @@
 | 11-05~06 | 设计 v1→v3（四路架构评审吸收）→ M1 内核+插件体系+dsh（d04ffd8）→ M2 三 provider+切换矩阵（bafd72d）→ M3 Web UI+运维+生产切换（ca9a9b6）→ 收口波（259bac2） |
 | 11-06 | 全程终评+收口 → **公司隐喻全站重设计**（4651eb6..149816f：入职向导/离职面谈/打卡钟/软插画办公室/头像即化身） |
 | 11-07 | **provider-pi 第四技能部门**：pi CLI 1.5.0 接入（`-p --mode json`+`--session` 续接；magpie 网关 models.json 物化，`$ENV` 凭证引用无密钥落盘）→ 契约 11/11×4、探针基线 pi×3、切换矩阵扩 pi（9 轮）、单测 +19、launchd PATH 已覆盖（pi 在 nvm bin） |
+| 11-08 | v2：导航收敛三页 + UI 标准术语还原（词表=README §4.2；取代 11-06 公司隐喻话术） |
+| 11-09 | 术语全量收口：MCP 12 工具改名（list_employees→list_bots 等，server 名 wao-company 保留）+ office3d 迁移 + skill/盲评清单重写 + 33 张基线重截；office3d 工牌 innerHTML XSS 修复；WAO_TOKEN 生产启用（CUTOVER 检查项 #8）；文档对齐实测（666 用例/契约×5/内核 1164 行）；根目录过程产物归档 + 最小 CI |
 
 ---
 

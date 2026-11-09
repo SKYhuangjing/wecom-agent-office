@@ -3,8 +3,9 @@
 > 前身：`wecom-bridge`（单 bot 数据面）+ `wecom-bots`（管理面板）。本仓库是重写：
 > **微内核 + 插件体系**，一切业务（引擎/企微通道/Agent provider/UI）皆插件。
 > M1 交付内核 + core-engine + channel-wecom + provider-dsh；M2 交付 provider-claude/codex
-> （三家切换矩阵全绿）；M3 交付 Web UI；v2（2026-11-08）导航收敛为 总览/机器人/设置 三页（30 张截图基线）+
+> （四家切换矩阵全绿）；M3 交付 Web UI；v2（2026-11-08）导航收敛为 总览/机器人/设置 三页（33 张截图基线，2026-11-09 重截）+
 > 无人值守运维（launchd）。**生产切换 runbook：`docs/CUTOVER.md`**。
+> 事实截至 2026-11-09：数字类事实（用例/截图/行数）以 `npm test`、`test/ui-shots/`、`wc -l src/kernel/*.js` 实跑为准；运行状态以 `curl /api/agents` 与 HANDOFF §5 为准。
 
 ---
 
@@ -13,7 +14,7 @@
 ```
 终端: node src/index.js start            (127.0.0.1:8792, 独占 data/ 目录锁)
 ┌────────────────────────────────────────────────────────────────┐
-│ src/kernel/  微内核(零业务, ≤800行预算): 装载/服务容器/事件总线/  │
+│ src/kernel/  微内核(零业务, 当前 1164 行——超 800 行预算, HANDOFF 裁定②如实申报不重构): 装载/服务容器/事件总线/  │
 │              生命周期(四阶段 reload)/HTTP 壳/配置·锁·原子写      │
 ├────────────────────────────────────────────────────────────────┤
 │ plugins/     一切业务皆插件 (plugins.json 可禁用, 热重载)        │
@@ -60,6 +61,10 @@ node src/index.js doctor    # 自检: node≥22.15(node:zlib zstd)/插件扫描/
 node src/index.js start     # 前台常驻; --port N --host H --data-dir DIR
 node src/index.js version   # → 0.1.0   (拼错命令会被拒绝, 不会猜)
 ```
+
+**Windows（无 git/无管理员也行）**：`scripts/win-install.ps1` 一条命令装齐（Node zip 版
++ 仓库 + 依赖 + 分离进程启动，坑位全兜住）——用法与坑位清单见
+[docs/INSTALL-WINDOWS.md](docs/INSTALL-WINDOWS.md)。
 
 **企微凭证获取**（第一次接入必读）：在**企微管理后台 → 应用管理 → 智能机器人**中创建
 **API 模式**机器人，获取 **Bot ID** 和 **Secret**——这两个值填进 bot 记录的
@@ -194,7 +199,11 @@ curl -s localhost:8792/healthz      # 确认起来
 配置级变化仍用 `POST /api/service/reload`。日志：`data/logs/wao.log` + `journalctl --user -u wao -n 50`
 （进程崩溃类）。无人值守巡检同 macOS 命令表，`launchctl` 行换成 `systemctl --user is-active wao`。
 
-**Windows（NSSM / 任务计划程序）** — 无原生服务管理器模板，二选一：
+**Windows（注册表 Run 键原生自启动 + NSSM 可选）** — 「开机自启动」设置开关在
+win32 已原生支持（`/api/service/autostart` 同源）：用户级注册表 Run 键 → 启用时生成的
+`data\win-autostart.cmd`（烘焙绝对路径，规避登录时 System32 cwd 与 PATH 陷阱；详见
+[docs/INSTALL-WINDOWS.md](docs/INSTALL-WINDOWS.md) §3）。Run 键只管登录拉起、无崩溃自愈，
+需要 KeepAlive 等价物时二选一：
 
 - **NSSM（推荐，有 KeepAlive 等价物）**：`nssm install WAO "C:\Program Files\nodejs\node.exe" "<仓库>\src\index.js start --port 8792 --data-dir <数据目录>"`
   再 `nssm set WAO AppDirectory <仓库>`、`nssm start WAO`（崩溃自拉活=Restart=always 等价）。
@@ -204,8 +213,8 @@ curl -s localhost:8792/healthz      # 确认起来
 
 注意（Windows 已知边界）：provider CLI 是 npm `.cmd` shim，wao 已按 cmd.exe 路径 spawn（CVE-2024-27980
 背景，见 `src/kernel/spawn.js`）；但 claude/pi 的多行系统提示词走 argv，cmd.exe 命令行无法携带裸换行——
-Windows 上优先用 dsh/codex（提示词走 stdin）或把人设写成单行。`wao doctor` 在 Windows 上给出 NSSM
-指引信息行（无自动探测）。
+Windows 上优先用 dsh/codex（提示词走 stdin）或把人设写成单行。`wao doctor` 在 Windows 上
+报告注册表自启动状态行（enabled ✓ / 未启用 ! 信息级）。
 
 ### 3.2 MCP 接入（AI Agent 直连操作公司）
 
@@ -232,7 +241,7 @@ Windows 上优先用 dsh/codex（提示词走 stdin）或把人设写成单行�
 三家 CLI 配置样例（服务须先 `node src/index.js start`；**设置 `WAO_TOKEN` 后三家都要在配置里带头**，令牌换成实际值）：
 
 ```jsonc
-// claude：存成 wao.mcp.json，工具名形如 mcp__wao-company__list_employees
+// claude：存成 wao.mcp.json，工具名形如 mcp__wao-company__list_bots
 {
   "mcpServers": {
     "wao-company": {
@@ -419,22 +428,22 @@ prefers-reduced-motion 全关动画（画布动画由 ofscene 的 reduced 标志
 
 | 命令 | 内容 | 时长 |
 |---|---|---|
-| `npm test` | 637 用例：内核（含 log ENOSPC 降级）/loader/engine（含 createdAt 服务端落戳、healthz 口径与 /api/agents 统一、cwd 存在性校验）/ledger/provider（dsh/claude/codex/pi 剖析）+ web 基建（静态托管/穿越拒绝/uiPlugins/SSE 桥）+ e2e 六场景（fake ws + fake-dsh 全链路）+ ops（孤儿扫尾：单元 + 真服务进程 SIGINT e2e） | ~40s |
-| `npm run contract -- --plugin plugins/provider-dsh --port dsh` | provider 端口契约 11/11（真子进程语义；四家各有套件：dsh/claude/codex/pi 全部 11/11 零跳过） | 秒级 |
+| `npm test` | 666 用例（2026-11-09 实测）：内核（含 log ENOSPC 降级）/loader/engine（含 createdAt 服务端落戳、healthz 口径与 /api/agents 统一、cwd 存在性校验）/ledger/provider（dsh/claude/codex/pi 剖析）+ web 基建（静态托管/穿越拒绝/uiPlugins/SSE 桥）+ e2e 六场景（fake ws + fake-dsh 全链路）+ ops（孤儿扫尾：单元 + 真服务进程 SIGINT e2e） | ~40s |
+| `npm run contract -- --plugin plugins/provider-dsh --port dsh` | provider 端口契约 11/11（真子进程语义；五家各有套件：dsh/claude/codex/pi/cursor 全部 11/11 零跳过（cursor 走 fake 级探针）） | 秒级 |
 | `npm run contract` | _template 参考实现（4 pass + 7 skip，skip=需真 CLI 的组） | 秒级 |
 | `bash test/smoke-dsh.sh` | **真 dsh**：两轮对话记忆（同 sessionId 续跑记暗号）+ 真 session 文件解码 | ~10s+ |
 | `npm run test:matrix` | **真 dsh+claude+codex+pi 四家切换矩阵**：同 provider 换模型原生续 / 跨 provider 交接（含功能性召回，pi 腿 S2-pi/S1-pi 共 9 轮）/ 切回 delta-only 重放 + API 级 `/test` sessionId 透传冒烟；文件名 `.realtest.js` 不进 `npm test` glob | ~2-5min |
 | `bash test/accept-m1.sh` | **真 dsh 验收**：真内核起服 → API 建 bot → /test 两轮 completed → profile 物化/删除 → SIGINT 锁释放 | ~15s |
 | `bash test/accept-m2.sh` | **真 dsh+claude+codex 验收**（M2）：doctor → 三 bot（enabled:false）各家 /test 两轮（round2 透传 `{sessionId}` 同 id 回显）→ PATCH dsh→claude→dsh 真切换两轮 → agents/ledger 视图 → DELETE+profile 清理 → SIGINT 锁释放 | ~2-3min |
 | `bash test/probe.sh` / `--check` | 四 CLI 事件序列基线固化/漂移检测（kill-resume、codex/pi resume+stdin、claude/codex/pi history-roundtrip 专项） | 每 CLI ≤150s |
-| `bash test/ui-shot.sh` | **UI 截图基线**：临时内核 + CDP 无头 Chrome 产 21 张 harness 基线（六页×浅深/办公室 iso·2d×昼夜/模板页/空错态），缺图或 <5KB exit 1；基线图提交在 `test/ui-shots/` | ~75s |
+| `bash test/ui-shot.sh` | **UI 截图基线**：临时内核 + CDP 无头 Chrome 产 33 张 harness 基线（三页×浅深＋卡片/详情 tab/向导两视图/AI section/内嵌工具配置等深链＋办公室 iso/2d＋白棚＋模板页＋空错态×4），缺图或 <5KB exit 1；基线图提交在 `test/ui-shots/` | ~75s |
 
 真 CLI 套件不在 `npm test` 内（依赖本机 dsh/claude/codex/pi/凭证）；CLI 缺失时 matrix/smoke/accept 明确 skip。
 
 ## 6. 已知边界（诚实申报）
 
-- **Web UI 已齐（M3）**：工作台六页（机器人/会话/台账/时间线/插件/推送）+ 办公室 3D
-  （iso/2d × 昼夜），浅深两态 21 张 harness 截图基线提交在 `test/ui-shots/`（改 UI 红线：
+- **Web UI 已齐（M3，v2 三页导航）**：工作台三页（总览/机器人/设置）+ 办公室 3D
+  （iso/2d × 浅深），33 张 harness 截图基线提交在 `test/ui-shots/`（改 UI 红线：
   必须重截对照）；盲评清零（无 P0/P1，P2×5 修复复测）。
 - **Safari 18/触屏：静态核查通过，未实测**（2026-11-06 边界收口波）：逐一对照
   shell/SDK/办公室 3D 的 API 面——Pointer Events（pointerdown/move/up/cancel +
@@ -444,14 +453,15 @@ prefers-reduced-motion 全关动画（画布动画由 ofscene 的 reduced 标志
   dataset——**无不兼容点**；唯一贴边项 `backdrop-filter`（办公室 HUD 磨砂，无前缀写法
   Safari 18 起支持，17 及以下仅丢磨砂、内容不受影响）。静态对照支持表得出，
   未在真 Safari/触屏设备跑过（截图基线为无头 Chrome）。
-- **真实企微未接（切换就绪待执行）**：channel-wecom 只过了 fake openws 契约与 e2e；
-  生产切换按 `docs/CUTOVER.md` 逐 bot 串行执行（runbook + 半自动脚本 `test/cutover.sh`），
-  切换前旧系统 wecom-bridge 继续服役。
+- **真实企微已切换（2026-11-06 10:39 完成，出站×3 送达+入站终验 PASS）**：main/bot2
+  双 bot 在役、旧桥 8791 已停、旧表 bots.json 归档写空防复活；全程记录见
+  HANDOFF §5，回滚与 24h 巡检按 `docs/CUTOVER.md` §5/§6。
 - **锁冲突无 claim-live**：前身"GUI 占锁→界面认领"协议 M1 未实现；dsh 会话被占 →
   `code=lock-conflict` → 固定友好文案（"写锁被另一个进程占用…请稍后重试"）。
 - **单进程爆炸半径**：分级承诺（DESIGN §2.5）——装载失败可隔离、内核中介调用可归因；
   但一个 bot 的同步死循环/OOM 仍可能拖死全进程，靠 launchd KeepAlive 拉活（模板已交付，§3.1），不内置守护。
-- **三家 provider 均已交付**（M2：dsh/claude/codex 契约 11/11×3、切换矩阵 6/6 真 CLI）；probe 基线已固化，
+- **四家 provider 已交付**（dsh/claude/codex/pi 契约 11/11×5 全绿、切换矩阵真 CLI 全绿）
+  ＋cursor 第五家 fake 级 active（真探针待凭证，调研底稿 docs/PROVIDER-RESEARCH.md）；probe 基线已固化，
   升级 CLI 后 `probe.sh --check` 报漂移属预期流程（对照 test/probe-baselines/ 重捕或修 runner）。
 
 ## 7. 目录地图

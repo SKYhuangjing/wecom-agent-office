@@ -31,7 +31,8 @@
 | 4 | 新服 bots 表为空 | `curl -s localhost:8792/api/bots` | `[]`（或仅含本次待切 bot）——防止误带历史 bot 连线 |
 | 5 | 旧桥基线 | `curl -s localhost:8791/healthz \| jq .` | 记录全文存档（回滚对照）：两 bot `connected/subscribed/inbound.callbacks` 计数；若不通，如实记录「旧桥未服役」 |
 | 6 | 文档就绪 | `git -C <repo> log --oneline -1` | 本 runbook + HANDOFF/README 终版已提交（HEAD=文档波 commit） |
-| 7 | 测试与探针 | `npm test`；`bash test/probe.sh --check`；`node src/index.js doctor` | 348/348 绿；3/3 基线一致；doctor 全 ✓（含 launchd ✓运行三态） |
+| 7 | 测试与探针 | `npm test`；`bash test/probe.sh --check`；`node src/index.js doctor` | 全绿（fail=0）；3/3 基线一致；doctor 全 ✓（含 launchd ✓运行三态） |
+| 8 | 访问令牌已设（非空） | `plutil -p ~/Library/LaunchAgents/com.wecom-agent-office.plist \| grep -A1 WAO_TOKEN`；`curl -s -o /dev/null -w '%{http_code}' localhost:8792/api/agents` | WAO_TOKEN 非空；无令牌 curl 得 401（带头 200）；AI CLI 三家配置已带头（README §3.2） |
 
 脚本对应：`bash test/cutover.sh baseline`（跑 #1-#5 并把 #5 基线落盘到
 `/tmp/wao-cutover/old-healthz-baseline.json`）。
