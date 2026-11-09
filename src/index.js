@@ -78,6 +78,70 @@ export function buildWinAutostartCmd({ execPath, repoRoot: root, dataDir, lan = 
   ].join('\r\n');
 }
 
+// 当前 Commit 探测：优先读 data/version.json（更新器/打包写入），
+// 其次探测本地 .git（开发模式），再次取 $WAO_COMMIT 环境变量，无则 null。
+export function getCurrentCommit(dataDir) {
+  try {
+    const vf = join(dataDir ?? defaultDataDir(), 'version.json');
+    if (existsSync(vf)) {
+      const v = JSON.parse(readFileSync(vf, 'utf8'));
+      if (typeof v?.commit === 'string' && v.commit) return v.commit.slice(0, 7);
+    }
+  } catch { /* best effort */ }
+  try {
+    const gitDir = join(repoRoot, '.git');
+    if (existsSync(gitDir)) {
+      const out = execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
+        cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 2000,
+      });
+      if (out && out.trim()) return out.trim();
+    }
+  } catch { /* best effort */ }
+  if (process.env.WAO_COMMIT) return process.env.WAO_COMMIT.slice(0, 7);
+  return null;
+}
+
+// 检查 GitHub 远程最新 Commit（跨平台、免登录公共 API，带超时与限流保护）
+export async function checkRemoteUpdate(currentCommit) {
+  const GITHUB_REPO = 'SKYhuangjing/wecom-agent-office';
+  const url = `https://api.github.com/repos/${GITHUB_REPO}/commits/main`;
+  let remote = null;
+  let error = null;
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'WAO-Updater/1.0',
+        'Accept': 'application/vnd.github.v3+json',
+      },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const sha = typeof data?.sha === 'string' ? data.sha.slice(0, 7) : null;
+      const msg = typeof data?.commit?.message === 'string' ? data.commit.message.split('\n')[0].trim() : '';
+      const date = data?.commit?.committer?.date ?? data?.commit?.author?.date ?? null;
+      remote = { sha, message: msg, date };
+    } else if (res.status === 403) {
+      error = 'GitHub API 访问达到频率限制（请稍后重试）';
+    } else {
+      error = `GitHub 应答异常（HTTP ${res.status}）`;
+    }
+  } catch (err) {
+    error = `无法连接 GitHub（${err.message || '网络超时'}）`;
+  }
+  const hasUpdate = Boolean(remote?.sha && currentCommit && remote.sha !== currentCommit);
+  return {
+    currentCommit,
+    currentVersion: pkgVersion(),
+    remoteCommit: remote?.sha ?? null,
+    commitMessage: remote?.message ?? null,
+    commitDate: remote?.date ?? null,
+    hasUpdate,
+    error,
+    checkedAt: Date.now(),
+  };
+}
+
 // Repo-bundled plugins first, then operator extras from WAO_PLUGINS_PATH
 // (path.delimiter-separated — ':' on POSIX, ';' on Windows —; empty segments
 // dropped) — the §2.1 scan rule.
@@ -459,6 +523,119 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
         if (err?.status) return json(res, err.status, { error: err.message });
         throw err;
       });
+    },
+  });
+
+  // 全平台在线更新与自适应平滑重启接口（GET 检查 / POST 触发升级）：
+  // 1. 下载目标代码包并解压校验
+  // 2. 识别宿主环境托管机制（macOS launchd / Linux systemd / 通用 detached updater）
+  // 3. 派生独立更新器 scripts/updater.js 覆写代码并重新拉起服务
+  // 4. 原进程优雅关闭并释放端口与目录锁
+  const detectRestartMode = () => {
+    if (process.platform === 'darwin') {
+      const file = join(homedir(), 'Library', 'LaunchAgents', `${AUTOSTART_LABEL}.plist`);
+      if (existsSync(file)) return 'launchd';
+    } else if (process.platform === 'linux') {
+      const unit = join(homedir(), '.config', 'systemd', 'user', 'wao.service');
+      if (existsSync(unit)) return 'systemd';
+    }
+    return 'detached';
+  };
+
+  const downloadAndExtractUpdate = async (stageDir) => {
+    const zipUrl = 'https://codeload.github.com/SKYhuangjing/wecom-agent-office/zip/refs/heads/main';
+    const stageZip = join(stageDir, 'wao-update.zip');
+    mkdirSync(stageDir, { recursive: true });
+    const res = await fetch(zipUrl, {
+      headers: { 'User-Agent': 'WAO-Updater/1.0' },
+      signal: AbortSignal.timeout(60000),
+    });
+    if (!res.ok) throw new Error(`下载更新代码包失败（HTTP ${res.status}）`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    writeFileSync(stageZip, buf);
+
+    const extDir = join(stageDir, 'ext');
+    rmSync(extDir, { recursive: true, force: true });
+    mkdirSync(extDir, { recursive: true });
+
+    if (process.platform === 'win32') {
+      try {
+        execFileSync('tar.exe', ['-xf', stageZip, '-C', extDir], { stdio: 'ignore', timeout: 30000 });
+      } catch {
+        execFileSync('powershell', ['-NoProfile', '-Command', `Expand-Archive -Path '${stageZip}' -DestinationPath '${extDir}' -Force`], { stdio: 'ignore', timeout: 60000 });
+      }
+    } else {
+      try {
+        execFileSync('tar', ['-xf', stageZip, '-C', extDir], { stdio: 'ignore', timeout: 30000 });
+      } catch {
+        execFileSync('unzip', ['-q', stageZip, '-d', extDir], { stdio: 'ignore', timeout: 30000 });
+      }
+    }
+
+    const subdirs = readdirSync(extDir, { withFileTypes: true }).filter((d) => d.isDirectory());
+    const realSrc = subdirs.length === 1 ? join(extDir, subdirs[0].name) : extDir;
+    if (!existsSync(join(realSrc, 'package.json')) || !existsSync(join(realSrc, 'src', 'index.js'))) {
+      throw new Error('更新包完整性校验失败：缺少 package.json 或 src/index.js');
+    }
+    return realSrc;
+  };
+
+  http.register({
+    prefix: '/api/service/update', owner: 'kernel', handler: async (req, res) => {
+      if (req.method === 'GET') {
+        const cur = getCurrentCommit(dir);
+        const info = await checkRemoteUpdate(cur);
+        return json(res, 200, { ok: true, ...info });
+      }
+      if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' }, { Allow: 'GET, POST' });
+
+      try {
+        const cur = getCurrentCommit(dir);
+        const check = await checkRemoteUpdate(cur);
+        const targetCommit = check.remoteCommit || '';
+
+        const stageDir = join(dir, '.update-stage');
+        const extractedSrc = await downloadAndExtractUpdate(stageDir);
+
+        const restartMode = detectRestartMode();
+        const updaterScript = join(repoRoot, 'scripts', 'updater.js');
+        const updaterArgs = [
+          updaterScript,
+          '--parent-pid', String(process.pid),
+          '--stage-dir', extractedSrc,
+          '--target-dir', repoRoot,
+          '--data-dir', dir,
+          '--entry', join(repoRoot, 'src', 'index.js'),
+          '--port', String(http.port),
+          '--host', host,
+          '--restart-mode', restartMode,
+          '--target-commit', targetCommit,
+        ];
+        if (isLanMode) updaterArgs.push('--lan');
+
+        const child = spawn(process.execPath, updaterArgs, {
+          detached: true,
+          stdio: 'ignore',
+          cwd: repoRoot,
+          env: process.env,
+        });
+        child.unref();
+
+        logger.info(`wao: update initiated (mode=${restartMode}, targetCommit=${targetCommit}), updater pid=${child.pid}`);
+        json(res, 200, { ok: true, message: '更新已触发，服务正在平滑重启', restartMode, targetCommit });
+
+        // 响应客户端完成后优雅停机交接
+        setImmediate(async () => {
+          try { await lifecycle.drainEngine(2000); } catch { /* best effort */ }
+          try { await lifecycle.deactivateAll(); } catch { /* best effort */ }
+          try { http.forceClose(); } catch { /* best effort */ }
+          try { lock.release(); } catch { /* best effort */ }
+          process.exit(0);
+        });
+      } catch (err) {
+        logger.error('wao: update failed', err);
+        return json(res, 500, { ok: false, error: err.message || String(err) });
+      }
     },
   });
   // Plugin runtime enable/disable (DESIGN §8 kernel-native): body-less POST

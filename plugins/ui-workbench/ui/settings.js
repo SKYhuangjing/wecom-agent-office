@@ -281,6 +281,61 @@ const SystemInfo = ({ WAO }) => {
   // 开机自启动（/api/service/autostart）：读系统真实配置，永不预选
   const [autostart, setAutostart] = useState(null);
   const [asBusy, setAsBusy] = useState(false);
+  // 在线检查更新与平滑升级（/api/service/update）
+  const [updateInfo, setUpdateInfo] = useState(null);
+  const [checkBusy, setCheckBusy] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const [updateMsg, setUpdateMsg] = useState(null);
+
+  const checkUpdate = async () => {
+    if (checkBusy) return;
+    setCheckBusy(true);
+    setUpdateMsg(null);
+    try {
+      const info = await api('/api/service/update');
+      setUpdateInfo(info);
+    } catch (err) {
+      setUpdateInfo({ error: err?.message ?? String(err) });
+    } finally {
+      setCheckBusy(false);
+    }
+  };
+
+  const triggerUpdate = async () => {
+    if (updating) return;
+    const target = updateInfo?.remoteCommit || '最新版本';
+    if (!window.confirm(`确认立即将 WAO 平滑升级至 ${target}？\n\n所有机器人凭证、对话台账及资产文件将完整保留；更新完成后服务将自动重启。`)) {
+      return;
+    }
+    setUpdating(true);
+    setUpdateMsg('正在启动下载并移交独立更新器，请稍候…');
+    try {
+      const res = await api('/api/service/update', {});
+      setUpdateMsg(res?.message || '更新已触发，服务正在平滑重启，页面将在服务就绪后自动刷新…');
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts++;
+        try {
+          const hz = await fetch('/healthz', { cache: 'no-store' });
+          if (hz.ok) {
+            clearInterval(poll);
+            setUpdateMsg('✓ 升级成功，服务已恢复！正在刷新控制台…');
+            setTimeout(() => { window.location.reload(); }, 1200);
+            return;
+          }
+        } catch { /* waiting for reboot */ }
+        if (attempts > 30) {
+          clearInterval(poll);
+          setUpdateMsg('等待服务重启超时，请确认服务已启动后手动刷新页面。');
+          setUpdating(false);
+        }
+      }, 1500);
+    } catch (err) {
+      setUpdateMsg(`触发升级失败：${err?.message ?? String(err)}`);
+      setUpdating(false);
+    }
+  };
+
   useEffect(() => {
     let alive = true;
     api('/api/service/autostart')
@@ -344,7 +399,44 @@ const SystemInfo = ({ WAO }) => {
     state == null && error == null ? h('p', { className: 'muted' }, '读取系统信息…') : null,
     state != null ? h('div', { className: 'wb-table-scroll' }, h('table', { className: 'wb-table' },
       h('tbody', null,
-        row('版本', health?.version != null ? `wao v${health.version}` : '—', '/healthz'),
+        row('版本',
+          h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
+              h('span', { className: 'wb-mono', style: { fontWeight: 600 } },
+                `${health?.version ? `wao v${health.version}` : 'wao'}${updateInfo?.currentCommit ? ` (${updateInfo.currentCommit})` : ''}`),
+              h('button', {
+                className: 'wb-btn wb-btn-sm',
+                disabled: checkBusy || updating,
+                onClick: () => void checkUpdate(),
+              }, checkBusy ? '正在检查…' : '检查更新'),
+              updateInfo?.hasUpdate === false && !updateInfo.error
+                ? h('span', { className: 'wb-hint', style: { color: 'var(--ok, #16a34a)' } }, '✓ 已是最新版本') : null,
+              updateInfo?.error
+                ? h('span', { className: 'wb-hint', style: { color: 'var(--warn, #eab308)' } }, `检查提示：${updateInfo.error}`) : null,
+            ),
+            updateInfo?.hasUpdate ? h('div', {
+              className: 'wb-card',
+              style: {
+                padding: '8px 12px', background: 'color-mix(in srgb, var(--accent) 6%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--accent) 25%, transparent)',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
+              },
+            },
+              h('div', { style: { fontSize: 13 } },
+                h('div', { style: { fontWeight: 600, color: 'var(--ink)' } }, `发现新版本：commit ${updateInfo.remoteCommit}`),
+                updateInfo.commitMessage ? h('div', { className: 'muted', style: { fontSize: 12, marginTop: 2 } }, updateInfo.commitMessage) : null,
+              ),
+              h('button', {
+                className: 'wb-btn wb-btn-primary wb-btn-sm',
+                disabled: updating,
+                onClick: () => void triggerUpdate(),
+              }, updating ? '升级中…' : '一键升级'),
+            ) : null,
+            updateMsg ? h('div', {
+              className: updating ? 'wb-notice' : 'wb-hint',
+              style: { marginTop: 4, padding: '6px 10px', fontSize: 12 },
+            }, updateMsg) : null),
+          '/healthz & GitHub main'),
         row('运行时间', h('span', { className: 'wb-mono' }, uptime), '自服务启动起（实时走秒）'),
         row('进程', state?.pid != null ? h('span', { className: 'wb-mono' }, `pid ${state.pid}`) : '—'),
         row('数据目录', state?.dataDir != null

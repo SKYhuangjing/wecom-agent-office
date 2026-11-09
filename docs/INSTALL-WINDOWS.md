@@ -94,8 +94,9 @@ Set-ExecutionPolicy -Scope Process Bypass -Force; & .\win-install.ps1
 | 健康检查 | `Invoke-WebRequest http://127.0.0.1:8792/healthz` |
 | 自检 | `node .\src\index.js doctor`（win32 显示 autostart 状态行；dsh/claude/codex/pi CLI 缺失为提示级——建对应岗位 bot 前装 CLI） |
 | 停止 | 找 pid：`netstat -ano | findstr :8792` → `taskkill /PID <pid>`（SIGKILL 等价，孤儿扫尾由下次启动兜底）；优雅停止优先前台实例 Ctrl+C |
-| 升级 | 重下 codeload zip 覆盖 `wao\`（保留 `data\`），重启进程 |
-| 日志 | `data\logs\wao.log`（10MB×5 轮转）+ `wao.out.log`/`wao.err.log`（分离进程 stdout/stderr） |
+| 升级（标准推荐） | 打开 Web 控制台「设置 → 系统信息」，点「检查更新」→「一键升级」（全自动下载解压、保护数据目录、平滑重启服务、页面自动刷新，零黑框） |
+| 升级（手动兜底） | 重下 codeload zip 覆盖 `wao\`（**必须保留 `data\`**），重启进程 |
+| 日志 | `data\logs\wao.log`（10MB×5 轮转）+ `wao.out.log`/`wao.err.log`（分离进程 stdout/stderr）+ `data\logs\updater.log`（在线升级日志） |
 
 ## 5. 已知边界
 

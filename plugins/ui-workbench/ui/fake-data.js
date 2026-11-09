@@ -381,6 +381,16 @@ export const FAKE_API = {
   ])),
   // —— v2 设置页（系统信息 section）————————————————————————————————————
   '/healthz': { ok: true, version: '0.1.0' },
+  '/api/service/update': {
+    ok: true,
+    currentCommit: 'b1f39ba',
+    currentVersion: '0.1.0',
+    remoteCommit: 'b1f39ba',
+    commitMessage: 'feat(lan,autostart): 支持局域网模式与 AI 操作端点自发现',
+    commitDate: '2026-11-09T06:00:00Z',
+    hasUpdate: false,
+    checkedAt: 1794033321000,
+  },
   '/api/state': {
     ok: true, uptimeSec: 93725, pid: 4242, dataDir: '/Users/sky/.local/share/wao',
     port: 8792, host: '0.0.0.0', lanMode: true, lanIps: ['192.168.1.100'], hostname: 'office-node-1',

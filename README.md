@@ -153,11 +153,13 @@ launchctl load ~/Library/LaunchAgents/com.wecom-agent-office.plist
 curl -s localhost:8792/healthz          # 确认起来
 ```
 
-**升级路径裁定（控制器 2026-11-06）——进程重启 vs reload 的定位**：
+**升级路径裁定（控制器 2026-11-06 / 2026-11-09 在线一键升级交付）**：
 
 | 场景 | 手段 | 为什么 |
 |---|---|---|
-| **代码升级**（plugin.js 及其 import 的任何模块、`src/kernel/`） | `launchctl kickstart -k gui/$(id -u)/com.wecom-agent-office` | in-process reload 刷不掉 ESM 模块缓存：plugin.js 内部静态 import 的子模块（runner.js 等）reload 后仍是旧代码——已验。kickstart 走完整四阶段停机（在跑任务补终帧、孤儿扫尾）+ KeepAlive 自愈，是唯一可信的换代码路径 |
+| **在线一键升级（多端通用）** | 打开 Web 控制台「设置 → 系统信息」，点「检查更新」→「一键升级」 | 跨平台平滑升级：自动比对 GitHub 远程最新 Commit，下载解压、保护 `data/` 目录不被改动、依赖变动自动 npm install、自适应对应平台（macOS launchd / Linux systemd / Windows 独立更新器）平滑重启服务并在就绪后无缝刷新页面 |
+| **代码升级（macOS launchd 命令行手动）** | `launchctl kickstart -k gui/$(id -u)/com.wecom-agent-office` | in-process reload 刷不掉 ESM 模块缓存：plugin.js 内部静态 import 的子模块（runner.js 等）reload 后仍是旧代码——已验。kickstart 走完整四阶段停机（在跑任务补终帧、孤儿扫尾）+ KeepAlive 自愈，是唯一可信的换代码路径 |
+| **代码升级（Linux systemd 命令行手动）** | `systemctl --user restart wao` | 同理进程重启使新模块代码生效 |
 | **配置级变化**（plugins.json 启用表、新插件目录、bot CRUD） | `POST /api/service/reload` 或对应 API | 四阶段热重载足够：重扫目录/重读启用表/重建 bot 运行时，进程不停、在跑消息有维护终帧 |
 
 冷启动自愈：KeepAlive=崩溃/被杀即拉活；机器重启→用户登录（RunAtLoad）→服务自动回来。
