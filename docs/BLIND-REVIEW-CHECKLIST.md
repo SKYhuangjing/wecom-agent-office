@@ -208,7 +208,7 @@ echo $! > "$D/server.pid"
    「provider 已不存在（插件被停用）」**类信号（灰字「离线」之外的第二信号）；重新启用 →
    信号消失、试跑恢复。
 6. **办公室 3D 数据对应**：办公室 3D（iso/2d × 昼夜 `?dim= ?phase=`）里每个 bot 的
-   呈现（工位/灯效/状态气泡）与 `/api/agents` 的 status/progress **一一对应**：把某 bot
+   呈现（工位场景/灯效/状态气泡）与 `/api/agents` 的 status/progress **一一对应**：把某 bot
    置 working（或改 harness `fake-data.js` 桩）→ 场景呈现随之变化；深浅两态与
    2D/ISO 两视角都看一遍。
 

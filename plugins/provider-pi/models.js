@@ -13,7 +13,7 @@
 //
 // Sessions live in the same tree (<piAgentDir>/sessions/) but are NEVER
 // touched here: removeBotModels deletes models.json only — the 员工档案's
-// conversation history survives 离职 (HANDOFF: 档案保留).
+// conversation history survives 删除机器人 (HANDOFF: 会话数据保留).
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';

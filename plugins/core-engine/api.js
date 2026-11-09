@@ -317,7 +317,7 @@ function botStatusOf(state, botId) {
 // /healthz bots 汇总 (P2 observability, R4): roster truth over engine runtime
 // state — total counts every REGISTERED bot record; the engine itself only
 // knows attached bots, so unattached (disabled/failed-attach/channel-dead)
-// bots close the gap as offline. online=在岗待命(idle), working=干活中, three
+// bots close the gap as offline. online=待命(idle), working=工作中, three
 // disjoint buckets summing to total. SAME status computation as the roster
 // row (botStatusOf), so healthz can never call a channel-dead bot online
 // while /api/agents calls it offline.

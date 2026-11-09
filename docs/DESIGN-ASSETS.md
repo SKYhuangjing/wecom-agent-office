@@ -472,7 +472,7 @@ doctor 漂移比对（§8.1）、pi 外来文件判据回退（V9 不容忍时�
 
 - **WAO memory 资产**=平台侧托管的人工备注/台账摘要，**唯一写入方是控制面**（API/UI/MCP 工具）；物化为标记节/文件，卸载即净。
 - **claude 自带 auto-memory**（F18）=CLI 运行时自写 `…/projects/<cwd>/memory/`，WAO **不读不写不清理**；两者同名「记忆」但来源与生命周期独立——UI 文案区分「公司备注（平台）」vs「自动记忆（CLI 自理）」。
-- **同 cwd 泄漏教训**（DESIGN §5.1）：多 bot 共 cwd 时 claude auto-memory 互漏——WAO 缓解=入职向导与文档建议「需要记忆隔离的 bot 配置专属 claudeConfigDir」；WAO 自身 memory 资产走标记节，随 CLAUDE_CONFIG_DIR 重定向天然隔离（T2-V1 一并验证）。
+- **同 cwd 泄漏教训**（DESIGN §5.1）：多 bot 共 cwd 时 claude auto-memory 互漏——WAO 缓解=创建向导与文档建议「需要记忆隔离的 bot 配置专属 claudeConfigDir」；WAO 自身 memory 资产走标记节，随 CLAUDE_CONFIG_DIR 重定向天然隔离（T2-V1 一并验证）。
 - **memory 同 cwd 绑定告警（P2 裁定，rev.2）**：bot 绑定 memory 资产时，若未设专属 claudeConfigDir/codexHome（记忆将落共享 cwd 的项目域 `<cwd>/CLAUDE.md`/`<cwd>/AGENTS.md`，对同 cwd 的一切会话可见——F18 同族面）→ **绑定回执带 `warning` 字段 + agents 状态警示**「记忆落在共享 cwd，对同目录其他会话可见，建议配专属 config 目录」。跨 bot 的同文件冲突本身已被 §2.3 拒绑；此告警针对的是**非 WAO 会话**（人/其他工具开在同一 cwd）的可见性。
 
 ---

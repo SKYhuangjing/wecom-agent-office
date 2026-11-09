@@ -45,7 +45,7 @@
 | 插件启停 | UI 设置 → 插件 或 `POST /api/plugins/:id/enable\|disable`（四阶段 reload；引用它的 bot 立即离线并给原因） |
 | 插件开发 | `plugins/_template/` 三脚手架 + [PLUGIN-DEV.md](docs/PLUGIN-DEV.md) + 契约套件 `npm run contract -- --plugin <dir>`（profiles 控 skip、插件侧无逃逸） |
 | UI 改动 | 红线：`bash test/ui-shot.sh` 截图验证再交付（页面插件=无构建 ES Module、禁 JSX/bare import、React 走 window.WAO；shell/sdk 改后 `node web/build.mjs` 提交 dist） |
-| 全量测试 | `npm test`（666，2026-11-09 实测）｜契约 ×5 各 11（含 cursor）｜`npm run test:matrix`（真 CLI 四家切换矩阵，pi 腿 9 轮）｜`bash test/accept-m1.sh` / `accept-m2.sh`（真 CLI 验收）｜`bash test/probe.sh --check`（CLI 事件形状漂移检测，四家） |
+| 全量测试 | `npm test`（用例数持续增长——以实跑为准；2026-11-09 已 670）｜契约 ×5 各 11（含 cursor）｜`npm run test:matrix`（真 CLI 四家切换矩阵，pi 腿 9 轮）｜`bash test/accept-m1.sh` / `accept-m2.sh`（真 CLI 验收）｜`bash test/probe.sh --check`（CLI 事件形状漂移检测，四家） |
 
 ## 4. 高频操作（标准术语速查，词表见 README §4.2）
 
@@ -67,7 +67,7 @@
 
 ## 6. 质量与验证现状（证据锚点）
 
-- 测试 **666/666**（2026-11-09 实测）；契约套件 dsh/claude/codex/pi/cursor **11/11×5 零跳过**；切换矩阵引擎级 7/7（真 CLI，pi 腿 S2-pi/S1-pi 全绿）+ API 冒烟含 pi 腿两轮 PASS（矩阵 run2 全绿；run3 codex 腿因网关慢撞 60s 帽，见 §7）；探针基线四家（`test/probe-baselines/pi*.ndjson`：resume 三腿同 id 回显+记忆延续、history roundtrip 2 turns 0 warnings）；UI 基线 33 张（2026-11-09 术语迁移后重截）（`test/ui-shots/`，工作流脚本带 ≥5KB 门禁）
+- 测试 **全绿（以 `npm test` 实跑为准；2026-11-09 已 670/670）**；契约套件 dsh/claude/codex/pi/cursor **11/11×5 零跳过**；切换矩阵引擎级 7/7（真 CLI，pi 腿 S2-pi/S1-pi 全绿）+ API 冒烟含 pi 腿两轮 PASS（矩阵 run2 全绿；run3 codex 腿因网关慢撞 60s 帽，见 §7）；探针基线四家（`test/probe-baselines/pi*.ndjson`：resume 三腿同 id 回显+记忆延续、history roundtrip 2 turns 0 warnings）；UI 基线 33 张（2026-11-09 术语迁移后重截）（`test/ui-shots/`，工作流脚本带 ≥5KB 门禁）
 - **零上下文盲评（pi 专项，11-07）**：首轮报 P0 一个（UI 路径建 pi bot 岗前测试 5/5 失败——`PI_CODING_AGENT_DIR` 只在显式 piAgentDir 时注入，UI 建的 bot 看不到物化的 models.json）+ P1×2/P2×7；**P0 已修**（三层：①runner 恒注入 $PI_CODING_AGENT_DIR——显式 piAgentDir 优先、per-bot 兜底与 models.js 同源公式（根因：UI 建的 bot 看不到物化 models.json）②exit 1 启动失败时 stderr 首行上浮进 errorText ③网关 404 形状（exit 0/无 retry/无 stderr）捕获 message_end.errorMessage——失败诊断从裸「failed」变为真实原因，单测 2 项钉住）+ pi 特有 P2 修复（引擎人设/下拉标签/帮助行/主题色），**原路径复测 PASS**（两轮测试运行 completed、原生档案可凭 sessionId 调阅、引擎文案/下拉/帮助行核对项全过）；**终验 PASS**（故意错配模型 → 失败文案含 404+magpie knows no model+可用模型列表，可自救；遗留 P2：报错为英文原始 JSON 建议中文化+折叠）。P1×2 为跨 provider 既有 UI 问题，超出本任务范围，见 §7
 - 四场零上下文盲评全 PASS（M1 12 条 / M2 / M3 UI 52 截图 / 终评复验），P0/P1 累计为零
 - 里程碑终审：M1 SHIP / M2 SHIP / M3 SHIP / 全程终评 ISSUES-FOUND→已清零（ack 帧级键控真 bug、归档命名、CHANGELOG、ledger 补记）

@@ -238,7 +238,16 @@ Windows 上优先用 dsh/codex（提示词走 stdin）或把人设写成单行�
 
 控制台里也有同款引导：**总览页引导卡**（一键复制 MCP 配置）与**设置 → AI 操作** section（三家配置复制/下载、19 个工具清单、skill 文件下载、MCP 连通性测试，实时显示活跃 AI 会话数——数据来自 mcp-gateway 的 `GET /api/mcp`）。
 
+> **破坏性变更（2026-11-09）**：MCP 工具已按 §4.2 标准术语改名——旧名
+> `list_employees` / `get_employee` / `hire` / `update_employee` / `offboard` / `set_duty` /
+> `probation_test` / `list_departments` / `department_toggle` / `work_log` / `work_timeline` /
+> `company_state` **全部失效**（调用报 -32602 工具名未知）。已配置的 AI 会话与自建脚本请改用
+> 新名（速查表 `docs/skills/wao-company.md`）；server 名 `wao-company` 不变。
+
 三家 CLI 配置样例（服务须先 `node src/index.js start`；**设置 `WAO_TOKEN` 后三家都要在配置里带头**，令牌换成实际值）：
+
+- 令牌取值（launchd 部署）：`plutil -extract EnvironmentVariables.WAO_TOKEN raw ~/Library/LaunchAgents/com.wecom-agent-office.plist`
+- `wao tui` / `wao doctor` 读**本进程环境**的 `WAO_TOKEN`（`WAO_TOKEN=$(plutil …) node src/index.js doctor`）；未 export 时 doctor 会输出「未设 env，跳过 auth 生效性实测」，不代表鉴权有问题。
 
 ```jsonc
 // claude：存成 wao.mcp.json，工具名形如 mcp__wao-company__list_bots
@@ -428,7 +437,7 @@ prefers-reduced-motion 全关动画（画布动画由 ofscene 的 reduced 标志
 
 | 命令 | 内容 | 时长 |
 |---|---|---|
-| `npm test` | 669+ 用例（2026-11-09 实测 669；并行会话合入 Windows 装机单测，数字会持续增长——以 npm test 实跑为准）：内核（含 log ENOSPC 降级）/loader/engine（含 createdAt 服务端落戳、healthz 口径与 /api/agents 统一、cwd 存在性校验）/ledger/provider（dsh/claude/codex/pi 剖析）+ web 基建（静态托管/穿越拒绝/uiPlugins/SSE 桥）+ e2e 六场景（fake ws + fake-dsh 全链路）+ ops（孤儿扫尾：单元 + 真服务进程 SIGINT e2e） | ~40s |
+| `npm test` | 全绿（用例数持续增长，以 `npm test` 实跑为准；2026-11-09 已 670）：内核（含 log ENOSPC 降级）/loader/engine（含 createdAt 服务端落戳、healthz 口径与 /api/agents 统一、cwd 存在性校验）/ledger/provider（dsh/claude/codex/pi 剖析）+ web 基建（静态托管/穿越拒绝/uiPlugins/SSE 桥）+ e2e 六场景（fake ws + fake-dsh 全链路）+ ops（孤儿扫尾：单元 + 真服务进程 SIGINT e2e） | ~40s |
 | `npm run contract -- --plugin plugins/provider-dsh --port dsh` | provider 端口契约 11/11（真子进程语义；五家各有套件：dsh/claude/codex/pi/cursor 全部 11/11 零跳过（cursor 走 fake 级探针）） | 秒级 |
 | `npm run contract` | _template 参考实现（4 pass + 7 skip，skip=需真 CLI 的组） | 秒级 |
 | `bash test/smoke-dsh.sh` | **真 dsh**：两轮对话记忆（同 sessionId 续跑记暗号）+ 真 session 文件解码 | ~10s+ |
@@ -460,9 +469,17 @@ prefers-reduced-motion 全关动画（画布动画由 ofscene 的 reduced 标志
   `code=lock-conflict` → 固定友好文案（"写锁被另一个进程占用…请稍后重试"）。
 - **单进程爆炸半径**：分级承诺（DESIGN §2.5）——装载失败可隔离、内核中介调用可归因；
   但一个 bot 的同步死循环/OOM 仍可能拖死全进程，靠 launchd KeepAlive 拉活（模板已交付，§3.1），不内置守护。
-- **四家 provider 已交付**（dsh/claude/codex/pi 契约 11/11×5 全绿、切换矩阵真 CLI 全绿）
-  ＋cursor 第五家 fake 级 active（真探针待凭证，调研底稿 docs/PROVIDER-RESEARCH.md）；probe 基线已固化，
+- **五家 provider（四家真 CLI + cursor fake 级）**：dsh/claude/codex/pi 契约各 11/11、
+  切换矩阵真 CLI 全绿；cursor 第五家 fake 级 active（契约 11/11，真探针待凭证，
+  调研底稿 docs/PROVIDER-RESEARCH.md）；probe 基线已固化，
   升级 CLI 后 `probe.sh --check` 报漂移属预期流程（对照 test/probe-baselines/ 重捕或修 runner）。
+- **MCP `dangerousTools` 默认 true（生产安全选择题，非默认安全）**：mcp-gateway 插件选项
+  `dangerousTools` 缺省放行 7 个高危工具（`delete_bot` / `broadcast` / `toggle_plugin` /
+  `delete_asset` / `bind_asset` / `unbind_asset` / `rematerialize`）——删除机器人、真实送达企微的
+  推送、插件启停均可由 AI Agent 调用。软缓解是设置页提示的「执行前复述后果并确认」规范
+  （skill `docs/skills/wao-company.md` §危险操作确认规范）与 `WAO_TOKEN` 鉴权（§2/§3.2）。
+  生产若不需要 Agent 写操作，在插件选项设 `dangerousTools:false` 一键禁用（工具仍列出，
+  调用返回 isError 说明被禁用）；CUTOVER 检查项 #8 已要求令牌，此项按部署场景自行决定。
 
 ## 7. 目录地图
 

@@ -33,7 +33,7 @@ pi -p --mode json [--session <id>] [--thinking <lvl>] --provider <p> --model <id
 | `piArgs` | 额外 CLI 参数(逐项原样追加) |
 | `apiKeyEnv` | 凭证环境变量名(默认 `PI_MAGPIE_API_KEY`) |
 | `piBin` | pi 可执行文件(默认 `pi`) |
-| `piAgentDir` | agent 目录(默认 `~/.pi/agent-wao-<botId>`;离职只清 models.json,sessions/ 档案保留) |
+| `piAgentDir` | agent 目录(默认 `~/.pi/agent-wao-<botId>`;删除机器人只清 models.json,sessions/ 会话数据保留) |
 | `env` | 注入子进程的环境变量 |
 | `progressStyle`/`progressText` | 播报(与其他三家同参,core-engine 消费) |
 

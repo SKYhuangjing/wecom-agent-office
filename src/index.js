@@ -751,8 +751,7 @@ const cmdDoctor = async (flags) => {
   if (process.env.WAO_TOKEN !== undefined) {
     if (process.env.WAO_TOKEN === '') {
       mark('!', 'auth', 'WAO_TOKEN 设置为空——鉴权未启用（需非空值才生效）');
-    } else {
-      const base = `http://${host}:${port}`;
+    } else {      const base = `http://${host}:${port}`;
       const probe = async (headers) => {
         try {
           return await fetch(`${base}/api/state`, { headers, signal: AbortSignal.timeout(2000) });
@@ -774,6 +773,10 @@ const cmdDoctor = async (flags) => {
         }
       }
     }
+  } else {
+    // 本进程未 export WAO_TOKEN：明确宣告跳过，避免「doctor 没有 auth 行」被误读为检查通过。
+    // 鉴权是 `wao start` 运行时属性，取令牌后复跑 doctor 才会实测 401/200。
+    mark('!', 'auth', '未设 env，跳过 WAO_TOKEN 生效性实测（export WAO_TOKEN 后复跑 doctor 检查；服务侧鉴权不受本进程 env 影响）');
   }
 
   // Agent CLI presence is INFORMATIONAL (`!`, never ✗): a missing CLI only
