@@ -58,6 +58,13 @@ export function describeToolBrief(input) {
 const collapse = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 const brief = (s) => collapse(s).slice(0, 60);
 
+// 图片附件 → argv 扇出面（DESIGN-MULTIMODAL Phase 2）：codex 用 `-i <path>`
+//（0.166.0 `codex exec --help` 实证 flag 存在，fresh 与 resume 两腿同加）；
+// file 附件不在此列——引擎已把文本内联/PDF·二进制路径提示进 prompt。
+const imagePathsOf = (attachments) => (Array.isArray(attachments) ? attachments : [])
+  .filter((a) => a != null && typeof a === 'object' && a.kind === 'image' && typeof a.path === 'string')
+  .map((a) => a.path);
+
 // One `key=value` config override → the argv value codex receives. codex
 // parses the value as TOML and falls back to the raw string when that fails
 // (`--help`), but the SAFEST wire form for strings is a TOML basic string
@@ -94,7 +101,7 @@ export function createRunner({ bot, providerConfig, log, escalationMs = DEFAULT_
   if (pc.codexHome) extraEnv.CODEX_HOME = pc.codexHome;
   const logger = log ?? console;
 
-  function run({ prompt, sessionId, signal, timeoutMs, onEvent } = {}) {
+  function run({ prompt, sessionId, signal, timeoutMs, onEvent, attachments } = {}) {
     return new Promise((resolve) => {
       const finish = (payload) => resolve(payload); // a Promise settles once; no guard needed
 
@@ -123,6 +130,9 @@ export function createRunner({ bot, providerConfig, log, escalationMs = DEFAULT_
       if (Array.isArray(pc.configOverrides)) {
         for (const entry of pc.configOverrides) args.push('-c', toCodexOverride(entry));
       }
+      // 图片附件：-i <path> 可多值（fresh 与 resume 两腿同加，见 imagePathsOf
+      // 注释）；放在 `-` 位置参数之前，flag 区不被位置参数截断。
+      for (const p of imagePathsOf(attachments)) args.push('-i', p);
       args.push('-'); // prompt arrives on stdin
 
       let child;

@@ -5,6 +5,40 @@
 
 ## [Unreleased]
 
+### Added — 多模态输入（图片/文件，DESIGN-MULTIMODAL Phase 0-2，2026-11-10）
+
+- 企微图片/文件/图文混排/语音入站全链路（出站多模态 Phase 3 不在本次）：
+  channel-wecom 新增 `media.js`（fetch→AES-256-CBC 解密→sha256/magic-bytes 寻址
+  落盘，与官方 SDK 同构的 32 字节块 PKCS#7 手工去填），adapter 收到即下载
+  （企微 url 5 分钟时效红线）并以 `attachments` 信封送引擎；文件分级（文本
+  ≤64KB 内联 / PDF→claude 走 Read 工具 / 二进制→`<cwd>/downloads/` 路径提示 /
+  >20MB 婉拒）；claude runner stdin **统一迁移** stream-json 信封（init+resume
+  两腿 probe 实证，图片块 base64）；codex `-i` / pi `@file` 扇出；dsh 婉拒文案。
+- 开关与产品面：providerConfig `visionInput`（claude/codex/pi，默认关，dsh 不出）
+  + 试跑面附件上传（robots.js 多选文件→base64→api 按 sha256/magic-bytes 落盘
+  透传 runner 直跑；/test 路由 body 上限放宽到 28MB）。媒体仓库 per-bot 200MB
+  LRU + 启动清 7 天旧件。
+- 前置修复（Phase 0）：chatRef/raw 双重语义（wecom 整帧对象曾让后台模式最终
+  推送被 adapter.push 正则丢弃——typeof string 判定回落 chatKey）；voice 识别
+  文本（`voice.content`）直入 text 路径。
+- 验证：真模型 e2e 金标准（加密企微图→全链路→真 claude 答出颜色，
+  `test/e2e/multimodal-image.realtest.js`）+ probe 抓包入 baselines + 新增测试
+  33 例。未验证项见 DESIGN-MULTIMODAL §6（生产模型视觉/codex·pi 真模型腿/
+  生产回调抓样）。
+  **盲评修复（0 P0/4 P1/4 P2 全清）**：下载超时覆盖 headers+**body 全程**（弱网
+  拖住 body 曾拖满 undici ~300s）+ 流式逐 chunk 计数（无 content-length 也不全量
+  入内存）；附件预算两层化（adapter 卡数量/引擎+runner 卡 base64 总量 ≤9MB——
+  2×4MB 曾击穿 claude stdin 10MB 裸报错）；试跑面 file kind 走 `fileSectionFor`
+  同口径（曾静默丢弃）；vision 门禁只拦图片（file 全 provider 放行，dsh 用户发
+  txt 曾收到「不支持图片」）；读不到的图在 prompt 注记不静默；DECLINE 文案按
+  能力矩阵重写（voice 已支持）。负面回归 6 例。
+  **复测轮（首轮 8/8 PASS）新增 6 P2 并全修**：试跑面 body 上限 28MB→112MB
+  （4×20MB base64 ≈106.7MB——两个 15MB PDF 曾必 413；UI 侧加同口径聚合预检）；
+  图片总量预算**只对 claude 生效**（stdin 传输约束；codex -i / pi @file 走 argv
+  不设总量，与试跑面行为一致）；纯图无文字在引擎统一补占位（codex/pi stdin 曾
+  收到空串）；mixed 超额图的 vision/too-many 双注记去重；无 path 的 image 条目
+  进注记不留静默洞；文档/注释三处自查纠正。新增回归 6 例。
+
 ### Added — 工具资产 kind `scope-recall`（B 产品化，2026-11-10）
 
 - 记忆层外部系统产品化（MEMORY-RESEARCH §4 路径 B）：检索式长期记忆

@@ -100,7 +100,27 @@ async function main() {
   // Drain ALL of stdin first (the prompt); stored raw for suite assertions.
   const chunks = [];
   for await (const c of process.stdin) chunks.push(c);
-  if (HOME) writeFileSync(join(HOME, 'last-prompt'), Buffer.concat(chunks));
+  const raw = Buffer.concat(chunks);
+  if (HOME) {
+    writeFileSync(join(HOME, 'last-prompt'), raw);
+    // stream-json 信封（DESIGN-MULTIMODAL Phase 1，统一迁移）：识别
+    // --input-format stream-json 后把 last-prompt 改写为解码后的 text 块，
+    // 另落 last-envelope.json（text + 图片元数据 media_type/字节数）——
+    // 套件断言图片块真的进了 stdin 载荷，而不只看 argv。
+    if (argv.includes('--input-format')) {
+      const line = raw.toString('utf8').split('\n').find((l) => l.trim() !== '');
+      try {
+        const parsed = JSON.parse(line ?? '');
+        const blocks = parsed?.message?.content ?? [];
+        const text = blocks.filter((b) => b?.type === 'text').map((b) => b.text ?? '').join('\n');
+        const images = blocks
+          .filter((b) => b?.type === 'image')
+          .map((b) => ({ media_type: b.source?.media_type ?? null, bytes: Buffer.from(b.source?.data ?? '', 'base64').length }));
+        writeFileSync(join(HOME, 'last-prompt'), text);
+        writeFileSync(join(HOME, 'last-envelope.json'), `${JSON.stringify({ text, images }, null, 2)}\n`);
+      } catch { /* 非 NDJSON 信封（畸形输入）：保持 raw 落盘 */ }
+    }
+  }
 
   switch (MODE) {
     case 'ok':

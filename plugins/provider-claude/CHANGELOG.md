@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+### Added — stdin 统一迁移 stream-json 信封（DESIGN-MULTIMODAL Phase 1，2026-11-10）
+
+- argv 增 `--input-format stream-json`（headless 约束：必须配
+  `--output-format stream-json`，argv 本就有）；stdin 从裸字符串改为单条 NDJSON
+  user 信封（`buildEnvelope`：text 块 + 图片 base64 块，纯图消息给占位文本
+  「（用户发来图片，无文字说明）」）。**统一迁移、不做条件分支**——依据 probe
+  实证：init 腿与 `--resume` 腿图文信封均 subtype=success 且 resume 的
+  system/init 重发同一 session_id（`test/probe-baselines/
+  claude-streamjson-image*.ndjson`）。run 签名增 `attachments`（kind:image 条目
+  才进信封；读失败跳过不炸轮）。configSchema 增 `visionInput`（默认关）+
+  `features: { vision: true }` 能力声明。e2e 金标准：加密企微图全链路→真
+  claude 答出颜色（`test/e2e/multimodal-image.realtest.js`）。
+
 ### Added
 
 - rtk 计划面 + ripgrep 预检（W3 T3，§7.1/§7.2）：rtk→`{kind:'rtk-init', flavor:'claude',

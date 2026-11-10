@@ -126,6 +126,9 @@ export default {
 
   activate(ctx) {
     ctx.registerProvider(PORT_ID, {
+      // 能力声明（DESIGN-MULTIMODAL §4.4）：附件放行与文案分级的依据
+      // （botFeatures().visionSupported）；dsh 不声明（无视觉）。
+      features: { vision: true },
       // Shape of the providerConfig block a bot carries in bots.json
       // (PLUGIN-DEV §8).
       configSchema: [
@@ -150,6 +153,10 @@ export default {
         // 仅在 cot 风格内抑制 💭 行，不再能把进度行变回详细汇报——默认已
         // 翻转为 polite（owner 决策）。
         { key: 'progressCoT', label: '进度行展示思维链摘要（已废弃，改用工作汇报风格）', type: 'bool', default: true },
+        // visionInput（DESIGN-MULTIMODAL Phase 2）：图片输入总开关，默认关。
+        // 开启后图片以位置参数 @<path> 挂进首提示（print 模式实证）；模型
+        // 必须具备视觉能力，图片按视觉 token 计费。
+        { key: 'visionInput', label: '图片输入（允许用户发图；需模型具备视觉能力，图片按视觉 token 计费）', type: 'bool', default: false },
       ],
 
       // Semantic validation on top of the schema types: cwd/model presence,

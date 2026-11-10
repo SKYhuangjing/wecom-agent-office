@@ -23,6 +23,8 @@
 // first-class case: a doomed turn never reaches runTurnImpl at all.
 
 import { randomUUID } from 'node:crypto';
+import { copyFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { maskOutbound } from './middleware.js';
 import { formatTurnBlock } from './ledger.js';
 import { createPoliteProgress, POLITE_TEMPLATE_DEFAULT } from './progressor.js';
@@ -93,6 +95,93 @@ export const DRAIN_REFUSAL_TEXT = '⚠️ 服务维护，未处理，请重发';
 const TRUNC_FINAL = '…（完整内容见会话页）';
 const TRUNC_PROGRESS = '…(内容较长，已截断)';
 const HANDOFF_HEADER = '以下是本对话此前的记录（供上下文参考）：';
+
+// —— 附件文件分级（DESIGN-MULTIMODAL §4.3）——————————————————————————————
+// 纯函数区：file 附件 → prompt 段落（图片附件不进这里，走 runner 扇出面：
+// claude 信封 / codex -i / pi @file）。文本类内联让四家 provider 全部受益；
+// PDF 只有 claude 的 Read 原生渲染；二进制落一份工作副本到 <cwd>/downloads/
+//（media store 是不可信入口的审计面，cwd 是模型的作业面），路径永远由
+// sha256 决定（filename 只作展示）。
+
+const TEXT_INLINE_MAX_BYTES = 64 * 1024;
+
+// 图片附件总量预算（盲评 P1-2）：单图 4MB 上限只算一张——2×4MB 的 base64
+//（×4/3 ≈ 10.7MB）会击穿 claude stdin 10MB 硬上限，用户只拿到通用「任务
+// 失败」无分级。解密后字节总和 ≤6.75MB（base64 后 ≤9MB，留 1MB 余量）；
+// 超出的图逐张转 image-budget 注记（先到先得、好图保留），runner 侧另有
+// 同口径兜底（provider-claude buildEnvelope）。
+// 只对 claude 生效（复测 P2-2 设计表态）：该预算是 stdin 传输约束，codex -i /
+// pi @file 走 argv 传路径、无此上限——全局照搬会白丢好图，且与试跑面（不经
+// 引擎预算）行为不一致；单图 4MB 的落盘红线仍在 media store，成本面不变。
+const MAX_IMAGE_BUDGET_BYTES = 6.75 * 1024 * 1024;
+
+// 纯图无文字的占位说明（复测 P2-3）：codex/pi 的 stdin 是裸 prompt，空串=<CLI
+// 收到空输入>，最坏直接报错让用户只看到通用「任务失败」。统一在引擎补占位，
+// 四家行为一致；claude runner 的同款占位保留为最后一道兜底。
+const PURE_IMAGE_PROMPT = '（用户发来图片，无文字说明）';
+
+// 文本嗅探：无 NUL 字节且能整体 fatal-utf8 解码 → 文本。二进制半解码混进
+// prompt 是静默污染，宁可走二进制分支。
+function looksLikeText(bytes) {
+  if (bytes.length === 0 || bytes.includes(0)) return false;
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function workingCopy(att, cwd) {
+  const dir = join(cwd, 'downloads');
+  mkdirSync(dir, { recursive: true });
+  // 目标名优先 sha256（红线：路径由内容定，filename 不进路径）；sha256 缺
+  // 席（api 试跑面透传等）回落 basename——已剥目录，downloads/ 内无穿越面。
+  const base = basename(att.path);
+  const dot = base.lastIndexOf('.');
+  const ext = dot > 0 ? base.slice(dot) : '.bin';
+  const name = typeof att.sha256 === 'string' && /^[0-9a-f]{16,}$/.test(att.sha256)
+    ? `${att.sha256}${ext}` : base;
+  const dest = join(dir, name);
+  copyFileSync(att.path, dest);
+  return dest;
+}
+
+export function fileSectionFor(att, { provider, cwd }) {
+  const label = att?.name || String(att?.sha256 ?? '').slice(0, 12);
+  try {
+    // PDF 先于文本嗅探分流：mediaType 是 media store 落盘时 magic bytes 钉
+    // 死的（后缀不可信），%PDF 头恰好也 utf8 可解码——先嗅探会把 PDF 当
+    // 文本内联成乱码。
+    if (att.mediaType === 'application/pdf') {
+      if (provider !== 'claude') {
+        return `（用户发来 PDF「${label}」，当前引擎暂不支持读取 PDF——请向用户说明，建议改发文字或截图。）`;
+      }
+      const dest = workingCopy(att, cwd);
+      return `用户发来 PDF「${label}」，已保存到 ${dest}（请直接用 Read 工具读取该路径）。`;
+    }
+    const bytes = readFileSync(att.path);
+    if (bytes.length <= TEXT_INLINE_MAX_BYTES && looksLikeText(bytes)) {
+      return `用户发来文件「${label}」，内容如下：\n\`\`\`\n${bytes.toString('utf8')}\n\`\`\``;
+    }
+    const dest = workingCopy(att, cwd);
+    return `用户发来文件「${label}」，已保存到 ${dest}（请按需用工具读取该路径处理）。`;
+  } catch (e) {
+    return `（用户发来文件「${label}」，但读取失败：${String(e?.message ?? e).slice(0, 120)}）`;
+  }
+}
+
+// adapter 已拒/下载失败的附件：一行注记让模型向用户说明（不炸不静默）。
+export function failureSection(f) {
+  const why = f?.code === 'engine-no-vision' ? '当前引擎暂不支持图片'
+    : f?.code === 'vision-off' ? '图片处理未开启'
+      : f?.code === 'too-large' ? '文件过大'
+        : f?.code === 'too-many' ? '附件数量超限'
+          : f?.code === 'image-budget' ? '图片总量过大（请分批发送）'
+            : f?.code === 'unsupported-type' ? '图片格式不支持'
+              : '下载失败';
+  return `（用户消息中有附件未能处理：${why}——请据此向用户说明。）`;
+}
 
 // Unified events (§5) → timeline kinds (§3). session/error/final get no
 // timeline row here: the closing 'turn' row already carries the outcome.
@@ -213,7 +302,12 @@ export async function defaultRunTurn(bot, msg, ac) {
   const chatKey = msg.chatKey;
   const provider = bot.provider;
   const bornCwd = bot.providerConfig?.cwd;
-  const chatRef = msg.raw ?? chatKey; // the adapter resolves the push target (§4)
+  // raw 的双重语义钉死（DESIGN-MULTIMODAL §1.2-7）：adapter 传来的 raw 是
+  // 整帧回调对象（wecom 现状，测试也在断言它），而 push 引用必须是渠道可
+  // 解析的字符串（adapter.push 的 wecom:(group|single):<id> 正则）。只有
+  // string 形态的 raw 才配当 chatRef；对象整帧回落 chatKey —— 否则后台模式
+  // （10 分钟悬崖）的最终推送会被 push 正则拒绝丢弃。
+  const chatRef = typeof msg.raw === 'string' ? msg.raw : chatKey;
 
   // —— 1. session resolution (§6.3 + §7) ————————————————————————————————
   const entry = cache.get(chatKey);
@@ -260,7 +354,52 @@ export async function defaultRunTurn(bot, msg, ac) {
     sessionId = null;
   }
   const sessionIdWasNull = sessionId === null;
-  const prompt = prefix ? `${prefix}\n\n---\n\n${msg.text}` : msg.text;
+  // —— 附件信封（DESIGN-MULTIMODAL §4.1）：text 语义不变；附件三路分拣 ————
+  // 图片 → runner 扇出面（claude 信封 base64 / codex -i / pi @file）；
+  // 文件 → fileSectionFor 分级（文本内联/PDF→Read 提示/二进制→路径提示）；
+  // 失败 → 注记行（模型向用户说明）。空段过滤保证纯文本轮的 prompt 与
+  // 改造前逐字节一致（prefix\n\n---\n\ntext）。
+  const imageAttachments = [];
+  const promptSections = [prefix, msg.text];
+  // 预算只为 claude 的 stdin 10MB 硬上限存在（信封 base64 传输）；codex/pi 走
+  // argv 传路径，无此传输约束——对它们卡总量会白丢好图，且与试跑面（不经
+  // 引擎预算）行为不一致（复测 P2-2）。
+  let imageBudgetBytes = bot.provider === 'claude' ? MAX_IMAGE_BUDGET_BYTES : Infinity;
+  const attachmentNotes = [];
+  for (const a of Array.isArray(msg.attachments) ? msg.attachments : []) {
+    if (a == null || typeof a !== 'object') continue;
+    if (a.kind === 'image') {
+      // 预算内先到先得；size 未知按超限处理（不可信数据红线：缺数字的
+      // 信封条目不配吃预算）。超出的图转注记，绝不静默丢也绝不击穿 stdin。
+      const size = typeof a.size === 'number' && Number.isFinite(a.size) && a.size >= 0 ? a.size : Infinity;
+      if (size <= imageBudgetBytes) {
+        imageAttachments.push(a);
+        imageBudgetBytes -= size;
+      } else {
+        attachmentNotes.push({ kind: 'image', code: 'image-budget' });
+      }
+    } else {
+      promptSections.push(fileSectionFor(a, { provider: bot.provider, cwd: bornCwd }));
+    }
+  }
+  attachmentNotes.push(...(Array.isArray(msg.attachmentFailures) ? msg.attachmentFailures : []));
+  for (const f of attachmentNotes) {
+    promptSections.push(failureSection(f));
+  }
+  // 纯图无文字（复测 P2-3）：codex/pi 的 stdin 是裸 prompt——空串会让 CLI 收到
+  // 空输入（最坏直接报错→用户只见通用「任务失败」）。统一在引擎补占位，四家
+  // 一致；有文本/有文件段时 prompt 非空，纯文本轮仍逐字节不变。
+  const prompt = (() => {
+    const joined = promptSections.filter((s) => typeof s === 'string' && s.trim() !== '').join('\n\n---\n\n');
+    return joined === '' && imageAttachments.length > 0 ? PURE_IMAGE_PROMPT : joined;
+  })();
+  // 台账摘要（§4.2 审计可溯）：name/sha256/size；timeline 播报的空文本占位
+  // 也从这里取（纯图消息的 user 概览显示 [附件×N] 而非空串）。
+  const attachmentsSummary = (Array.isArray(msg.attachments) ? msg.attachments : [])
+    .filter((a) => a != null && typeof a === 'object')
+    .map((a) => ({ kind: a.kind, name: a.name ?? '', sha256: a.sha256 ?? '', size: a.size ?? null }));
+  const userBrief = msg.text !== '' ? msg.text
+    : (attachmentsSummary.length > 0 ? `[附件×${attachmentsSummary.length}]` : msg.text);
 
   // —— 2. outbound plumbing: budget + throttle + truncation + mask (§6.4) ————
   const startedAt = Date.now();
@@ -529,6 +668,7 @@ export async function defaultRunTurn(bot, msg, ac) {
       sessionId: result?.sessionId || sessionId || '',
       ok: reason === 'completed', reason,
       tokens: usageAcc.summary().totalTokens, cost: null,
+      attachments: attachmentsSummary.length > 0 ? attachmentsSummary : undefined,
     });
     // UI bridge (§8 SSE ledger/turn): the row is durable — announce it right
     // after the append so session/timeline pages can refetch immediately
@@ -550,7 +690,7 @@ export async function defaultRunTurn(bot, msg, ac) {
     // mark rows delivered that nobody delivered.
     engine.timeline?.push({
       botId: bot.id, chatKey, kind: 'turn',
-      text: `${msg.text} → ${(result?.finalText || '').slice(0, 60)}`,
+      text: `${userBrief} → ${(result?.finalText || '').slice(0, 60)}`,
     });
     // Observability (P2): one usage summary row per run end — the token cost
     // of this turn in the local ring, beside the ledger's durable tokens field.
@@ -598,7 +738,10 @@ export async function defaultRunTurn(bot, msg, ac) {
   // marks a fresh session, session=<id> a native resume. Logged here, at the
   // spawn point, so an aborted-before-runner turn never claims a start.
   engine.log.info?.(`run start ${chatKey} bot=${bot.id} session=${sessionId || '(new)'}`);
-  const runArgs = () => ({ prompt, sessionId, signal: ac.signal, timeoutMs: hardTimeoutMs, onEvent });
+  // attachments：图片附件扇出面（DESIGN-MULTIMODAL §4.1）——runner 按
+  // provider 各自消费（claude 信封/codex -i/pi @file），不认识的 runner
+  // 天然忽略（dsh）。
+  const runArgs = () => ({ prompt, sessionId, signal: ac.signal, timeoutMs: hardTimeoutMs, onEvent, attachments: imageAttachments });
   const synthError = (e) => ({
     ok: false, code: 'error', finalText: '', aborted: false,
     sessionId: sessionId ?? null, reason: 'exception', detail: { error: String(e?.message ?? e) },

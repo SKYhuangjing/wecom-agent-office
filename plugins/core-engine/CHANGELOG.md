@@ -4,6 +4,23 @@
 
 ## [Unreleased]
 
+### Added — 附件信封与文件分级（DESIGN-MULTIMODAL Phase 1-2，2026-11-10）
+
+- defaultRunTurn 消费 `msg.attachments` / `msg.attachmentFailures`：图片透传
+  runner 扇出面（runArgs.attachments，不认识的 runner 天然忽略）；file 附件
+  分级进 prompt（`fileSectionFor`：文本 ≤64KB fenced 内联四家全受益 / PDF→
+  claude 工作副本+Read 工具提示、其余引擎婉拒注记 / 二进制→
+  `<cwd>/downloads/<sha256>.<ext>` 路径提示）；recordTurn 增 attachments 摘要
+  （name/sha256/size），timeline 纯图轮显示 `[附件×N]`；纯文本轮 prompt 逐字节
+  不变（空段过滤保证）。channelFacade 增 `botFeatures()`（provider 声明
+  `features.vision` × `providerConfig.visionInput`）。
+- 前置修复（§1.2-7）：chatRef/raw 双重语义——`msg.raw` 为 wecom 整帧对象时
+  后台模式最终推送会被 adapter.push 正则拒绝丢弃，改 `typeof string` 判定，
+  对象整帧回落 chatKey（测试覆盖对象/字符串两腿）。
+- 试跑面 `/api/bots/:id/test` 支持 `attachments`（base64 上传→api 侧按
+  sha256/magic-bytes 落盘 `data/media/testbot/`→透传 runner 直跑；该路由
+  body 上限放宽到 28MB；kind/data/数量/大小/图片 magic 全矩阵 400 校验）。
+
 ### Added — 工具资产 kind `scope-recall`（B 产品化，2026-11-10）
 
 - 第三件内置工具资产（seed 按 kind 判重，**不进向导默认装备包**）：检索式长期记忆

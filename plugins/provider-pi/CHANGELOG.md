@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### Added — 图片附件扇出（DESIGN-MULTIMODAL Phase 2，2026-11-10）
+
+- run 签名增 `attachments`：图片条目以 `@<path>` 位置参数追加 argv 尾部
+  （print 模式实证可用，`pi --help` usage 行 `[@files...]`；RPC 模式拒 @file
+  ——WAO 是 print 模式无碍）。configSchema 增 `visionInput`（默认关）+
+  `features: { vision: true }` 能力声明。真模型看图端到端未验证（fake 契约
+  `test/provider/attachment-fanout.test.js` 锁 argv 形状）。
+
 ### Added
 
 - rtk 计划面 + ripgrep 预检（W3 T3，§7.1/§7.2）：rtk→`{kind:'rtk-init', flavor:'pi',

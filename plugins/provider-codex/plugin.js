@@ -152,6 +152,9 @@ export default {
 
   activate(ctx) {
     ctx.registerProvider(PORT_ID, {
+      // 能力声明（DESIGN-MULTIMODAL §4.4）：附件放行与文案分级的依据
+      // （botFeatures().visionSupported）；dsh 不声明（无视觉）。
+      features: { vision: true },
       // Shape of the providerConfig block a bot carries in bots.json
       // (PLUGIN-DEV §8).
       configSchema: [
@@ -175,6 +178,10 @@ export default {
         { key: 'progressCoT', label: '进度行展示思维链摘要（已废弃，改用工作汇报风格）', type: 'bool', default: true },
         { key: 'codexBin', label: 'codex 可执行文件（PATH 或绝对路径）', type: 'string', default: 'codex' },
         { key: 'codexHome', label: 'codex 配置目录（默认 ~/.codex；注入 $CODEX_HOME，会话 rollout 也在其 sessions/ 下——readHistory 同源）', type: 'string' },
+        // visionInput（DESIGN-MULTIMODAL Phase 2）：图片输入总开关，默认关。
+        // 开启后图片以 codex exec -i <path> 附带（fresh/resume 两腿）；模型
+        // 必须具备视觉能力，图片按视觉 token 计费。
+        { key: 'visionInput', label: '图片输入（允许用户发图；需模型具备视觉能力，图片按视觉 token 计费）', type: 'bool', default: false },
       ],
 
       // Semantic validation on top of the schema types: cwd presence, sandbox

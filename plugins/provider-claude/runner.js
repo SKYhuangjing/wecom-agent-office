@@ -16,6 +16,7 @@
 //   - gateway routing (M2 评审事实): model.baseURL → ANTHROPIC_BASE_URL and
 //     model.apiKey → ANTHROPIC_AUTH_TOKEN (or model.apiKeyEnv); there is no
 //     OPENAI_BASE_URL route for claude.
+import { readFileSync } from 'node:fs';
 import { spawnCli } from '../../src/kernel/spawn.js';
 import { childEnv } from '../../src/kernel/safeEnv.js';
 import { readHistory } from './history.js';
@@ -50,6 +51,58 @@ const LOCK_CONFLICT_RE = /session is locked|locked by another (?:claude |process
 const MISSING_CREDENTIAL_RE = /ANTHROPIC_API_KEY|invalid api key|authentication|unauthorized/i;
 const DEFAULT_ESCALATION_MS = 3000;
 const STDERR_TAIL_CHARS = 4000;
+
+// stdin NDJSON 信封（DESIGN-MULTIMODAL Phase 1，决策 2026-11-10）：统一迁移
+// —— 所有轮次都走 `--input-format stream-json` + 单条 user 消息信封，不按
+// 「有无附件」分支。依据 probe 实证（test/probe-baselines/
+// claude-streamjson-image.ndjson / -resume.ndjson）：init 腿与 resume 腿
+//（`--resume <id>` + 信封 + base64 图片块）均 subtype=success 且 resume 的
+// system/init 重发同一 session_id——会话延续与图片输入同时成立，纯文本信封
+// 设计稿亦已实测。统一路径 = fake-claude 只需识别一种 stdin 形状，无混合
+// 分支；`--input-format` 必须配 `--output-format stream-json`（argv 本就有）。
+// 空文本（纯图消息）给占位说明，模型才知道用户意图。
+// 盲评 P1-2/P2-1：读不到的图与 base64 总量超预算的图逐张跳过，并在 text
+// 块尾追加注记行——静默跳过违反「拒绝优于静默丢」（原注释声称「engine 台账
+// 可溯」并不成立：image 不进 prompt，模型与用户都不会知道少了图）。预算
+//（base64 后 ≤9MB）是 engine MAX_IMAGE_BUDGET_BYTES 之外的同口径兜底
+//（stdin 10MB 硬上限留余量）——engine 用信封里的 size 预扣，这里按真实
+// base64 长度复核，防信封 size 造假或缺席。
+const MAX_ENVELOPE_BASE64_BYTES = 9 * 1024 * 1024;
+function buildEnvelope(prompt, attachments) {
+  const skipped = [];
+  const imageBlocks = [];
+  let budget = MAX_ENVELOPE_BASE64_BYTES;
+  for (const a of Array.isArray(attachments) ? attachments : []) {
+    if (a == null || typeof a !== 'object' || a.kind !== 'image') continue;
+    // 无 path 的 image 条目=不可信信封（引擎侧「缺数字不配吃预算」的对称面，
+    // 复测 P2-6）：同样进 skipped 注记，不留静默洞。
+    if (typeof a.path !== 'string') { skipped.push(a); continue; }
+    let data;
+    try {
+      data = readFileSync(a.path).toString('base64');
+    } catch {
+      // 引擎刚落盘的文件读不到（被清理/盘故障）：跳过该图并在下方注记
+      // ——绝不静默，也绝不为此炸掉整轮文本。
+      skipped.push(a);
+      continue;
+    }
+    if (data.length > budget) {
+      skipped.push(a);
+      continue;
+    }
+    budget -= data.length;
+    imageBlocks.push({
+      type: 'image',
+      source: { type: 'base64', media_type: a.mediaType ?? 'image/png', data },
+    });
+  }
+  let text = typeof prompt === 'string' && prompt !== '' ? prompt : '（用户发来图片，无文字说明）';
+  if (skipped.length > 0) {
+    text += `\n\n（系统注记：有 ${skipped.length} 张图片未能送达（读取失败或图片总量超限）——请向用户说明，建议重发或分批发送。）`;
+  }
+  const content = [{ type: 'text', text }, ...imageBlocks];
+  return `${JSON.stringify({ type: 'user', message: { role: 'user', content } })}\n`;
+}
 
 // The 前身 describeTool heuristic (wecom-bridge bridge.js / provider-dsh
 // runner): first meaningful input field wins (command||description||pattern||
@@ -90,7 +143,7 @@ export function createRunner({ bot, providerConfig, assets, log, escalationMs = 
   if (pc.claudeConfigDir) extraEnv.CLAUDE_CONFIG_DIR = pc.claudeConfigDir;
   const logger = log ?? console;
 
-  function run({ prompt, sessionId, signal, timeoutMs, onEvent } = {}) {
+  function run({ prompt, sessionId, signal, timeoutMs, onEvent, attachments } = {}) {
     return new Promise((resolve) => {
       const finish = (payload) => resolve(payload); // a Promise settles once; no guard needed
 
@@ -104,7 +157,9 @@ export function createRunner({ bot, providerConfig, assets, log, escalationMs = 
         return;
       }
 
-      const args = ['-p', '--output-format', 'stream-json', '--verbose'];
+      // --input-format stream-json 与 --output-format stream-json 成对
+      //（headless 约束）；stdin 载荷是 buildEnvelope 的 NDJSON 信封。
+      const args = ['-p', '--output-format', 'stream-json', '--verbose', '--input-format', 'stream-json'];
       if (m?.model) args.push('--model', String(m.model));
       if (pc.permissionMode) args.push('--permission-mode', String(pc.permissionMode));
       if (Array.isArray(pc.allowedTools) && pc.allowedTools.length > 0) {
@@ -329,11 +384,12 @@ export function createRunner({ bot, providerConfig, assets, log, escalationMs = 
         finish(buildResult(code));
       });
 
-      // Feed the task on stdin (the whole prompt; `claude -p` reads stdin
-      // when no positional prompt argument is given — verified T1-style).
+      // Feed the task on stdin as the NDJSON user envelope (buildEnvelope 头注
+      // 释：统一迁移，所有轮次同一路径；`claude -p --input-format stream-json`
+      // 把每行 JSON 当一条 user 消息读入——probe 实证见 probe-baselines)。
       child.stdin.on('error', () => { /* EPIPE when the child died first — close/error reports it */ });
       try {
-        child.stdin.write(prompt ?? '');
+        child.stdin.write(buildEnvelope(prompt, attachments));
         child.stdin.end();
       } catch { /* child gone: close/error path owns the result */ }
     });

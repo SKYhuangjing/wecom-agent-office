@@ -76,6 +76,14 @@ const TOOL_LABELS = { bash: 'Bash', read: '读取', edit: '编辑', write: '写�
 export const toolLabel = (name) => TOOL_LABELS[String(name ?? '').toLowerCase()]
   || (String(name ?? 'tool').charAt(0).toUpperCase() + String(name ?? 'tool').slice(1));
 
+// 图片附件 → argv 扇出面（DESIGN-MULTIMODAL Phase 2）：pi 的位置参数
+// `@<path>` 把图片挂进首提示（1.5.0 `pi --help` usage 行 `[@files...]` 实证；
+// print 模式可用，WAO 正是 print 模式）。file 附件不在此列——引擎已把文本
+// 内联/PDF·二进制路径提示进 prompt。
+const imagePathsOf = (attachments) => (Array.isArray(attachments) ? attachments : [])
+  .filter((a) => a != null && typeof a === 'object' && a.kind === 'image' && typeof a.path === 'string')
+  .map((a) => a.path);
+
 export function createRunner({ bot, providerConfig, assets, log, escalationMs = DEFAULT_ESCALATION_MS } = {}) {
   const pc = providerConfig ?? {};
   const piBin = pc.piBin || 'pi';
@@ -124,7 +132,7 @@ export function createRunner({ bot, providerConfig, assets, log, escalationMs = 
   extraEnv.PI_CODING_AGENT_DIR = pc.piAgentDir || piAgentDirFor({ botId: bot?.id });
   const logger = log ?? console;
 
-  function run({ prompt, sessionId, signal, timeoutMs, onEvent } = {}) {
+  function run({ prompt, sessionId, signal, timeoutMs, onEvent, attachments } = {}) {
     return new Promise((resolve) => {
       const finish = (payload) => resolve(payload); // a Promise settles once; no guard needed
 
@@ -151,6 +159,9 @@ export function createRunner({ bot, providerConfig, assets, log, escalationMs = 
       }
       if (typeof pc.prompt === 'string' && pc.prompt !== '') args.push('--append-system-prompt', pc.prompt);
       for (const f of assetFlags) args.push(f);
+      // 图片附件：@<path> 位置参数（见 imagePathsOf 注释），追加在 flags 之后
+      //——print 模式无位置 prompt，stdin 读任务，@file 与之正交。
+      for (const p of imagePathsOf(attachments)) args.push(`@${p}`);
 
       let child;
       try {

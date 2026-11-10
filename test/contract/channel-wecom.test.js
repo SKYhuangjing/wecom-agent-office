@@ -235,7 +235,7 @@ test('group text → engine.onMessage with three-part chatKey; progress() emits 
   }
 });
 
-test('non-text inbound (image / mixed-with-only-image) → verbatim 暂不支持 decline', async () => {
+test('non-text inbound: video keeps the verbatim 暂不支持 copy; image now routes to the attachment copy (this engine exposes no botFeatures → 引擎不支持)', async () => {
   const server = await startFakeWecom();
   const engine = makeEngine();
   const adapter = makeAdapter(server, engine, makeLog());
@@ -243,13 +243,26 @@ test('non-text inbound (image / mixed-with-only-image) → verbatim 暂不支持
     adapter.start();
     await until(() => adapter.status().state === 'online');
 
+    // video：真正的未支持类型（无媒体项、无识别文本）→ 分级后的通用文案
+    //（盲评 P2-2：原「图片/文件/语音暂不支持」在多模态落地后失实——语音/
+    // 图片/文件均已支持，video 等才是真不支持；"never reword" 随本功能作废）
+    server.sendToCurrent(
+      msgCallback('r-vid', { chattype: 'single', from: { userid: 'u2' }, msgtype: 'video', video: { url: 'x' } }),
+    );
+    await until(() => respondFrames(server).some((f) => f.headers.req_id === 'r-vid'));
+    const vid = respondFrames(server).find((f) => f.headers.req_id === 'r-vid');
+    assert.equal(vid.body.msgtype, 'markdown');
+    assert.equal(vid.body.markdown.content, '这类消息暂不支持哦～（视频等类型还不支持；文字、语音、图片和文件都可以，发送图片/文件请用单聊）');
+
+    // image / images-only mixed（DESIGN-MULTIMODAL Phase 1）：附件路径接管，
+    // 本 fake engine 不提供 botFeatures → 「引擎暂不支持图片」分级文案
+    //（wecom-media.test.js 覆盖 vision on/off 的完整矩阵）
     server.sendToCurrent(
       msgCallback('r-img', { chattype: 'single', from: { userid: 'u2' }, msgtype: 'image', image: { url: 'x' } }),
     );
     await until(() => respondFrames(server).some((f) => f.headers.req_id === 'r-img'));
     const img = respondFrames(server).find((f) => f.headers.req_id === 'r-img');
-    assert.equal(img.body.msgtype, 'markdown');
-    assert.equal(img.body.markdown.content, '目前这个机器人只支持文字消息哦～（图片/文件/语音暂不支持）');
+    assert.equal(img.body.markdown.content, '该 bot 的引擎暂不支持图片，仅处理文字部分。');
 
     server.sendToCurrent(
       msgCallback('r-mixed', {
@@ -261,7 +274,7 @@ test('non-text inbound (image / mixed-with-only-image) → verbatim 暂不支持
     );
     await until(() => respondFrames(server).some((f) => f.headers.req_id === 'r-mixed'));
     const mixed = respondFrames(server).find((f) => f.headers.req_id === 'r-mixed');
-    assert.equal(mixed.body.markdown.content, '目前这个机器人只支持文字消息哦～（图片/文件/语音暂不支持）');
+    assert.equal(mixed.body.markdown.content, '该 bot 的引擎暂不支持图片，仅处理文字部分。');
 
     // nothing reached the engine
     assert.equal(engine.messages.length, 0);
@@ -286,6 +299,39 @@ test('empty @ (mention only, no text) → verbatim 空@ decline', async () => {
     const frame = respondFrames(server).find((f) => f.headers.req_id === 'r-empty');
     assert.equal(frame.body.markdown.content, '收到 @，但没有文字内容～在 @ 我之后补上想问的问题就行。');
     assert.equal(engine.messages.length, 0);
+  } finally {
+    adapter.stop();
+    await server.close();
+  }
+});
+
+test('voice: ASR text (voice.content) reaches the engine like text; empty ASR → 空@ decline', async () => {
+  const server = await startFakeWecom();
+  const engine = makeEngine();
+  const adapter = makeAdapter(server, engine, makeLog());
+  try {
+    adapter.start();
+    await until(() => adapter.status().state === 'online');
+
+    // 企微智能机器人回调把语音识别结果直接放在 voice.content
+    // （DESIGN-MULTIMODAL §2.1）——单聊消息，chatKey 按 userid 定界。
+    server.sendToCurrent(
+      msgCallback('r-v1', { chattype: 'single', from: { userid: 'u9' }, msgtype: 'voice', voice: { content: '帮我看下今天的日程' } }),
+    );
+    await until(() => engine.messages.length === 1);
+    const m = engine.messages[0];
+    assert.equal(m.text, '帮我看下今天的日程');
+    assert.equal(m.chatKey, 'wecom:single:u9');
+    assert.equal(m.chatKind, 'single');
+
+    // 识别为空（content 空串）→ DECLINE_EMPTY_AT 路径，与空 @ 同文案
+    server.sendToCurrent(
+      msgCallback('r-v2', { chattype: 'single', from: { userid: 'u9' }, msgtype: 'voice', voice: { content: '' } }),
+    );
+    await until(() => respondFrames(server).some((f) => f.headers.req_id === 'r-v2'));
+    const frame = respondFrames(server).find((f) => f.headers.req_id === 'r-v2');
+    assert.equal(frame.body.markdown.content, '收到 @，但没有文字内容～在 @ 我之后补上想问的问题就行。');
+    assert.equal(engine.messages.length, 1, 'empty ASR never reaches the engine');
   } finally {
     adapter.stop();
     await server.close();

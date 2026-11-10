@@ -5,17 +5,27 @@
 // under /api does. Body parsing is ours (64KB cap; the shell parses nothing),
 // and EVERY JSON response is scrubbed by sanitize before serialization:
 // §8 — 响应永不回显 secret.
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { saveBots, validateBot } from './bots.js';
 import {
   bindingSummary, bindAsset, buildPlan, maskAsset, memoryUpgradeHint, newAssetId, rematerializeBots,
   restoreMaskedContent, saveAssets, unbindAsset, validateAsset,
 } from './assets.js';
-import { DRAIN_REFUSAL_TEXT, createUsageAccumulator } from './engine.js';
+import { DRAIN_REFUSAL_TEXT, createUsageAccumulator, fileSectionFor } from './engine.js';
 
 const BODY_LIMIT_BYTES = 64 * 1024;
+// 试跑面附件上传（DESIGN-MULTIMODAL 收尾 13）：上限必须让 UI 承诺的
+// 「4 个 × 20MB」真的可上传——4×20MB 原始字节 base64 后 ≈106.7MB，留 JSON
+// 开销余量到 112MB（复测 P2-1：原 28MB 只按 4 张图片算，选两个 15MB PDF 必
+// 413 且报错不可读）。端点在 WAO_TOKEN + loopback 下属操作者工具面，112MB
+// 内存峰值可接受；UI 侧另有同口径聚合预检（robots.js）先于上传拦截。
+const TEST_BODY_LIMIT_BYTES = 112 * 1024 * 1024;
 const TEST_PROMPT = '回复：收到';
+const TEST_MAX_ATTACHMENTS = 4;
+const TEST_MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+const TEST_MAX_FILE_BYTES = 20 * 1024 * 1024;
 // 60s: the codex probe measured ~25s on the real gateway (M2 T4) — at 30s
 // that left only ~5s of margin, so a slow-gateway day tipped the probe into
 // timeout. No test pins this value (M2 终审 follow-up).
@@ -626,6 +636,46 @@ async function listBotsHandler({ res, state }) {
   sendJson(res, 200, listBotsOp(state));
 }
 
+// magic bytes 判定（DESIGN-MULTIMODAL 收尾 13）——与 channel-wecom
+// media.js sniffType 同构（复制即契约：core-engine 不跨插件 import，两边
+// 改动需同步测试）。上传的文件名/声明的类型一律不作依据（红线）。
+function sniffUploadExt(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 4) return null;
+  if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47 && buf[4] === 0x0d && buf[5] === 0x0a && buf[6] === 0x1a && buf[7] === 0x0a) return { ext: 'png', mediaType: 'image/png' };
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return { ext: 'jpg', mediaType: 'image/jpeg' };
+  if (buf.subarray(0, 4).toString('latin1') === 'GIF8') return { ext: 'gif', mediaType: 'image/gif' };
+  if (buf.length >= 12 && buf.subarray(0, 4).toString('latin1') === 'RIFF' && buf.subarray(8, 12).toString('latin1') === 'WEBP') return { ext: 'webp', mediaType: 'image/webp' };
+  if (buf.subarray(0, 5).toString('latin1') === '%PDF-') return { ext: 'pdf', mediaType: 'application/pdf' };
+  if (buf[0] === 0x50 && buf[1] === 0x4b && (buf[2] === 0x03 || buf[2] === 0x05 || buf[2] === 0x07)) return { ext: 'zip', mediaType: 'application/zip' };
+  return null;
+}
+
+// base64 上传 → 落盘工作副本（dataDir/media/testbot/<sha256>.<ext>，试跑面
+// 工作目录，量小可随手清，不入 bot 配额）→ 附件信封条目。
+function materializeTestAttachment(state, entry, index) {
+  const bad = (msg) => httpError(400, `attachments[${index}]: ${msg}`);
+  if (entry == null || typeof entry !== 'object') throw bad('must be an object');
+  if (entry.kind !== 'image' && entry.kind !== 'file') throw bad("kind must be 'image' or 'file'");
+  if (typeof entry.data !== 'string' || entry.data === '') throw bad('data (base64) is required');
+  const bytes = Buffer.from(entry.data, 'base64');
+  if (bytes.length === 0) throw bad('data is not valid base64');
+  const max = entry.kind === 'image' ? TEST_MAX_IMAGE_BYTES : TEST_MAX_FILE_BYTES;
+  if (bytes.length > max) throw bad(`${entry.kind} exceeds ${Math.round(max / 1024 / 1024)}MB`);
+  const sniffed = sniffUploadExt(bytes);
+  if (entry.kind === 'image' && sniffed == null) throw bad('not a recognized image (png/jpg/gif/webp)');
+  const ext = sniffed?.ext ?? 'bin';
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  const dir = join(dirname(state.botsFile), 'media', 'testbot');
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `${sha256}.${ext}`);
+  if (!existsSync(path)) writeFileSync(path, bytes);
+  return {
+    kind: entry.kind, path, sha256, size: bytes.length,
+    mediaType: sniffed?.mediaType ?? 'application/octet-stream',
+    name: String(entry.name ?? '').replace(/[\r\n\t\0]/g, ' ').replace(/[/\\]/g, '_').trim().slice(0, 120),
+  };
+}
+
 // Probe run: the provider runner DIRECTLY — no channel, no engine chain, no
 // ledger row. Answers "does this bot's provider still work?" in isolation.
 // An optional JSON body { sessionId, prompt } shapes the probe: sessionId
@@ -665,6 +715,30 @@ async function testBotOp(state, id, reqBody) {
   // CLI; 400 with the directory named instead (same copy as the CRUD path).
   const cwdErr = cwdExistsError(bot);
   if (cwdErr != null) throw httpError(400, cwdErr);
+  // 附件（DESIGN-MULTIMODAL 收尾 13）：透传 runner 直跑（不进引擎链，沿用
+  // 现有口径）。浏览器拿不到本地路径，UI 以 base64 上传——这里按引擎同红线
+  // 落盘工作副本：路径由 sha256 定、ext 由 magic bytes 定（上传的 mediaType/
+  // 文件名不作依据，name 仅清洗后作展示）。
+  let attachments = [];
+  if (reqBody.attachments !== undefined && reqBody.attachments !== null) {
+    if (!Array.isArray(reqBody.attachments) || reqBody.attachments.length === 0) {
+      throw httpError(400, 'attachments must be a non-empty array when present');
+    }
+    if (reqBody.attachments.length > TEST_MAX_ATTACHMENTS) {
+      throw httpError(400, `at most ${TEST_MAX_ATTACHMENTS} attachments per probe`);
+    }
+    attachments = reqBody.attachments.map((a, i) => materializeTestAttachment(state, a, i));
+  }
+  // 盲评 P1-3：file 附件不能只透传 runner——三家 runner 一致只认 image，
+  // 文件会被静默丢弃而试跑「成功」，与 UI 按钮的「文件按文本内联/PDF/二进制
+  // 分级」承诺相反（拒绝优于静默丢）。复用引擎同款 fileSectionFor 拼 prompt
+  //（PDF 的 provider 分流逻辑天然生效），runner 只收 image 条目。
+  const imageAttachments = attachments.filter((a) => a.kind === 'image');
+  const fileSections = attachments.filter((a) => a.kind !== 'image')
+    .map((a) => fileSectionFor(a, { provider: bot.provider, cwd: bot.providerConfig?.cwd }));
+  const effectivePrompt = [prompt, ...fileSections]
+    .filter((s) => typeof s === 'string' && s.trim() !== '')
+    .join('\n\n---\n\n');
   // §3.1 asset faces (W3 T5): the probe must interrogate the bot AS EQUIPPED
   // — the same enrichment the engine's runner gets (bare plan + manifest file
   // targets), so 岗前测试 exercises prompt (--append-system-prompt) and mcp
@@ -680,8 +754,9 @@ async function testBotOp(state, id, reqBody) {
   // token 优化的前后对比不再等生产流量。
   const usageAcc = createUsageAccumulator();
   const result = await runner.run({
-    prompt,
+    prompt: effectivePrompt,
     sessionId,
+    attachments: imageAttachments,
     signal: new AbortController().signal,
     timeoutMs: TEST_TIMEOUT_MS,
     onEvent: (ev) => { events++; usageAcc.observe(ev); },
@@ -722,7 +797,7 @@ async function testBotHandler({ req, res, m, state }) {
     // provider availability also outranks body-parse errors — the pre-refactor order
     throw httpError(400, `provider ${bot.provider} unavailable`);
   }
-  sendJson(res, 200, await testBotOp(state, id, await readBody(req)));
+  sendJson(res, 200, await testBotOp(state, id, await readBody(req, TEST_BODY_LIMIT_BYTES)));
 }
 
 function ledgerOp(state, { bot, chat }) {

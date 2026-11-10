@@ -385,6 +385,7 @@ const DetailSettings = ({ WAO, bot, ports, onSaved, onDeleted, focusTest }) => {
   const [saving, setSaving] = useState(false);
   const [offboardFor, setOffboardFor] = useState(null);
   const [testPrompt, setTestPrompt] = useState('');
+  const [testFiles, setTestFiles] = useState([]); // 试跑附件（DESIGN-MULTIMODAL）：[{kind, data(base64), name}]
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [testError, setTestError] = useState(null);
@@ -451,13 +452,51 @@ const DetailSettings = ({ WAO, bot, ports, onSaved, onDeleted, focusTest }) => {
     }
   };
 
+  // 试跑附件选择（DESIGN-MULTIMODAL 收尾 13）：浏览器拿不到本地路径，读成
+  // base64 随 body 上传（api 侧按 sha256/magic bytes 落盘后透传 runner）。
+  // 客户端预检与服务端同口径（图片 ≤4MB、文件 ≤20MB、至多 4 个；**合计**
+  // base64 ≤108MB——服务端 body 112MB 留 JSON 余量。复测 P2-1：只卡单文件
+  // 会让「2 个 15MB PDF」这类合法组合上传后才 413，报错还不人话）。
+  const onTestFilesPicked = async (ev) => {
+    const BASE64_TOTAL_CAP = 108 * 1024 * 1024;
+    const picked = [...(ev.target.files ?? [])].slice(0, 4);
+    ev.target.value = ''; // 同名文件可重复选择
+    const next = [];
+    let budget = BASE64_TOTAL_CAP
+      - (testFiles ?? []).reduce((s, f) => s + String(f?.data ?? '').length, 0);
+    for (const f of picked) {
+      const kind = String(f.type ?? '').startsWith('image/') ? 'image' : 'file';
+      const cap = kind === 'image' ? 4 * 1024 * 1024 : 20 * 1024 * 1024;
+      if (f.size > cap) {
+        setTestError(`「${f.name}」超过 ${Math.round(cap / 1024 / 1024)}MB 上限，未加入`);
+        continue;
+      }
+      const buf = new Uint8Array(await f.arrayBuffer());
+      let binary = '';
+      for (let i = 0; i < buf.length; i += 0x8000) {
+        binary += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+      }
+      const data = btoa(binary);
+      if (data.length > budget) {
+        setTestError(`附件合计过大（上传编码后上限约 108MB）——「${f.name}」未加入，请减少文件或分批试跑`);
+        continue;
+      }
+      budget -= data.length;
+      next.push({ kind, data, name: f.name });
+    }
+    if (next.length > 0) setTestFiles((cur) => [...cur, ...next].slice(0, 4));
+  };
+
   const runTest = async () => {
     setTesting(true);
     setTestResult(null);
     setTestError(null);
     try {
       const prompt = testPrompt.trim();
-      const result = await api(`/api/bots/${encodeURIComponent(draft.id)}/test`, prompt === '' ? {} : { prompt });
+      const body = {};
+      if (prompt !== '') body.prompt = prompt;
+      if (testFiles.length > 0) body.attachments = testFiles;
+      const result = await api(`/api/bots/${encodeURIComponent(draft.id)}/test`, body);
       setTestResult(result);
     } catch (err) {
       setTestError(err?.message ?? String(err));
@@ -565,8 +604,26 @@ const DetailSettings = ({ WAO, bot, ports, onSaved, onDeleted, focusTest }) => {
             placeholder: '自定义提问（留空 = 固定探针「回复：收到」）',
             onChange: (e) => setTestPrompt(e.target.value),
           }),
+          providerSchema.some((f) => f.key === 'visionInput')
+            ? h('label', {
+              className: 'wb-btn', style: { cursor: 'pointer' },
+              title: '附图片/文件试跑多模态输入（图片直传引擎；文件按文本内联/PDF/二进制分级）。图片 ≤4MB、文件 ≤20MB、至多 4 个',
+            },
+            '📎 附文件',
+            h('input', {
+              type: 'file', multiple: true, style: { display: 'none' },
+              accept: 'image/png,image/jpeg,image/gif,image/webp,.txt,.md,.csv,.json,.log,.pdf',
+              onChange: (e) => void onTestFilesPicked(e),
+            }))
+            : null,
           h('button', { className: 'wb-btn', disabled: testing, onClick: runTest },
             testing ? '运行中…' : '测试运行')),
+        testFiles.length > 0 ? h('div', { className: 'wb-toolbar', style: { flexWrap: 'wrap' } },
+          testFiles.map((f, i) => h('span', {
+            key: i, className: 'wb-hint', style: { cursor: 'pointer' },
+            title: '点击移除',
+            onClick: () => setTestFiles((cur) => cur.filter((_, j) => j !== i)),
+          }, `${f.kind === 'image' ? '🖼' : '📄'}${f.name} ✕`))) : null,
         testError != null ? h('div', { className: 'wb-error-box' }, `试跑失败：${testError}`) : null,
         testResult != null ? h('div', { className: 'wb-result', style: { marginTop: '4px' } },
           h('div', { className: 'wb-toolbar' },

@@ -135,6 +135,10 @@ export default {
 
   activate(ctx) {
     ctx.registerProvider(PORT_ID, {
+      // 能力声明（DESIGN-MULTIMODAL §4.4）：core-engine 的 channel facade
+      // botFeatures() 读它做附件放行与文案分级（visionSupported）；dsh 不
+      // 声明（无视觉）。
+      features: { vision: true },
       // Shape of the providerConfig block a bot carries in bots.json
       // (PLUGIN-DEV §8).
       configSchema: [
@@ -144,6 +148,11 @@ export default {
         { key: 'allowedTools', label: '允许的工具（列表，逗号拼接传 --allowedTools）', type: 'list' },
         { key: 'env', label: '注入子进程的环境变量（值必须是字符串）', type: 'object' },
         { key: 'prompt', label: '人设（多行，--append-system-prompt）', type: 'string', multiline: true, rows: 5 },
+        // visionInput（DESIGN-MULTIMODAL Phase 2）：图片输入总开关，默认关。
+        // 开启后企微图片/图文混排才下载解密并送引擎（runner 换 stream-json
+        // 信封）；关闭时渠道直接婉拒。注意模型必须具备视觉能力，图片按
+        // 视觉 token 计费（约 1-1.6k token/图，按尺寸）。
+        { key: 'visionInput', label: '图片输入（允许用户发图；需模型具备视觉能力，图片按视觉 token 计费）', type: 'bool', default: false },
         // progressStyle/progressText (2026-11-06 拟人播报)：进度行风格与播报
         // 文案，core-engine 出站面消费（polite=企微只播报一句「思考中…请稍
         // 等」，不露思维链/工具内容；cot=旧 §6.1 详细汇报）。

@@ -277,6 +277,36 @@ test('two-phase: warn frame closes the stream at warnAt; late completion pushes,
   assert.equal(row.reason, 'completed', 'background mode does not change bookkeeping');
 });
 
+// chatRef/raw 双重语义修复（DESIGN-MULTIMODAL §1.2-7）：channel-wecom 传来的
+// raw 是整帧回调对象（adapter.js 现状，channel-wecom.test.js 也在断言它），
+// 不是渠道可解析的 push 引用 —— 后台模式的最终推送必须回落 chatKey，否则
+// adapter.push 的 wecom:(group|single):<id> 正则会拒绝并丢弃整条结果。
+test('background push falls back to chatKey when msg.raw is the whole wecom frame object', async () => {
+  const h = makeHarness({
+    limits: { streamDeadlineMs: 600, warnLeadMs: 100 }, // warnAt = 500ms
+    steps: [{ delayMs: 1000, code: 'completed', finalText: '后台最终答案', returnsSessionId: 's1' }],
+  });
+  h.engine.onMessage(h.bot, { ...mkMsg('长任务'), raw: { cmd: 'aibot_msg_callback', body: { chattype: 'group' } } });
+  await h.engine.chains.get(K);
+  await tick();
+
+  const pushes = h.adapter.frames.filter((f) => f.method === 'push');
+  assert.equal(pushes.length, 1, 'background result delivered via push');
+  assert.equal(pushes[0].chatRef, K, 'push resolves via chatKey, not the raw frame object');
+
+  // 对照组：显式的 string raw 仍是合法 push 引用（渠道将来传引用时优先）。
+  const h2 = makeHarness({
+    limits: { streamDeadlineMs: 600, warnLeadMs: 100 },
+    steps: [{ delayMs: 1000, code: 'completed', finalText: '后台最终答案2', returnsSessionId: 's1' }],
+  });
+  h2.engine.onMessage(h2.bot, { ...mkMsg('长任务', K), raw: 'wecom:group:G9' });
+  await h2.engine.chains.get(K);
+  await tick();
+  const pushes2 = h2.adapter.frames.filter((f) => f.method === 'push');
+  assert.equal(pushes2.length, 1);
+  assert.equal(pushes2[0].chatRef, 'wecom:group:G9', 'a string raw IS the push ref');
+});
+
 // Known-boundaries wave (2026-11-06): the warn/hard timers' NARROW WINDOW — a
 // timer firing after the runner promise settled but before stopTimers (the
 // final frame's adapter awaits are the gap) must send NOTHING: the 「转后台」

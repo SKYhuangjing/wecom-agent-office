@@ -181,9 +181,17 @@ export default {
     // single-object — onMessage({botId, chatKey, ...}) / onChannelEvent(ev) —
     // and every call closes over THIS bot, so the adapter never has to know
     // the kernel-internal (bot, msg) shape the engine service speaks.
+    // botFeatures (DESIGN-MULTIMODAL §4.4): 附件能力的两个事实——provider
+    // 声明 visionSupported（port.features.vision），与最终放行 vision（能力
+    // × bot.providerConfig.visionInput）。渠道用前者分文案、后者定放行。
     const channelFacadeFor = (botRecord) => ({
       onMessage: (msg) => engine.onMessage(botRecord, msg),
       onChannelEvent: (ev) => engine.onChannelEvent(botRecord, ev),
+      botFeatures: () => {
+        const port = ports?.getProvider?.(botRecord.provider);
+        const supported = port?.features?.vision === true;
+        return { visionSupported: supported, vision: supported && botRecord.providerConfig?.visionInput === true };
+      },
     });
 
     // The effective asset plan for one bot (§2.2/§2.3): bindings in 生效顺序,

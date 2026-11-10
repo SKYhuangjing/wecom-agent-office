@@ -164,7 +164,7 @@ export const FAKE = {
       id: 'bot-2', name: '二号机器人', enabled: true, channel: 'wecom',
       account: { botId: '1000003' },
       provider: 'claude', createdAt: now - 9 * 24 * 3600_000,
-      providerConfig: { cwd: '/Users/sky/work/bot2', progressCoT: true },
+      providerConfig: { cwd: '/Users/sky/work/bot2', progressCoT: true, visionInput: true },
       assets: [
         { assetId: 'ast-mcp002', name: 'gateway', type: 'mcp', mode: 'exclusive', origin: 'mcp', exclusiveBehind: 1, snapshotVersion: 1, snapshotAt: minAgo(7200) },
         { assetId: 'ast-mem003', name: 'team-notes', type: 'memory', mode: 'shared', origin: 'operator' },
@@ -227,6 +227,7 @@ export const FAKE = {
           { key: 'progressCoT', label: '进度行展示思维链摘要（已废弃，改用工作汇报风格）', type: 'bool', default: true },
           { key: 'claudeBin', label: 'claude 可执行文件（PATH 或绝对路径）', type: 'string', default: 'claude' },
           { key: 'claudeConfigDir', label: 'claude 配置目录（默认 ~/.claude，会话历史所在）', type: 'string' },
+          { key: 'visionInput', label: '图片输入（允许用户发图；需模型具备视觉能力，图片按视觉 token 计费）', type: 'bool', default: false },
         ],
       },
       {
@@ -245,6 +246,7 @@ export const FAKE = {
           { key: 'progressCoT', label: '进度行展示思维链摘要（已废弃，改用工作汇报风格）', type: 'bool', default: true },
           { key: 'codexBin', label: 'codex 可执行文件（PATH 或绝对路径）', type: 'string', default: 'codex' },
           { key: 'codexHome', label: 'codex 配置目录（默认 ~/.codex；注入 $CODEX_HOME）', type: 'string' },
+          { key: 'visionInput', label: '图片输入（允许用户发图；需模型具备视觉能力，图片按视觉 token 计费）', type: 'bool', default: false },
         ],
       },
     ],
