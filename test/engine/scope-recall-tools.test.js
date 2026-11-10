@@ -163,11 +163,20 @@ test('uv fallback leg: CLI missing but uv present → tool install hermes-scope-
   const fileHome = process.env.HOME;
   process.env.HOME = join(sc, 'home');
   mkdirSync(process.env.HOME, { recursive: true });
+  // 装备子进程的代理透传（2026-11-10 PC1 真机：uv 下托管 Python 直连 GitHub
+  // 超时 10060 → 装备静默失败）。data/service.json 配了代理，uv 子进程必须带上。
+  mkdirSync(join(sc, 'data'), { recursive: true });
+  writeFileSync(join(sc, 'data', 'service.json'),
+    JSON.stringify({ network: { enabled: true, proxyUrl: 'http://10.0.0.9:7890' } }));
   const mat = matOver(sc, { scopeRecallBin: join(sc, 'no-such-scope-recall'), uvBin: FAKE_UV });
   try {
     const r = await mat.materialize(bot, [SR_ENTRY]);
     // P1-2（盲评）：uv 收到的必须是钉版 spec——浮动 latest 被拒
     assert.match(readFileSync(process.env.FAKE_UV_LOG, 'utf8').trim(), /^tool install hermes-scope-recall==4\.0\.3$/, 'uv tool install pinned (==4.0.3)');
+    // 代理透传：HTTPS_PROXY 来自 data/service.json；NO_PROXY 含回环红线
+    const uvEnv = readFileSync(`${process.env.FAKE_UV_LOG}.env`, 'utf8');
+    assert.match(uvEnv, /^HTTPS_PROXY=http:\/\/10\.0\.0\.9:7890$/m, 'service proxy reaches the uv child');
+    assert.match(uvEnv, /^NO_PROXY=.*127\.0\.0\.1/m, 'loopback never rides the proxy');
     assert.ok(r.notes.some((n) => /经 uv 装备（uv tool install hermes-scope-recall==4\.0\.3/.test(n.detail)), 'note names the pinned spec');
     assert.ok(existsSync(join(cfgDir, '.scope-recall-install-receipt.json')), 'setup ran via the freshly installed shim');
     assert.equal(manifestOf(mat, bot).tools.find((t) => t.kind === 'scope-recall').state, 'armed');
@@ -175,6 +184,24 @@ test('uv fallback leg: CLI missing but uv present → tool install hermes-scope-
     assert.ok(existsSync(join(process.env.HOME, '.local', 'bin', 'scope-recall')), 'shim at the uv tool layout');
   } finally {
     process.env.HOME = fileHome;
+    clearFakeMode();
+  }
+});
+
+// 2026-11-10 PC1 真机教训：uv shim 冷启动 `--help` 实测 5.0s——探测超时若只有
+// 3s，装好的 CLI 会被误判 unavailable（绑定保留但永不装备，生产上表现为
+// 「manifest 显示 unavailable，但命令行能跑」）。15s 超时必须容得下。
+test('probe timeout: a 4s cold-start shim still resolves to armed (Windows uv shim lesson)', async () => {
+  const sc = scenario('slowhelp');
+  const cfgDir = join(sc, 'claude-cfg');
+  const bot = claudeBotOver(sc, cfgDir);
+  setFakeMode(sc, 'slowhelp'); // --help 睡 4s 再 exit 0；setup 照常写盘
+  const mat = matOver(sc, { scopeRecallBin: FAKE_SR });
+  try {
+    await mat.materialize(bot, [SR_ENTRY]);
+    assert.equal(manifestOf(mat, bot).tools.find((t) => t.kind === 'scope-recall').state, 'armed',
+      'a slow (but working) CLI must not be misread as unavailable');
+  } finally {
     clearFakeMode();
   }
 });

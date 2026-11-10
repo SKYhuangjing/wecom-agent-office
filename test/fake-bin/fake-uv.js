@@ -22,6 +22,12 @@ if (args[0] === '--version') {
 if (args[0] === 'tool' && args[1] === 'install') {
   const spec = args[2];
   note(`tool install ${spec}`);
+  // 代理透传断言面（2026-11-10 PC1 真机：uv 下托管 Python 直连 GitHub 超时
+  // 10060）——materializer 必须把服务代理带进 uv 子进程。
+  if (log) {
+    appendFileSync(`${log}.env`,
+      `HTTPS_PROXY=${process.env.HTTPS_PROXY ?? ''}\nNO_PROXY=${process.env.NO_PROXY ?? ''}\n`);
+  }
   // P1-2（盲评）：真 uv 收到的必须是钉版 spec（hermes-scope-recall==<版本>）——
   // 裸包名=浮动 latest，直接拒绝，钉版回归由这个断言锁定。
   if (spec !== 'hermes-scope-recall==4.0.3') {

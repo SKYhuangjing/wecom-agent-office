@@ -35,6 +35,7 @@ import process from 'node:process';
 import { spawn, spawnSync } from 'node:child_process';
 import { atomicWrite } from '../../src/kernel/config.js';
 import { childEnv } from '../../src/kernel/safeEnv.js';
+import { effectiveProxy, loadServiceConfig, proxyEnv } from '../../src/kernel/proxy.js';
 import { BOT_ID_RE } from './bots.js';
 
 const MARKER_RE = /^(?:<!--\s*)?# wao:assets:(begin|end):v(\d+):bot=([^\s>]*?)(?:\s*-->)?$/;
@@ -153,9 +154,12 @@ const scopeRecallCandidates = (bin) => {
 };
 
 // 解析出一个可跑的 scope-recall：{ok, bin} —— 探测命令是 --help（无 --version 旗标）。
+// 超时 15s（2026-11-10 PC1 真机实测：uv shim 冷启动 `--help` 要 5.0s——原 3s
+// 会把它误判 unavailable，绑定保留但永不装备；mac 热启动 ~0.2s）。
+const SCOPE_RECALL_PROBE_TIMEOUT_MS = 15_000;
 const resolveScopeRecall = (bin) => {
   for (const candidate of scopeRecallCandidates(bin)) {
-    const probe = probeBin(candidate, 3000, ['--help']);
+    const probe = probeBin(candidate, SCOPE_RECALL_PROBE_TIMEOUT_MS, ['--help']);
     if (probe.ok) return { ok: true, bin: candidate, error: null };
   }
   return { ok: false, bin: null, error: 'not-found' };
@@ -163,8 +167,11 @@ const resolveScopeRecall = (bin) => {
 
 // 跑一条 scope-recall 命令（stdin 关闭=免交互），CLAUDE_CONFIG_DIR 注入同 rtk
 // flavor 的重定向口径（--home 已显式，env 是双保险——其子进程发现面同源）。
-const runScopeRecall = (bin, args, home, timeoutMs = 120_000) => new Promise((resolve) => {
-  const env = childEnv();
+// extraEnv=服务代理（2026-11-10 PC1 真机教训：uv tool install 要下托管 Python
+// （python-build-standalone，GitHub）与 PyPI 包——不继承服务代理时国内直连必
+// 超时 os error 10060，装备静默失败）。所有 scope-recall 子进程统一带上，无害。
+const runScopeRecall = (bin, args, home, timeoutMs = 120_000, extraEnv = {}) => new Promise((resolve) => {
+  const env = { ...childEnv(), ...extraEnv };
   env.CLAUDE_CONFIG_DIR = home;
   let child;
   try {
@@ -447,6 +454,15 @@ export function removeJsonEntry(doc, pointer, recordedEntry) {
 export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk', scopeRecallBin = 'scope-recall', uvBin = 'uv' }) {
   const assetsDir = join(dataDir, 'assets');
   const logger = log ?? console;
+  // 装备子进程的出网代理（与 kernel 同源 data/service.json，每次现读=设置页
+  // 改了即时生效）。uv tool install 下 PyPI/托管 Python 子进程需要它（PC1
+  // 2026-11-10 真机：直连 GitHub 托管 Python 超时 10060，装备静默失败）。
+  const scopeChildProxyEnv = () => {
+    try {
+      const net = effectiveProxy(loadServiceConfig(join(dataDir, 'service.json')).network);
+      return proxyEnv({ enabled: net.enabled, proxyUrl: net.url });
+    } catch { return {}; }
+  };
   // Defensive second check (audit P0-1): botId is a path segment under
   // data/assets/ and removeAssets rmSync's its directory recursively —
   // anything that is not a slug must never reach join().
@@ -712,7 +728,7 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk', scopeR
     const cleanedAny = sweep.some((p) => existsSync(p));
     const resolved = resolveScopeRecall(scopeRecallBin);
     if (resolved.ok) {
-      const r = await runScopeRecall(resolved.bin, ['apply-uninstall', '--instance-root', home], home);
+      const r = await runScopeRecall(resolved.bin, ['apply-uninstall', '--instance-root', home], home, 120_000, scopeChildProxyEnv());
       if (r.status === 0) {
         notes.push({ detail: `scope-recall 卸载成功（${home}——插件面已删，记忆留存面由 WAO 清扫）` });
       } else {
@@ -750,7 +766,7 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk', scopeR
         return;
       }
       notes.push({ assetId, detail: `scope-recall CLI 缺失，经 uv 装备（uv tool install ${SCOPE_RECALL_INSTALL_SPEC}，含托管 Python≥3.11，免管理员）…` });
-      const ins = await runScopeRecall(uvResolved, ['tool', 'install', SCOPE_RECALL_INSTALL_SPEC], target, 300_000);
+      const ins = await runScopeRecall(uvResolved, ['tool', 'install', SCOPE_RECALL_INSTALL_SPEC], target, 300_000, scopeChildProxyEnv());
       if (ins.status !== 0) {
         throw new Error(`uv tool install ${SCOPE_RECALL_INSTALL_SPEC} 失败（exit ${ins.status}）：${tailOf(ins.stderr || ins.error || ins.stdout)}`);
       }
@@ -765,7 +781,7 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk', scopeR
     // setup：--home/--store 显式（不依赖发现），CLAUDE_CONFIG_DIR 双保险注入。
     const storeDir = join(target, SCOPE_RECALL_STORE_DIRNAME);
     const run = await runScopeRecall(resolved.bin,
-      ['setup', '--host', 'claude-code', '--home', target, '--store', storeDir, '--yes'], target);
+      ['setup', '--host', 'claude-code', '--home', target, '--store', storeDir, '--yes'], target, 120_000, scopeChildProxyEnv());
     if (run.status !== 0) {
       // 态 failed：非零/超时，throw 带 stderr 摘要（per-bot 隔离 → failed[]）。
       throw new Error(`scope-recall setup 失败（exit ${run.status}）：${tailOf(run.stderr || run.error || run.stdout)}`);

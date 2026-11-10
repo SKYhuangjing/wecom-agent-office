@@ -30,6 +30,11 @@ const note = (line) => { if (log) appendFileSync(log, `${line}\n`); };
 const args = process.argv.slice(2);
 if (args[0] === '--help') {
   note(`help ${mode}`);
+  if (mode === 'slowhelp') {
+    // 2026-11-10 PC1 真机实测：uv shim 冷启动 `--help` 要 5.0s——探测超时若
+    // 只有 3s 会把装好的 CLI 误判 unavailable（绑定保留但永不装备）。
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 4000);
+  }
   console.log('usage: fake-scope-recall {setup,apply-uninstall} …');
   process.exit(0);
 }
