@@ -73,26 +73,29 @@ export function mergeMemoryNotes(existingNotes, entries, { maxNotes = DISTILL_MA
   return { notes, added, droppedOldest };
 }
 
-// createDistillMiddleware({ findMemoryAsset, updateNotes, log }) → the impl
-// registered on the middleware port. findMemoryAsset(bot) → asset record or
-// null; updateNotes(assetId, notes) → persistence (updateAssetOp shape).
-export function createDistillMiddleware({ findMemoryAsset, updateNotes, log } = {}) {
+// createDistillMiddleware({ getMemory, writeNotes, log }) → the impl
+// registered on the middleware port. getMemory(bot) → {assetId, mode, notes} |
+// null —— 生效记忆目标（shared=registry 活资产 / exclusive=bot 快照，统一经
+// knowledge.js 的 memoryTargetOf 解析，修掉「exclusive 记忆收不到蒸馏写回」的
+// 既有缺口）；writeNotes(bot, assetId, notes) → persistence（applyMemoryNotes，
+// 路由 shared / exclusive 两条写回路径）。
+export function createDistillMiddleware({ getMemory, writeNotes, log } = {}) {
   return {
     async onOutbound(text, ctx) {
       if (typeof text !== 'string' || !text.includes('wao-memory')) return text;
       const bot = ctx?.bot;
       const { cleanText, entries } = extractMemoryUpdates(text);
       if (entries.length === 0) return cleanText;
-      if (typeof findMemoryAsset !== 'function' || typeof updateNotes !== 'function') return cleanText;
-      const asset = bot == null ? null : findMemoryAsset(bot);
-      if (asset == null) {
+      if (typeof getMemory !== 'function' || typeof writeNotes !== 'function') return cleanText;
+      const memory = bot == null ? null : getMemory(bot);
+      if (memory == null) {
         log?.warn?.(`distill: bot ${bot?.id ?? '?'} 输出了 ${entries.length} 条沉淀标记但未绑定 memory 资产——已剥离丢弃`);
         return cleanText;
       }
-      const merged = mergeMemoryNotes(asset.content?.notes, entries);
+      const merged = mergeMemoryNotes(memory.notes, entries);
       if (merged.added === 0) return cleanText;
-      await updateNotes(asset.id, merged.notes);
-      log?.info?.(`distill: +${merged.added} 条记忆 → ${asset.id}（现存 ${merged.notes.length} 条${merged.droppedOldest > 0 ? `，LRU 淘汰 ${merged.droppedOldest} 条最旧` : ''}）`);
+      await writeNotes(bot, memory.assetId, merged.notes);
+      log?.info?.(`distill: +${merged.added} 条记忆 → ${memory.assetId}${memory.mode === 'exclusive' ? '（独立副本）' : ''}（现存 ${merged.notes.length} 条${merged.droppedOldest > 0 ? `，LRU 淘汰 ${merged.droppedOldest} 条最旧` : ''}）`);
       return cleanText;
     },
   };

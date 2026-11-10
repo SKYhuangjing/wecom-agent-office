@@ -113,6 +113,26 @@ export const FAKE_ASSETS = [
     content: { kind: 'scope-recall' },
     origin: 'plugin', version: 1, createdAt: minAgo(2400), updatedAt: minAgo(2400), bindings: 0,
   },
+  {
+    // 知识资产模块（DESIGN-KNOWLEDGE）：业务记忆样例（含版本历史元数据——
+    // 清单表/知识 tab/回滚面的数据源）。
+    id: 'ast-mem010', type: 'memory', name: 'biz-memory', description: '业务记忆（SLS 查询口径/租户映射）',
+    content: { notes: [
+      '查某业务日志 → 用 MCP 工具 mcp__oneaix-sls__sls_execute_sql，project=k8s-log-onedata-prod，时间范围 now-1h',
+      '舱位捕手租户 202438 → monitorId 925（join 查询口径），聚合查询 limit≤100',
+      '运价日志 logStore=timp；聚合优先、禁裸翻页',
+      'SLS 查询预算 ≤8 次/轮，先聚合后下钻',
+    ] },
+    origin: 'operator', version: 2, createdAt: now - 20 * 24 * 3600_000, updatedAt: minAgo(2880), bindings: 1,
+    history: [{ version: 1, at: minAgo(4300), via: 'distill' }],
+  },
+  {
+    // AI 整理轮产物样例（origin:curation）：知识 tab 技能区/版本回滚面基线。
+    id: 'ast-skl010', type: 'skill', name: 'sls-playbook', description: 'SLS 日志查询手册（AI 整理轮沉淀）',
+    content: { name: 'sls-playbook', description: '什么时候查 SLS、用什么工具、什么参数——查询手册', body: '# SLS 日志查询手册\n\n1. 优先聚合查询（count/sum），禁裸翻页\n2. 单轮查询预算 ≤8 次\n3. 租户→monitorId 映射先查记忆再发查询\n' },
+    origin: 'curation', version: 2, createdAt: minAgo(600), updatedAt: minAgo(600), bindings: 1,
+    history: [{ version: 1, at: minAgo(700), via: 'curation' }],
+  },
 ];
 
 export const FAKE = {
@@ -158,6 +178,8 @@ export const FAKE = {
       providerConfig: { cwd: '/Users/sky/work/main', permission: 'workspace-write' },
       assets: [
         { assetId: 'ast-skl001', name: 'wao-company', type: 'skill', mode: 'shared', origin: 'operator' },
+        { assetId: 'ast-mem010', name: 'biz-memory', type: 'memory', mode: 'shared', origin: 'operator' },
+        { assetId: 'ast-skl010', name: 'sls-playbook', type: 'skill', mode: 'exclusive', origin: 'curation', exclusiveBehind: 0, snapshotVersion: 2, snapshotAt: minAgo(600) },
       ],
     },
     {
@@ -271,6 +293,14 @@ const flipPlugin = (id) => () => ({
   plugins: FAKE_PLUGINS.map((p) => (p.id === id ? { ...p, status: p.status === 'active' ? 'disabled' : 'active' } : p)),
 });
 
+// 整理史活容器（curate/rollback 状态化后 knowledge 回读反映变化）
+const curLog = {
+  mainBot: [
+    { at: minAgo(600), ok: true, guidance: '重点整理 SLS 查询口径', summary: '合并 2 条重复的 SLS 查询记忆；新增技能 sls-playbook（独立绑定）' },
+    { at: now - 3 * 24 * 3600_000, ok: false, guidance: '', reason: 'proposal-missing（模型未写出提案文件，最终回复也无合法 JSON 围栏）', summary: '' },
+  ],
+};
+
 export const FAKE_API = {
   '/api/ports': FAKE.ports,
   // Method-blind branch: GET (no body) → list; POST/PATCH (body) → saved echo
@@ -285,6 +315,138 @@ export const FAKE_API = {
   '/api/bots/main-bot/test': () => ({
     code: 'completed', finalText: '收到', sessionId: 'sess-a1b2c3d4', events: 6,
   }),
+  // —— 知识资产面（DESIGN-KNOWLEDGE）————————————————————————————————
+  // knowledge 只给 main-bot 造全量基线（dsh 送达面：profile 段最直观）；bot-2
+  // 给精简（claude argv+盘面）；curate/rollback 各一条成功回执（harness 里点
+  // 完即可看回执渲染，不真改 fake 状态）。
+  '/api/bots/main-bot/knowledge': () => {
+    // 活推导：memories/versions 由 FAKE_ASSETS + FAKE.bots 当前状态算出（curate/
+    // rollback 状态化后刷新可见）；prompt 面静态基线（预览内容不随轮变）。
+    const bot = FAKE.bots.find((b) => b.id === 'main-bot');
+    const mem = FAKE_ASSETS.find((a) => a.id === 'ast-mem010');
+    const skillRows = (bot.assets ?? [])
+      .filter((x) => x.type === 'skill')
+      .map((x) => {
+        const a = FAKE_ASSETS.find((y) => y.id === x.assetId);
+        return a == null ? null : {
+          assetId: a.id, name: a.content?.name ?? a.name, displayName: a.name,
+          description: a.content?.description ?? '', mode: x.mode, origin: a.origin,
+          originLabel: a.origin === 'curation' ? 'AI 整理' : a.origin === 'mcp' ? 'Agent 建' : a.origin === 'plugin' ? '系统' : '人写',
+          version: a.version, body: a.content.body ?? '', bodyChars: (a.content.body ?? '').length, truncated: false,
+        };
+      })
+      .filter(Boolean);
+    const versionRows = (bot.assets ?? [])
+      .filter((x) => x.type === 'memory' || x.type === 'skill')
+      .map((x) => {
+        const a = FAKE_ASSETS.find((y) => y.id === x.assetId);
+        return a == null ? null : {
+          assetId: a.id, name: a.name, type: a.type, mode: x.mode, origin: a.origin,
+          originLabel: a.origin === 'curation' ? 'AI 整理' : a.origin === 'mcp' ? 'Agent 建' : a.origin === 'plugin' ? '系统' : '人写',
+          effectiveVersion: a.version,
+          registry: { version: a.version, history: (a.history ?? []).map((h) => ({ version: h.version, at: h.at, via: h.via })) },
+          snapshot: x.mode === 'exclusive' ? { version: x.snapshotVersion ?? a.version, history: [] } : null,
+        };
+      })
+      .filter(Boolean);
+    return {
+      botId: 'main-bot', botName: '主号机器人', provider: 'dsh',
+      delivery: 'dsh：人设+记忆+提示词约束+技能索引全部拼进 profile 的 system-prompt personaPrefix（单一组合器）；技能正文落 .wao/skills/；MCP 走 mcp-<serverId> profile 行。',
+      prompt: { sections: [
+        { kind: 'profile', title: 'dsh profile system-prompt · personaPrefix（完整系统提示词）',
+          text: '【WAO 技能：wao-company】\n回复前先查台账；术语对照见 README §4.2\n技能正文在 .wao/skills/wao-company/SKILL.md——需要时先读该文件再执行。\n\n【WAO 跨会话记忆：biz-memory】\n' + mem.content.notes.join('\n') + '\n\n---\n沉淀规则：本轮若产生了跨会话有价值的东西，在回复最末尾另起一行输出沉淀标记（同事看不到这行，系统会自动收集进上面的记忆）……' },
+        { kind: 'file', title: '技能正文（.wao/skills/*/SKILL.md）',
+          paths: (bot.assets ?? []).filter((x) => x.type === 'skill')
+            .map((x) => `/Users/sky/work/main/.wao/skills/${x.name}/SKILL.md`),
+          files: (bot.assets ?? []).filter((x) => x.type === 'skill').map((x) => {
+            const a = FAKE_ASSETS.find((y) => y.id === x.assetId);
+            return a == null ? null : {
+              path: `/Users/sky/work/main/.wao/skills/${x.name}/SKILL.md`, exists: true,
+              bytes: 200, truncated: false,
+              text: `---\nname: ${a.content?.name ?? a.name}\ndescription: ${a.content?.description ?? ''}\nx-wao-asset: ${a.id}\n---\n\n${a.content?.body ?? ''}`,
+            };
+          }).filter(Boolean) },
+        { kind: 'stdin', title: '任务信封（stdin）',
+          text: '每轮任务 = [会话自愈 handoff 前缀] + 用户消息 + [附件段] + [失败注记段]，以 \n\n---\n\n 连接后经 stdin 传入；上面的人设/记忆/技能索引已在 profile system-prompt 里。' },
+      ] },
+      memories: [{
+        assetId: mem.id, name: mem.name, mode: 'shared', origin: 'operator', originLabel: '人写',
+        notes: mem.content.notes, count: mem.content.notes.length, cap: 50,
+      }],
+      skills: skillRows,
+      versions: versionRows,
+      curation: [...curLog.mainBot].reverse().slice(0, 10),
+    };
+  },
+  '/api/bots/bot-2/knowledge': () => ({
+    botId: 'bot-2', botName: '二号机器人', provider: 'claude',
+    delivery: 'claude：人设与 prompt/ripgrep 资产合并进 --append-system-prompt（每轮 argv）；skill/记忆物化为配置目录盘面文件；MCP 走 --mcp-config 单文件。',
+    prompt: { sections: [
+      { kind: 'argv', title: '--append-system-prompt · 每轮追加的系统提示词', text: '代码检索一律使用 rg（ripgrep）而非 grep/find。示例：rg -t js \'pattern\'。' },
+      { kind: 'file', title: '跨会话记忆（CLAUDE.md 标记节）', paths: ['/Users/sky/work/bot2/CLAUDE.md'],
+        files: [{ path: '/Users/sky/work/bot2/CLAUDE.md', exists: true, bytes: 344, truncated: false, text: '# 项目备注\n\n<!-- wao:assets:begin:v1:bot=bot-2 -->\n## WAO 跨会话记忆：team-notes\n\n周报模板：本周完成 / 下周计划 / 风险\n发版窗口：周四 14:00\n<!-- wao:assets:end:v1 -->\n' }] },
+      { kind: 'file', title: 'MCP 服务配置（WAO 域单文件，含密钥不预览内容）', paths: ['data/assets/bot-2/claude-mcp.json'], secret: true },
+      { kind: 'stdin', title: '任务信封（stdin stream-json user 消息）', text: '每轮任务 = [会话自愈 handoff 前缀] + 用户消息 + …，经 stdin 传入。' },
+    ] },
+    memories: [{ assetId: 'ast-mem003', name: 'team-notes', mode: 'shared', origin: 'operator', originLabel: '人写',
+      notes: ['周报模板：本周完成 / 下周计划 / 风险', '发版窗口：周四 14:00', '值班表在 ops/oncall.md，改动先打招呼'], count: 3, cap: 50 }],
+    skills: [],
+    versions: [
+      { assetId: 'ast-mem003', name: 'team-notes', type: 'memory', mode: 'shared', origin: 'operator', originLabel: '人写', effectiveVersion: 2,
+        registry: { version: 2, history: [] }, snapshot: null },
+    ],
+    curation: [],
+  }),
+  '/api/bots/bot-3/knowledge': () => ({ botId: 'bot-3', provider: 'codex', delivery: '', prompt: { sections: [] }, memories: [], skills: [], versions: [], curation: [] }),
+  '/api/bots/main-bot/curate': (body) => {
+    // 状态化（盲测 T4/T6）：假整理真改 fake 状态——回执之后回知识 tab 能看到
+    // 「自动生效」（记忆条数变化、新技能出现、整理史多一行、版本历史推进）。
+    const bot = FAKE.bots.find((b) => b.id === 'main-bot');
+    const mem = FAKE_ASSETS.find((a) => a.id === 'ast-mem010');
+    const merged = [
+      '查某业务日志 → 用 MCP 工具 mcp__oneaix-sls__sls_execute_sql，project=k8s-log-onedata-prod，时间范围 now-1h（聚合 limit≤100）',
+      '舱位捕手租户 202438 → monitorId 925（join 查询口径）',
+      'SLS 查询预算 ≤8 次/轮，先聚合后下钻',
+    ];
+    const before = mem.content.notes.length;
+    mem.history = [...(mem.history ?? []), { version: mem.version, at: mem.updatedAt, via: 'distill' }];
+    mem.content = { notes: merged };
+    mem.version += 1;
+    mem.updatedAt = Date.now();
+    FAKE_ASSETS.push({
+      id: 'ast-skl011', type: 'skill', name: 'sls-tips', description: 'SLS 查询小抄（AI 整理轮沉淀）',
+      content: { name: 'sls-tips', description: '什么时候查什么库的小抄', body: '# SLS 查询小抄\n\n1. 业务日志 project=k8s-log-onedata-prod\n2. 运价 logStore=timp\n3. 先聚合后下钻，预算 ≤8 次\n' },
+      origin: 'curation', version: 1, createdAt: Date.now(), updatedAt: Date.now(), bindings: 1,
+    });
+    bot.assets.push({ assetId: 'ast-skl011', name: 'sls-tips', type: 'skill', mode: 'exclusive', origin: 'curation', exclusiveBehind: 0, snapshotVersion: 1, snapshotAt: Date.now() });
+    const record = {
+      at: Date.now(), ok: true, summary: `记忆 ${before}→3 条（合并 2 条重复）；新增技能 sls-tips（独立绑定本 bot）`,
+      guidance: typeof body?.guidance === 'string' ? body.guidance : '', source: 'file',
+      changes: {
+        memory: { before, after: 3, mode: 'shared' }, memoryUnchanged: false,
+        skillsCreated: [{ assetId: 'ast-skl011', name: 'sls-tips' }],
+        skillsUpdated: [],
+        skipped: [{ name: 'wao-company', reason: 'update 仅允许改「AI 整理」来源的技能（目标 origin=operator 只读）' }],
+      },
+      usage: { totalTokens: 21455, inputTokens: 9821, cacheReadTokens: 8900, outputTokens: 2634 },
+    };
+    curLog.mainBot.push(record);
+    return record;
+  },
+  ...Object.fromEntries(['ast-mem010', 'ast-skl001', 'ast-skl010', 'ast-skl011'].map((assetId) => [
+    `/api/assets/${assetId}/rollback`,
+    (body) => {
+      // 状态化（盲测 T7）：版本续增 + 旧态入历史——知识 tab 刷新后「当前 vN」推进。
+      const asset = FAKE_ASSETS.find((a) => a.id === assetId);
+      if (asset != null) {
+        asset.history = [...(asset.history ?? []), { version: asset.version, at: asset.updatedAt, via: 'rollback' }];
+        asset.version += 1;
+        asset.updatedAt = Date.now();
+      }
+      return { ok: true, scope: 'registry', assetId, restoredVersion: body?.version ?? 1,
+        version: asset?.version ?? 3, rematerialized: ['main-bot'], failed: [], writes: [] };
+    },
+  ])),
   '/api/bots/bot-2/test': () => ({
     code: 'error', finalText: '', sessionId: null, events: 0,
     errorText: 'provider claude 已禁用（插件停用或加载失败）',
@@ -435,7 +597,7 @@ export const FAKE_API = {
     plugins: FAKE_PLUGINS, uiPlugins: [{ id: 'ui-workbench' }, { id: 'ui-office3d' }],
   },
   // —— v2 AI 操作引导（/api/mcp · /api/mcp/skill，mcp-gateway 提供）————————
-  // 19 个工具名与高危标记照抄 plugins/mcp-gateway/tools.js（描述截短——
+  // 23 个工具名与高危标记照抄 plugins/mcp-gateway/tools.js（描述截短——
   // 截图只要看清单形状，不必背全文）；sessions: 2 让引导卡/状态行展示
   // 「已连接」形态（未连接形态在 ?state=error 基线里以 stub 缺席自然出现）。
   '/api/mcp': {
@@ -460,10 +622,14 @@ export const FAKE_API = {
       { name: 'bind_asset', description: '将工具绑定到 bot（共享/独立），写入磁盘下一轮生效', dangerous: true },
       { name: 'unbind_asset', description: '解绑 bot 的工具，删除盘上产物', dangerous: true },
       { name: 'rematerialize', description: '按当前绑定强制重写全部工具产物文件（幂等）', dangerous: true },
+      { name: 'list_assets', description: '盘点工具资产全貌：清单/绑定数/memory 条数（只读）' },
+      { name: 'get_asset', description: '读单件工具资产全文与版本历史（只读）' },
+      { name: 'curate_bot', description: '知识整理轮：bot 用自己的引擎重整记忆/技能，自动应用留版本可回滚', dangerous: true },
+      { name: 'rollback_asset', description: '把资产内容回滚到历史版本（注册表或 bot 独立快照）', dangerous: true },
     ],
   },
   '/api/mcp/skill': {
     ok: true, filename: 'wao-company.md',
-    content: '---\nname: wao-company\ndescription: 操作 wecom-agent-office（wao）机器人平台：经 MCP server「wao-company」做日常巡检、创建机器人、改配置、暂停启用、删除、推送、插件启停、查会话历史与活动日志、资产绑定。\n---\n\n（harness 摘录——全文见仓库 docs/skills/wao-company.md）\n\n你是 wao 平台的运维助手。操作面经 MCP server `wao-company` 暴露（19 个工具）。\n\n## 常用意图 → 工具\n\n- 「看看机器人状态」→ list_bots\n- 「帮我暂停 main」→ set_enabled\n- 「给 main 发一条推送」→ broadcast（危险：先复述会话与内容）\n',
+    content: '---\nname: wao-company\ndescription: 操作 wecom-agent-office（wao）机器人平台：经 MCP server「wao-company」做日常巡检、创建机器人、改配置、暂停启用、删除、推送、插件启停、查会话历史与活动日志、资产绑定。\n---\n\n（harness 摘录——全文见仓库 docs/skills/wao-company.md）\n\n你是 wao 平台的运维助手。操作面经 MCP server `wao-company` 暴露（23 个工具）。\n\n## 常用意图 → 工具\n\n- 「看看机器人状态」→ list_bots\n- 「帮我暂停 main」→ set_enabled\n- 「给 main 发一条推送」→ broadcast（危险：先复述会话与内容）\n',
   },
 };

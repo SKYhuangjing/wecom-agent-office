@@ -154,6 +154,7 @@ for theme in light dark; do
   shot "ui-workbench-overview-cards" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=overview&view=cards"
   shot "ui-workbench-robots-tools" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=robots&select=bot-2&tab=tools"
   shot "ui-workbench-robots-settings" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=robots&select=main-bot&tab=settings"
+  shot "ui-workbench-robots-knowledge" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=robots&select=main-bot&tab=knowledge"
 done
 # 引擎配置区（2026-11-10 UI 治理）：bot-2=claude，滚动到第 3 组钉「结构化
 # 模型编辑器」——model 不再是手写 JSON textarea（用户在 PC1 真机提出的困惑）。
@@ -170,6 +171,7 @@ for theme in light dark; do
   shot "ui-workbench-settings-ai" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=settings&section=ai"
   shot "ui-workbench-settings-system" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=settings&section=system"
   shot "ui-workbench-settings-equip" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=settings&view=equip&bot=bot-2"
+  shot "ui-workbench-settings-matrix" "$theme" 2800 "api/ui/ui-workbench/harness.html?page=settings&view=matrix"
 done
 shot "ui-workbench-settings-ai-tools" light 2800 "api/ui/ui-workbench/harness.html?page=settings&section=ai&ai-tools=1" ".ai-tools"
 
@@ -203,6 +205,8 @@ ui-workbench-robots-light
 ui-workbench-robots-dark
 ui-workbench-robots-tools-light
 ui-workbench-robots-tools-dark
+ui-workbench-robots-knowledge-light
+ui-workbench-robots-knowledge-dark
 ui-workbench-robots-settings-light
 ui-workbench-robots-settings-dark
 ui-workbench-robots-engine-light
@@ -215,6 +219,8 @@ ui-workbench-settings-system-light
 ui-workbench-settings-system-dark
 ui-workbench-settings-equip-light
 ui-workbench-settings-equip-dark
+ui-workbench-settings-matrix-light
+ui-workbench-settings-matrix-dark
 ui-workbench-wizard-equip-light
 ui-workbench-wizard-equip-dark
 ui-workbench-wizard-channel-light
@@ -244,4 +250,4 @@ if [ "$fails" -gt 0 ]; then
   echo "✗ $fails 张基线不合格（${OUT_DIR}）" >&2
   exit 1
 fi
-echo "✓ 33 张基线齐备 → $OUT_DIR"
+echo "✓ $(printf '%s\n' $EXPECTED | grep -c .) 张基线齐备 → $OUT_DIR"

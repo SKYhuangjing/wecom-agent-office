@@ -634,11 +634,110 @@ const TOOLS = [
       );
     },
   },
+
+  // —— 知识资产面（DESIGN-KNOWLEDGE，2026-11-11）——————————————————————————
+  // 补上 Agent 的盘点盲区（此前只见 create/update/delete/bind，看不到注册表
+  // 全貌，盲态绑定）+ 整理轮/回滚的操作入口（与控制台 REST 同源 companyOps）。
+  {
+    name: 'list_assets',
+    description: '盘点工具资产全貌：全部工具（五类）清单 + 各自绑定 bot 数 + 最近版本 + memory 条数/上限（逼近 50 条 LRU 上限时提示升级 scope-recall）。绑定 bot 明细用 get_bot / list_bots 看。',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+    async run({ services }) {
+      const ops = opsNow(services);
+      const r = await ops.listAssets();
+      const lines = r.assets.map((a) => {
+        const notes = a.type === 'memory' ? `，${(a.content?.notes ?? []).length}/50 条` : '';
+        return `- ${a.name}（${a.type}，id ${a.id}，v${a.version}，绑定 ${a.bindings} 个 bot${notes}）`;
+      });
+      if (r.memoryUpgradeHint != null) lines.push(`⚠️ ${r.memoryUpgradeHint}`);
+      return ok(
+        `共 ${r.assets.length} 件工具：\n${lines.join('\n') || '（无）'}`,
+        { assets: r.assets, memoryUpgradeHint: r.memoryUpgradeHint ?? null },
+      );
+    },
+  },
+  {
+    name: 'get_asset',
+    description: '读取单件工具资产全文（含 content；mcp 密钥按位置掩码 __MASKED__）与版本历史（版本号/时间/来源，内容本体留服务端——回滚按版本号）。bot 维度的生效明细（提示词送达面/整理史/版本）见控制台「机器人 → 知识」tab（REST GET /api/bots/:id/knowledge）。',
+    inputSchema: {
+      type: 'object',
+      properties: { assetId: { type: 'string', description: '工具 id（ast-…）' } },
+      required: ['assetId'],
+      additionalProperties: false,
+    },
+    async run({ services, args }) {
+      const ops = opsNow(services);
+      const r = await ops.getAsset(args.assetId);
+      const hist = (r.asset.history ?? []).map((h) => `v${h.version}（${new Date(h.at ?? 0).toLocaleString('sv-SE')}，${h.via}）`);
+      return ok(
+        `${r.asset.name}（${r.asset.type}，v${r.asset.version}，绑定 ${r.asset.bindings} 个 bot）：\n`
+        + (hist.length > 0 ? `版本历史：${hist.join('；')}\n` : '版本历史：无\n')
+        + `内容：${JSON.stringify(r.asset.content)}`,
+        { asset: ops.sanitize(r.asset) },
+      );
+    },
+  },
+  {
+    name: 'curate_bot',
+    dangerous: true,
+    description: '⚠️ 危险操作（耗时数分钟，消耗 token）：知识整理轮——用该 bot 自己的引擎跑一轮「整理自己的记忆/技能」（合并去重、剔除过时、把高频操作模式升级为技能文档），提案经校验后自动应用并留版本历史（可 rollback_asset 回滚）。guidance 可选：人的引导文本（优先满足，如「重点整理 SLS 查询口径」）。执行前务必向用户复述后果并确认。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        botId: { type: 'string', description: '机器人 ID（bot id）' },
+        guidance: { type: 'string', description: '人的整理引导（可选，≤2000 字，优先满足；例：合并重复的 SLS 查询记忆，剔除已过期的接口口径）' },
+      },
+      required: ['botId'],
+      additionalProperties: false,
+    },
+    async run({ services, args, log }) {
+      const ops = opsNow(services);
+      const r = await ops.curateBot(args.botId, { guidance: args.guidance });
+      log?.info?.(`mcp: curate_bot ${args.botId} -> ${r.ok ? 'ok' : `failed(${r.reason ?? '?'})`}`);
+      const c = r.changes ?? {};
+      const lines = [r.ok ? `✅ 整理完成：${r.summary}` : `❌ 整理未生效：${r.reason ?? ''}（${r.summary || '模型未产出有效提案'}）`];
+      if (c.memory != null) lines.push(`- 记忆 ${c.memory.before}→${c.memory.after} 条（${c.memory.mode === 'exclusive' ? '独立副本' : '共享'}）`);
+      for (const s of c.skillsCreated ?? []) lines.push(`- 新增技能 ${s.name}（${s.assetId}，独立绑定本 bot）`);
+      for (const s of c.skillsUpdated ?? []) lines.push(`- 更新技能 ${s.name}（${s.assetId}）`);
+      for (const s of c.skipped ?? []) lines.push(`- 跳过 ${s.part ?? s.name ?? '?'}：${s.reason}`);
+      if (r.usage != null) lines.push(`- 整理轮 token：${r.usage.totalTokens ?? 0}`);
+      return ok(lines.join('\n'), { record: ops.sanitize(r) });
+    },
+  },
+  {
+    name: 'rollback_asset',
+    dangerous: true,
+    description: '⚠️ 危险操作：把工具内容回滚到历史版本（内容变更前状态自动归档，默认留 12 版）。默认回滚注册表资产；botId 给定时回滚该 bot 的独立（exclusive）快照（快照历史在 bot 记录里，默认留 6 版）。共享（shared）绑定的 bot 会自动重物化。执行前务必向用户复述后果并确认。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assetId: { type: 'string', description: '工具 id（ast-…）' },
+        version: { type: 'number', description: '目标版本号（可用 get_asset / knowledge 查版本历史）' },
+        botId: { type: 'string', description: '回滚独立（exclusive）快照时给该 bot id；缺省=回滚注册表资产' },
+      },
+      required: ['assetId', 'version'],
+      additionalProperties: false,
+    },
+    async run({ services, args, log }) {
+      const ops = opsNow(services);
+      const r = await ops.rollbackAsset(args.assetId, { version: args.version, ...(args.botId != null ? { botId: args.botId } : {}) });
+      log?.info?.(`mcp: rollback_asset ${args.assetId} -> v${args.version} (${r.scope})`);
+      return ok(
+        `✅ 已回滚：${args.assetId} → v${args.version}（${r.scope === 'exclusive' ? `bot ${r.botId} 独立副本` : '注册表'}）`
+        + (r.rematerialized?.length > 0 ? `，已重物化：${r.rematerialized.join('、')}` : ''),
+        { receipt: ops.sanitize(r) },
+      );
+    },
+  },
 ];
 
 // createToolSurface({services, log, dangerousTools}) → { listTools, callTool }
 // — the T2 seam server.js's createMcpHandler consumes. dangerousTools (P1-5,
-// default true) gates the dangerous 7 at callTool time; listTools still
+// default true) gates the dangerous tools at callTool time; listTools still
 // advertises them so the Agent can read WHY the call was refused.
 //
 // toolRoster(): name + dangerous flag only — the console's /api/mcp status

@@ -336,6 +336,49 @@ export default {
         return { writes, notes, entries: [], tools };
       },
 
+      // 知识呈现面（DESIGN-KNOWLEDGE §4.2）：组装「最终送 CLI 的知识」的分节
+      // 描述——provider 最清楚自己的送达面（argv/盘面/任务信封），core-engine
+      // 的 knowledgeBundleOp 据此读文件、截断、呈现。纯函数不落盘。
+      knowledgeFace(bot, { plan, assetsRoot }) {
+        const pc = bot.providerConfig ?? {};
+        const dir = typeof pc.claudeConfigDir === 'string' && pc.claudeConfigDir !== '' ? pc.claudeConfigDir : pc.cwd;
+        const redirected = dir === pc.claudeConfigDir;
+        const skillsRoot = redirected ? join(dir, 'skills') : join(dir, '.claude', 'skills');
+        // 与 runner 同口径：人设在前，prompt/ripgrep 资产文本合并进同一个
+        // --append-system-prompt。
+        const argvTexts = [];
+        if (typeof pc.prompt === 'string' && pc.prompt.trim() !== '') argvTexts.push(pc.prompt);
+        for (const entry of plan ?? []) {
+          if (entry?.type === 'prompt') argvTexts.push(String(entry.content?.text ?? ''));
+          if (entry?.type === 'tool' && entry.content?.kind === 'ripgrep') argvTexts.push(ripgrepText(entry));
+        }
+        const sections = [{
+          kind: 'argv', title: '--append-system-prompt · 每轮追加的系统提示词',
+          text: argvTexts.join('\n\n') || '（空——未配置人设，也未绑定 prompt/ripgrep 资产）',
+        }];
+        const entries = Array.isArray(plan) ? plan : [];
+        if (entries.some((e) => e?.type === 'memory')) {
+          sections.push({ kind: 'file', title: '跨会话记忆（CLAUDE.md 标记节）', paths: [join(dir, 'CLAUDE.md')] });
+        }
+        const skillPaths = entries.filter((e) => e?.type === 'skill')
+          .map((e) => join(skillsRoot, e.content?.name ?? e.name, 'SKILL.md'));
+        if (skillPaths.length > 0) sections.push({ kind: 'file', title: '技能文档（skills/*/SKILL.md）', paths: skillPaths });
+        if (entries.some((e) => e?.type === 'mcp') && typeof assetsRoot === 'string' && assetsRoot !== '') {
+          sections.push({
+            kind: 'file', title: 'MCP 服务配置（WAO 域单文件，含密钥不预览内容）',
+            paths: [join(assetsRoot, bot.id, 'claude-mcp.json')], secret: true,
+          });
+        }
+        sections.push({
+          kind: 'stdin', title: '任务信封（stdin stream-json user 消息）',
+          text: '每轮任务 = [会话自愈 handoff 前缀] + 用户消息 + [附件段] + [失败注记段]，以 \n\n---\n\n 连接后经 stdin 传入；人设/资产不在这里（走上面的 argv 与盘面文件）。',
+        });
+        return {
+          delivery: 'claude：人设与 prompt/ripgrep 资产合并进 --append-system-prompt（每轮 argv）；skill/记忆物化为配置目录盘面文件；MCP 走 --mcp-config 单文件。',
+          sections,
+        };
+      },
+
       createRunner({ bot, providerConfig, assets, log }) {
         return createRunner({ bot, providerConfig, assets, log });
       },

@@ -10,9 +10,10 @@ import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { saveBots, validateBot } from './bots.js';
 import {
-  bindingSummary, bindAsset, buildPlan, maskAsset, memoryUpgradeHint, newAssetId, rematerializeBots,
-  restoreMaskedContent, saveAssets, unbindAsset, validateAsset,
+  bindingSummary, bindAsset, buildPlan, maskAsset, memoryUpgradeHint, newAssetId, pushAssetHistory,
+  rematerializeBots, restoreMaskedContent, saveAssets, unbindAsset, validateAsset,
 } from './assets.js';
+import { curateBotOp, knowledgeBundleOp, rollbackAssetOp } from './knowledge.js';
 import { DRAIN_REFUSAL_TEXT, createUsageAccumulator, fileSectionFor } from './engine.js';
 
 const BODY_LIMIT_BYTES = 64 * 1024;
@@ -143,9 +144,14 @@ const botsBoundTo = (state, assetId, mode) => state.doc.bots.filter((b) => isObj
   && (mode === undefined || x.mode === mode)));
 
 // Public asset row: position-masked echo (mcp env/headers → __MASKED__) plus
-// the live binding count (§8.1 清单：绑定数).
+// the live binding count (§8.1 清单：绑定数). history rides as METADATA only
+// (version/at/via) — the archived content inside includes pre-masking mcp
+// secrets and never leaves the registry; rollback reads it server-side.
 const publicAsset = (state, asset) => ({
   ...maskAsset(asset),
+  ...(Array.isArray(asset.history) && asset.history.length > 0
+    ? { history: asset.history.map((h) => ({ version: h.version, at: h.at, via: h.via })) }
+    : {}),
   bindings: botsBoundTo(state, asset.id).length,
 });
 
@@ -198,7 +204,9 @@ const mergePreserving = (patchVal, oldVal) => {
 // which the probe surfaces as a CLI-looking failure (归因误导). Reject up front
 // with a message that names the actual problem. Presence/type stay the
 // schema's job; only a non-empty string cwd is existence-checked here.
-const cwdExistsError = (bot) => {
+// cwd 探测（R4）：spawn 前检查——缺失目录的 ENOENT 读起来像缺 CLI；这里指名
+// 目录（knowledge.js 的整理轮同用）。
+export const cwdExistsError = (bot) => {
   const cwd = bot?.providerConfig?.cwd;
   if (typeof cwd !== 'string' || cwd === '') return null;
   return existsSync(cwd) ? null : `工作目录不存在：${cwd}，请先创建或修正路径`;
@@ -939,7 +947,7 @@ function getAssetOp(state, id) {
 
 const SERVER_SET_FIELDS = ['id', 'origin', 'version', 'createdAt', 'updatedAt'];
 
-async function createAssetOp(state, body, { origin = 'operator' } = {}) {
+export async function createAssetOp(state, body, { origin = 'operator' } = {}) {
   if (!isObject(body)) throw httpError(400, 'asset must be a JSON object');
   // Registry truth, not editable record data (createdAt precedent).
   for (const k of SERVER_SET_FIELDS) {
@@ -981,7 +989,7 @@ const structuralKeysOf = (type, content) => {
   return [];
 };
 
-export async function updateAssetOp(state, id, patchBody, { mcpFace = false } = {}) {
+export async function updateAssetOp(state, id, patchBody, { mcpFace = false, via = 'operator' } = {}) {
   const asset = findAsset(state, id);
   if (asset == null) throw httpError(404, 'asset not found');
   if (!isObject(patchBody)) throw httpError(400, 'patch body must be a JSON object');
@@ -1021,6 +1029,13 @@ export async function updateAssetOp(state, id, patchBody, { mcpFace = false } = 
     const err = httpError(400, errors.join('; '));
     err.errors = errors;
     throw err;
+  }
+  // 版本历史（DESIGN-KNOWLEDGE §4.3）：内容真变了才把「变更前」状态归档
+  //（restoreMaskedContent 后与现值比较——同名同内容 PATCH 只 bump version
+  // 不重复归档），供回滚与知识 tab 版本列表读取。
+  if (patchBody.content !== undefined
+    && JSON.stringify(merged.content) !== JSON.stringify(asset.content)) {
+    pushAssetHistory(asset, via);
   }
   merged.version = asset.version + 1; // §2.1: every PATCH bumps — the exclusive snapshot anchor
   merged.updatedAt = Date.now();
@@ -1116,6 +1131,26 @@ async function rematerializeHandler({ res, m, state }) {
   sendJson(res, 200, await rematerializeOp(state, idOf(m)));
 }
 
+// —— 知识资产面（DESIGN-KNOWLEDGE，2026-11-11）——————————————————————————
+// 看得见：GET /bots/:id/knowledge 聚合「提示词送达面 + 生效记忆 + 技能 + 版本
+// + 整理史」；理得动：POST /bots/:id/curate 整理轮（AI 自主，人只给引导文本）；
+// 可回滚：POST /assets/:id/rollback。三个 Op 同时进 companyOps（REST/MCP 同源）。
+async function knowledgeHandler({ res, m, state }) {
+  sendJson(res, 200, knowledgeBundleOp(state, idOf(m)));
+}
+
+async function curateHandler({ req, res, m, state }) {
+  const botId = idOf(m);
+  if (findBot(state, botId) == null) throw httpError(404, 'bot not found'); // 404 wins over body errors, as before
+  sendJson(res, 200, await curateBotOp(state, botId, await readBody(req)));
+}
+
+async function rollbackAssetHandler({ req, res, m, state }) {
+  // 无 asset 前置 404（盲审 P2-4）：botId 定向的快照回滚在源资产已删除时依然
+  // 合法（快照独立于 registry），Op 内部按作用域各自给出准确的 404/400。
+  sendJson(res, 200, await rollbackAssetOp(state, idOf(m), await readBody(req)));
+}
+
 const ROUTES = [
   ['GET', /^\/agents$/, agentsHandler],
   ['GET', /^\/ports$/, portsHandler],
@@ -1128,6 +1163,9 @@ const ROUTES = [
   ['POST', /^\/bots\/([^/]+)\/assets$/, bindAssetHandler],
   ['DELETE', /^\/bots\/([^/]+)\/assets\/([^/]+)$/, unbindAssetHandler],
   ['POST', /^\/bots\/([^/]+)\/rematerialize-assets$/, rematerializeHandler],
+  ['GET', /^\/bots\/([^/]+)\/knowledge$/, knowledgeHandler],
+  ['POST', /^\/bots\/([^/]+)\/curate$/, curateHandler],
+  ['POST', /^\/assets\/([^/]+)\/rollback$/, rollbackAssetHandler],
   ['GET', /^\/assets$/, listAssetsHandler],
   ['GET', /^\/assets\/([^/]+)$/, getAssetHandler],
   ['POST', /^\/assets$/, createAssetHandler],
@@ -1171,6 +1209,13 @@ export function companyOps(state) {
     bindAsset: (botId, body) => bindAsset(state, botId, body),
     unbindAsset: (botId, assetId) => unbindAsset(state, botId, assetId),
     rematerialize: (botId) => rematerializeOp(state, botId),
+    // 知识资产面 (DESIGN-KNOWLEDGE)：只读聚合 + 整理轮 + 回滚；listAssets 补上
+    // Agent 的盘点盲区（此前只见 create/update/delete/bind，看不到注册表全貌）。
+    listAssets: () => listAssetsOp(state),
+    getAsset: (id) => getAssetOp(state, id),
+    knowledge: (botId) => knowledgeBundleOp(state, botId),
+    curateBot: (botId, body) => curateBotOp(state, botId, body ?? {}),
+    rollbackAsset: (assetId, body) => rollbackAssetOp(state, assetId, body ?? {}),
   };
 }
 

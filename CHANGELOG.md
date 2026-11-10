@@ -5,6 +5,40 @@
 
 ## [Unreleased]
 
+### Added — 知识资产模块：呈现 + AI 自主整理 + 版本回滚（DESIGN-KNOWLEDGE，2026-11-11）
+
+bot 的记忆/文档/提示词从黑盒变成平台一等公民资产——**看得见**（bot 维度知识 tab +
+平台维度知识总览矩阵）、**理得动**（AI 整理轮：bot 用自己的引擎重整自己的知识，
+人只补充引导文本，结果自动生效）、**可回滚**（版本历史）。
+- **看得见**：`GET /api/bots/:id/knowledge` 聚合「提示词送达面（五家 provider 新增
+  knowledgeFace 钩子：argv/盘面文件/profile/任务信封分节，secret 段只列路径不读
+  内容）+ 生效记忆全文（n/50 条）+ 技能正文（>16KB 截断标注）+ 版本面 + 整理史」；
+  机器人详情新「知识」tab 呈现；设置→工具库新「知识总览」tab：bot × 记忆/技能
+  资产矩阵（共享/独立/未绑定），点 bot 名直达其知识 tab。
+- **理得动**：`POST /api/bots/:id/curate {guidance?}` 整理轮——testBotOp 同款直跑
+  通道（装备态、全新会话、settle 看门狗、CURATION_TIMEOUT_MS 300s），整理提示词
+  内联全量知识+整理规则+输出协议（提案文件主通道 / ```json 围栏回退——dsh 无写
+  文件面）；提案校验（拒绝优于静默纠正：notes ≤50×2KB、技能 ≤3 项、update 仅
+  origin=curation 且绑定本 bot、create 不得撞名）→ 应用走既有 createAssetOp/
+  updateAssetOp/bindAsset（curation 产物盖章 origin:'curation' 自动 exclusive 绑
+  定本 bot）→ 整理史 `data/curation/<botId>.jsonl`（含 usage、逐项 skipped 原因）。
+- **可回滚**：资产内容变更即归档 `history`（cap 12，仅内容真变才归档）；exclusive
+  快照 `snapshotHistory`（cap 6）；`POST /api/assets/:id/rollback {version, botId?}`
+  双作用域（registry 走 updateAssetOp 保校验+扇出；botId 定向回滚该 bot 快照）。
+- **MCP 四新工具**（19→23）：`list_assets`/`get_asset`（补 Agent 盘点盲区——此前
+  只能盲态绑定）、`curate_bot`/`rollback_asset`（危险级，AI 会话可直接触发整理
+  与回滚，与控制台 REST 同源 companyOps）。
+- **配套修复**：①既有 bug——exclusive 绑定的记忆收不到蒸馏写回（updateAssetOp
+  只扇出 shared，快照永不更新）：蒸馏中间件接口升级 getMemory/writeNotes，统一经
+  memoryTargetOf 解析生效目标（shared→registry；exclusive→快照覆写+snapshotHistory
+  +重物化本 bot）；②cost-tracker tool kind 进白名单（经 PATCH /api/assets 改它
+  不再 400）；③整理提示词的示例不再用 ```json 围栏 + 围栏解析器跳过占位痕迹
+  （防模型回显示例被误当提案）。
+- 测试 +42（825→867）：knowledge 单测（目标解析/写回两路/历史环/提案解析校验
+  矩阵/整理轮 e2e 含失败与 409 锁/回滚双作用域/聚合面）、HTTP 契约、五家
+  knowledgeFace 契约、MCP 四工具（含危险门禁）。UI 基线 34→38（知识 tab +
+  知识总览 × 浅深）；浏览器用户路径实测（引导→整理→回执→回滚全链）PASS。
+
 ### Changed — 引擎配置编辑面 UI 治理：结构化模型编辑器替代手写 JSON（2026-11-10 PC1 真机用户困惑）
 
 用户在 PC1 机器人设置页问「模型输入为啥是这么写」——`model` 是 object 类型，渲染成

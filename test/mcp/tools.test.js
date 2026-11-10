@@ -1,7 +1,7 @@
 // MCP gateway tool-surface tests (W1 T2): a REAL kernel boot (createKernel,
 // port 0, tmp dataDir) with the repo plugins (core-engine + mcp-gateway) plus
 // the two fake port plugins from test/engine/plugin.test.js (channel-fake /
-// provider-fake). Every case drives the 19 company+asset tools through real
+// provider-fake). Every case drives the 23 company+asset tools through real
 // HTTP/JSON-RPC — the contract under test is the tool behavior: dual output
 // (text + structuredContent), API-semantics error mapping (400/404/409 →
 // isError results, unknown tool → -32602), secret red line (fake secrets
@@ -121,6 +121,7 @@ const TOOL_NAMES = [
   'toggle_plugin', 'get_ledger', 'get_timeline', 'get_state',
   'create_asset', 'update_asset', 'delete_asset', 'bind_asset',
   'unbind_asset', 'rematerialize',
+  'list_assets', 'get_asset', 'curate_bot', 'rollback_asset',
 ];
 
 let kernel = null;
@@ -185,7 +186,7 @@ const waitFor = async (predicate, label, timeoutMs = 5000) => {
   }
 };
 
-test('tools/list: the 19-tool roster with Chinese descriptions and object schemas', async () => {
+test('tools/list: the 23-tool roster with Chinese descriptions and object schemas', async () => {
   const { body } = await rpcCall({ jsonrpc: '2.0', id: 'list', method: 'tools/list' });
   const tools = body.result.tools;
   assert.deepEqual(tools.map((t) => t.name), TOOL_NAMES);
@@ -613,6 +614,67 @@ test('list_bots summary surfaces materialization health (§8.1 P1-14): 最近物
   await call('delete_bot', { botId: 'am3' });
 });
 
+// —— 知识资产面（DESIGN-KNOWLEDGE）：list/get 补盘点盲区；curate/rollback 危险级 ——
+test('list_assets / get_asset: 盘点与全文读取（Agent 不再盲态绑定）', async () => {
+  const created = await call('create_asset', { asset: { type: 'memory', name: 'kn-notes', content: { notes: ['第一条', '第二条'] } } });
+  const asset = created.structuredContent.asset;
+  try {
+    const list = await call('list_assets');
+    assert.equal(list.isError, undefined, JSON.stringify(list));
+    const row = list.structuredContent.assets.find((a) => a.id === asset.id);
+    assert.ok(row != null, '清单含新资产');
+    assert.match(list.content[0].text, /kn-notes（memory，id ast-[^，]+，v1，绑定 0 个 bot，2\/50 条\）/);
+    const got = await call('get_asset', { assetId: asset.id });
+    assert.equal(got.isError, undefined);
+    assert.match(got.content[0].text, /kn-notes（memory，v1，绑定 0 个 bot）/);
+    assert.deepEqual(got.structuredContent.asset.content.notes, ['第一条', '第二条']);
+  } finally {
+    await call('delete_asset', { assetId: asset.id });
+  }
+});
+
+test('curate_bot: 危险级；跑不通提案的 runner 如实回 ❌ 与原因（不静默成功）', async () => {
+  await call('create_bot', { bot: { ...BOT_M1, id: 'kn1' } });
+  const mem = await call('create_asset', { asset: { type: 'memory', name: 'kn-m1', content: { notes: ['旧'] } } });
+  const bound = await call('bind_asset', { botId: 'kn1', assetId: mem.structuredContent.asset.id, mode: 'exclusive' });
+  assert.equal(bound.isError, undefined);
+  try {
+    const r = await call('curate_bot', { botId: 'kn1', guidance: '合并重复' });
+    assert.equal(r.isError, undefined);
+    // fakeprov 的 runner 回 'fake 完成：<prompt>'——无提案文件无围栏 → proposal-missing
+    assert.match(r.content[0].text, /整理未生效[：:]proposal-missing/);
+    assert.equal(r.structuredContent.record.ok, false);
+    assert.equal(r.structuredContent.record.guidance, '合并重复');
+    // 知识面（同源 companyOps）可读
+    const k = await call('get_knowledge_proxy', { botId: 'kn1' }).catch(() => null); // 无此工具——见下
+    assert.equal(k, null, 'knowledge 只经 REST 面暴露（MCP 面走 list/get/curate/rollback 四件）');
+  } finally {
+    await call('delete_bot', { botId: 'kn1' });
+    await call('delete_asset', { assetId: mem.structuredContent.asset.id });
+  }
+});
+
+test('rollback_asset: 参数校验走 JSON-RPC error；危险级标记在 roster', async () => {
+  const mem = await call('create_asset', { asset: { type: 'memory', name: 'kn-m2', content: { notes: ['x'] } } });
+  const id = mem.structuredContent.asset.id;
+  try {
+    const junk = await call('rollback_asset', { assetId: id, version: 'junk' });
+    assert.equal(junk.isError, true, JSON.stringify(junk));
+    assert.match(junk.content[0].text, /正整数|version/);
+    const miss = await call('rollback_asset', { assetId: id, version: 1 });
+    assert.equal(miss.isError, true);
+    assert.match(miss.content[0].text, /资产历史无版本 1/);
+    const roster = await (await fetch(`${base()}/api/mcp`)).json();
+    const by = new Map(roster.tools.map((t) => [t.name, t.dangerous]));
+    assert.equal(by.get('curate_bot'), true);
+    assert.equal(by.get('rollback_asset'), true);
+    assert.equal(by.get('list_assets'), false);
+    assert.equal(by.get('get_asset'), false);
+  } finally {
+    await call('delete_asset', { assetId: id });
+  }
+});
+
 test('secret red line: no fake secret literal appears in ANY captured response body', async () => {
   assert.ok(capturedBodies.length >= 20, `the journey captured a meaningful sample (${capturedBodies.length} bodies)`);
   for (const secret of [SECRET_PW, SECRET_KEY, SECRET_TOKEN, SECRET_MCP_ENV]) {
@@ -622,7 +684,7 @@ test('secret red line: no fake secret literal appears in ANY captured response b
 });
 
 // P1-5 (security audit): plugins.json option dangerousTools=false — the
-// dangerous 7 answer isError with the admin-disabled notice BEFORE any
+// dangerous tools answer isError with the admin-disabled notice BEFORE any
 // service runs, while read-only tools stay available and the default kernel
 // (no option set) keeps them callable (pinned by the journey above).
 test('dangerousTools=false: dangerous 7 → isError + admin notice; read tools unaffected', async () => {

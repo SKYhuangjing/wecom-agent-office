@@ -115,6 +115,19 @@ export default {
         return null;
       },
 
+      // 知识呈现面（DESIGN-KNOWLEDGE §4.2）：cursor 物化器拒绝一切资产绑定
+      //（无 materializeAssets 面），知识面只有任务信封 + 配置说明。
+      knowledgeFace(bot) {
+        const sections = [{
+          kind: 'stdin', title: '任务信封（stdin）',
+          text: '每轮任务 = [会话自愈 handoff 前缀] + 用户消息 + [附件段] + [失败注记段]，以 \n\n---\n\n 连接后经 stdin 传入。',
+        }];
+        return {
+          delivery: 'cursor：无资产绑定面（绑定被物化器拒绝，技能/记忆/提示词资产均不可绑）；人设无独立键；模型路由走 CLI 登录态或 model 配置。',
+          sections,
+        };
+      },
+
       createRunner({ bot, providerConfig, assets, log }) {
         return createRunner({ bot, providerConfig, assets, log });
       },

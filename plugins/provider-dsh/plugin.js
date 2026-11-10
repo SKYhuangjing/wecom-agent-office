@@ -304,6 +304,35 @@ export default {
         return { removed };
       },
 
+      // 知识呈现面（DESIGN-KNOWLEDGE §4.2）：dsh 的知识面就是 profile 的
+      // system-prompt personaPrefix（单一组合器全文）——技能另有盘面索引文件。
+      knowledgeFace(bot, { plan }) {
+        const pc = bot.providerConfig ?? {};
+        const entries = Array.isArray(plan) ? plan : [];
+        const prefix = combinePersonaPrefix(pc.prompt, entries);
+        const sections = [{
+          kind: 'profile', title: 'dsh profile system-prompt · personaPrefix（完整系统提示词）',
+          text: prefix || '（空——未配置人设，也未绑定资产）',
+        }];
+        const skillPaths = entries.filter((e) => e?.type === 'skill')
+          .map((e) => join(pc.cwd, '.wao', 'skills', e.content?.name ?? e.name, 'SKILL.md'));
+        if (skillPaths.length > 0) sections.push({ kind: 'file', title: '技能正文（.wao/skills/*/SKILL.md）', paths: skillPaths });
+        if (entries.some((e) => e?.type === 'mcp')) {
+          sections.push({
+            kind: 'file', title: 'MCP 行（mcp-<serverId> profile 行，含密钥不预览内容）',
+            paths: [profilePatchPath(pc.profile || `wecom-${bot.id}`)], secret: true,
+          });
+        }
+        sections.push({
+          kind: 'stdin', title: '任务信封（stdin）',
+          text: '每轮任务 = [会话自愈 handoff 前缀] + 用户消息 + [附件段] + [失败注记段]，以 \n\n---\n\n 连接后经 stdin 传入；上面的人设/记忆/技能索引已在 profile system-prompt 里。',
+        });
+        return {
+          delivery: 'dsh：人设+记忆+提示词约束+技能索引全部拼进 profile 的 system-prompt personaPrefix（单一组合器）；技能正文落 .wao/skills/；MCP 走 mcp-<serverId> profile 行。',
+          sections,
+        };
+      },
+
       createRunner({ bot, providerConfig, log }) {
         return createRunner({ bot, providerConfig, log });
       },

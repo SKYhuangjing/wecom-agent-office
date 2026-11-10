@@ -122,6 +122,27 @@ export function newAssetId(existingIds = []) {
   }
 }
 
+// —— 版本历史（DESIGN-KNOWLEDGE §4.3）———————————————————————————————————
+// 资产内容变更时把「变更前」的状态归档进 asset.history（cap ASSET_HISTORY_CAP，
+// 满则丢最旧）——回滚面（rollbackAssetOp）与知识 tab 的版本列表都读它。仅内容
+// 真变了才推（调用方判断），连续同内容不重复归档；旧行无 history 字段，消费方
+// 容忍缺失。归档条目 {version, at, via, content}：version=被归档状态的版本号。
+export const ASSET_HISTORY_CAP = 12;
+
+export function pushAssetHistory(asset, via, note) {
+  if (!isObject(asset)) return;
+  const hist = Array.isArray(asset.history) ? asset.history : [];
+  hist.push({
+    version: typeof asset.version === 'number' ? asset.version : 1,
+    at: typeof asset.updatedAt === 'number' ? asset.updatedAt : Date.now(),
+    via: via ?? 'operator',
+    ...(note != null ? { note: String(note).slice(0, 200) } : {}),
+    content: structuredClone(asset.content),
+  });
+  while (hist.length > ASSET_HISTORY_CAP) hist.shift();
+  asset.history = hist;
+}
+
 // —— validation (§4): field-level errors, reject over silent correction ————
 
 const checkText = (value, where, { max, required = false, label = '' } = {}, errors = []) => {
@@ -316,19 +337,21 @@ const validateContent = (type, content, errors) => {
       checkText(content.text, 'content.text', { required: true, max: LIMITS.text }, errors);
       break;
     case 'tool': {
-      if (content.kind !== 'rtk' && content.kind !== 'ripgrep' && content.kind !== 'scope-recall') {
-        errors.push('content.kind 必须是 rtk、ripgrep 或 scope-recall（白名单外 kind 拒绝）');
+      // cost-tracker（2026-11-11 白名单修复）：它是中间件插件直写 registry 的
+      // tool 资产（kind=cost-tracker），此前不在白名单——经 PATCH /api/assets 改
+      // 它必 400（插件写入面与 REST 编辑面口径不一致）。中间件型 kind 不接受
+      // options（与 rtk/scope-recall 同款空占位约束）。
+      if (!['rtk', 'ripgrep', 'scope-recall', 'cost-tracker'].includes(content.kind)) {
+        errors.push('content.kind 必须是 rtk、ripgrep、scope-recall 或 cost-tracker（白名单外 kind 拒绝）');
         break;
       }
       if (content.options !== undefined && !isObject(content.options)) {
         errors.push('content.options must be a JSON object');
         break;
       }
-      if (content.kind === 'rtk' && content.options !== undefined && Object.keys(content.options).length > 0) {
-        errors.push('content.options：rtk v1 仅接受空 options 占位（edition 等后期扩展）');
-      }
-      if (content.kind === 'scope-recall' && content.options !== undefined && Object.keys(content.options).length > 0) {
-        errors.push('content.options：scope-recall v1 仅接受空 options 占位（模型路由等后期扩展，见 docs/MEMORY-RESEARCH.md §5）');
+      if (['rtk', 'scope-recall', 'cost-tracker'].includes(content.kind)
+        && content.options !== undefined && Object.keys(content.options).length > 0) {
+        errors.push(`content.options：${content.kind} v1 仅接受空 options 占位（后期扩展）`);
       }
       if (content.kind === 'ripgrep' && isObject(content.options)) {
         rejectUnknownKeys(content.options, 'content.options', ['extraHints'], 'ripgrep 仅接受 extraHints', errors);

@@ -22,21 +22,15 @@ import { goSettingsAi } from './ai-access.js';
 
 const NAME_MAX = 30;
 const HANDOFF_KEY = 'wao-robots-handoff';
-const TAB_IDS = ['session', 'logs', 'tools', 'settings'];
-const TAB_LABEL = { session: '会话', logs: '日志', tools: '工具', settings: '设置' };
+const TAB_IDS = ['session', 'logs', 'tools', 'knowledge', 'settings'];
+const TAB_LABEL = { session: '会话', logs: '日志', tools: '工具', knowledge: '知识', settings: '设置' };
 const WINDOWS = [5, 15, 30]; // minutes
 const PUSH_MAX = 4000;
 const errorLines = (message) => String(message ?? '').split('; ').filter((s) => s.trim() !== '');
 const PROVIDER_LABEL = { dsh: 'DSH 引擎', claude: 'Claude 引擎', codex: 'Codex 引擎', pi: 'pi 引擎', cursor: 'Cursor 引擎' };
 
-// 跨页交接（shell 路由是裸 '#/<pageid>'）：发起方先把 {id, tab, test} 塞进
-// sessionStorage 再翻 hash；本页 mount 时消费一次。
-export const goRobots = (id, tab = null, extra = {}) => {
-  try {
-    sessionStorage.setItem(HANDOFF_KEY, JSON.stringify({ id, tab, ...extra }));
-    location.hash = '#/robots';
-  } catch { /* storage 不可用：裸导航仍生效（落在列表） */ }
-};
+// 跨页导航 helper 已抽到 nav.js（知识总览矩阵复用；本文件 re-export 保住既有 import 面）
+export { goRobots } from './nav.js';
 
 // —— 会话 tab（_legacy/session.js 固定 bot 版：台账按 chatKey 归档 + 引擎会话钻取）——
 const DetailSession = ({ WAO, botId, agent }) => {
@@ -378,6 +372,287 @@ const DetailTools = ({ WAO, botId }) => {
 
 // —— 设置 tab（_legacy/bots.js 的编辑表单原样搬移：分组折叠 + sticky 保存栏 +
 // 测试运行；只把「选择谁」从外部传入固定）——
+// 版本面条目渲染（独立函数：JSX 风格嵌套过深时括号配对易错，拆出来更好读）。
+const renderVersionEntry = ({ h, TypeBadge, ModeBadge, VIA_LABEL, fmtAt }, v, onRollback, busy) => {
+  const rows = v.mode === 'exclusive'
+    ? (v.snapshot?.history ?? []).map((x) => ({ ...x, scope: 'exclusive' })).reverse()
+    : (v.registry?.history ?? []).map((x) => ({ ...x, scope: 'registry' })).reverse();
+  const header = h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' } },
+    h('span', { style: { fontSize: 13 } }, v.name),
+    h(TypeBadge, { h, type: v.type }),
+    h(ModeBadge, { h, mode: v.mode }),
+    h('span', { className: 'wb-chip' }, `当前 v${v.effectiveVersion ?? '?'}`),
+    v.mode === 'exclusive' && v.registry != null
+      ? h('span', { className: 'wb-hint' }, `（注册表 v${v.registry.version}，回滚仅作用于本 bot 快照）`)
+      : null);
+  if (rows.length === 0) {
+    return h('div', { key: v.assetId, style: { marginBottom: 12 } }, header,
+      h('p', { className: 'wb-hint', style: { margin: 0 } }, '暂无历史版本（内容从未变更，或为旧数据）'));
+  }
+  return h('div', { key: v.assetId, style: { marginBottom: 12 } }, header,
+    rows.map((r) => h('div', {
+      key: `${v.assetId}-${r.version}-${r.scope}`,
+      style: { display: 'flex', gap: 8, alignItems: 'center', padding: '3px 0', fontSize: 12 },
+    },
+    h('span', { className: 'wb-mono' }, `v${r.version}`),
+    h('span', { className: 'wb-hint' }, `${fmtAt(r.at)} · ${VIA_LABEL[r.via] ?? r.via ?? '—'}`),
+    h('button', {
+      className: 'wb-linklike', disabled: busy,
+      onClick: () => onRollback({ assetId: v.assetId, name: v.name, version: r.version, scope: r.scope }),
+    }, '回滚到此'))));
+};
+
+// —— 知识 tab（DESIGN-KNOWLEDGE，2026-11-11）—————————————————————————————
+// 看得见（提示词送达面 / 生效记忆 / 技能文档）+ 理得动（AI 整理轮：bot 用自己
+// 的引擎重整自己的知识，人只补充引导）+ 可回滚（版本历史）。
+const KNOW_KIND_LABEL = { argv: 'argv', file: '盘面', profile: 'profile', stdin: '任务信封', inline: '内容' };
+const VIA_LABEL = { operator: '人工编辑', mcp: 'Agent', distill: '蒸馏', curation: 'AI 整理', rollback: '回滚', plugin: '系统' };
+const PRE_STYLE = {
+  margin: 0, padding: 10, borderRadius: 8, fontSize: 12, lineHeight: 1.5,
+  whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 300, overflow: 'auto',
+  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+  background: 'rgba(127,127,127,.08)',
+};
+const fmtAt = (at) => (Number.isFinite(at) && at > 0
+  ? new Date(at).toLocaleString('zh-CN', { hour12: false }) : '—');
+
+const DetailKnowledge = ({ WAO, botId }) => {
+  const { h, useState, useEffect, api } = WAO;
+  const [bundle, setBundle] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+  const [guidance, setGuidance] = useState('');
+  const [curateOpen, setCurateOpen] = useState(false);
+  const [curating, setCurating] = useState(false);
+  const [result, setResult] = useState(null);
+  const [rollbackFor, setRollbackFor] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState(null);
+  const [rollbackNote, setRollbackNote] = useState(null);
+  const [groups, setGroups] = useState({ prompt: true, memory: true, skills: false, curate: true, versions: false });
+  const toggle = (k) => setGroups((g) => ({ ...g, [k]: !(g[k] === true) }));
+
+  const reload = async () => {
+    try {
+      const data = await api(`/api/bots/${encodeURIComponent(botId)}/knowledge`);
+      setBundle(data);
+      setLoadError(null);
+    } catch (err) {
+      setBundle(null);
+      setLoadError(err?.message ?? String(err));
+    }
+  };
+  useEffect(() => { void reload(); setResult(null); setGuidance(''); }, [botId]);
+
+  if (bundle == null) {
+    return h('p', { className: 'muted' },
+      loadError != null ? `读取失败：${loadError}` : '读取知识资产中…',
+      loadError != null ? h('button', { className: 'wb-btn', style: { marginLeft: 8 }, onClick: () => void reload() }, '重试') : null);
+  }
+
+  const openCurate = () => {
+    if (guidance.length > 2000) {
+      setActionError(`整理引导最长 2000 字（当前 ${guidance.length}）——精简后再发起`);
+      return;
+    }
+    setActionError(null);
+    setCurateOpen(true);
+  };
+
+  const doCurate = async () => {
+    setBusy(true);
+    setActionError(null);
+    setResult(null);
+    setCurateOpen(false);
+    setCurating(true);
+    try {
+      const resp = await api(`/api/bots/${encodeURIComponent(botId)}/curate`, { guidance });
+      setResult(resp);
+      await reload();
+    } catch (err) {
+      setActionError(String(err?.message ?? err));
+    } finally {
+      setCurating(false);
+      setBusy(false);
+    }
+  };
+
+  const doRollback = async () => {
+    if (rollbackFor == null) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      await api(`/api/assets/${encodeURIComponent(rollbackFor.assetId)}/rollback`, {
+        version: rollbackFor.version,
+        ...(rollbackFor.scope === 'exclusive' ? { botId } : {}),
+      });
+      setRollbackNote(`✅ 已回滚「${rollbackFor.name}」到 v${rollbackFor.version}${rollbackFor.scope === 'exclusive' ? '（本机独立副本）' : ''}——下一轮生效`);
+      setRollbackFor(null);
+      await reload();
+    } catch (err) {
+      setActionError(String(err?.message ?? err));
+      setRollbackFor(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const curateModal = !curateOpen ? null : h('div', { className: 'wb-modal-wrap', onClick: () => { if (!busy) setCurateOpen(false); } },
+    h('div', { className: 'wb-modal', onClick: (e) => e.stopPropagation() },
+      h('h3', null, `开始整理「${bundle.botName ?? botId}」的知识？`),
+      h('div', { className: 'wb-notice' },
+        '将用这个机器人自己的引擎跑一轮「知识整理」（可能需要几分钟、消耗 token）：它读取自己的记忆与技能，做合并去重、剔除过时、把高频操作模式升级为技能文档。整理结果自动生效（不需要人工审核），每次内容变更都会留版本历史，可随时在下方「版本回滚」退回。'),
+      guidance.trim() !== '' ? h('p', { className: 'wb-hint' }, `人的引导：${guidance.trim()}`) : null,
+      h('div', { className: 'wb-toolbar' },
+        h('button', { className: 'wb-btn wb-btn-danger', disabled: busy, onClick: () => void doCurate() }, '开始整理'),
+        h('button', { className: 'wb-btn', disabled: busy, onClick: () => setCurateOpen(false) }, '再想想'))));
+
+  const rollbackModal = rollbackFor == null ? null : h('div', { className: 'wb-modal-wrap', onClick: () => { if (!busy) setRollbackFor(null); } },
+    h('div', { className: 'wb-modal', onClick: (e) => e.stopPropagation() },
+      h('h3', null, `回滚「${rollbackFor.name}」到 v${rollbackFor.version}？`),
+      h('div', { className: 'wb-notice' },
+        rollbackFor.scope === 'exclusive'
+          ? `只回滚本机器人（${botId}）的独立副本到该版本，其他机器人不受影响；回滚前的当前内容也会进历史（可再回滚回来）。`
+          : '注册表资产回滚到该版本；所有共享绑定的机器人会自动重物化，下一轮生效。回滚前的当前内容也会进历史。'),
+      h('div', { className: 'wb-toolbar' },
+        h('button', { className: 'wb-btn wb-btn-danger', disabled: busy, onClick: () => void doRollback() }, busy ? '回滚中…' : '确认回滚'),
+        h('button', { className: 'wb-btn', disabled: busy, onClick: () => setRollbackFor(null) }, '再想想'))));
+
+  const changes = result?.changes ?? null;
+  const resultCard = result == null ? null : h('div', { className: 'wb-notice', style: { marginTop: 10 } },
+    h('div', null, result.ok === true
+      ? `✅ 整理完成：${result.summary || '（无文字总结）'}`
+      : `❌ 整理未生效${result.reason != null ? `——${result.reason}` : ''}${result.summary != null ? `（${result.summary}）` : ''}`),
+    changes != null ? h('div', { style: { marginTop: 6 } },
+      changes.memory != null ? h('div', null, `- 记忆 ${changes.memory.before} → ${changes.memory.after} 条（${changes.memory.mode === 'exclusive' ? '独立副本' : '共享'}）`) : null,
+      changes.memoryUnchanged === true ? h('div', null, '- 记忆无改动（没有改进空间，原样保留）') : null,
+      ...(changes.skillsCreated ?? []).map((s) => h('div', { key: `c-${s.assetId}` }, `- 新增技能 ${s.name}（${s.assetId}，独立绑定本 bot）`)),
+      ...(changes.skillsUpdated ?? []).map((s) => h('div', { key: `u-${s.assetId}` }, `- 更新技能 ${s.name}（${s.assetId}）`)),
+      ...(changes.skipped ?? []).map((s, i) => h('div', { key: `s-${i}` }, `- 跳过 ${s.part ?? s.name ?? '?'}：${s.reason}`)),
+      result.usage?.totalTokens != null ? h('div', { className: 'wb-hint', style: { marginTop: 4 } }, `整理轮 token：${result.usage.totalTokens}`) : null,
+    ) : null);
+
+  // 子块全部走数组传参——避免深层括号链（此前手数括号两次翻车）。
+  const promptSections = (bundle.prompt?.sections ?? []).map((sec, i) => {
+    const head = h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 } },
+      h('span', { className: 'wb-chip' }, KNOW_KIND_LABEL[sec.kind] ?? sec.kind),
+      h('span', { style: { fontSize: 13 } }, sec.title));
+    let body;
+    if (sec.secret === true) {
+      body = h('p', { className: 'wb-hint', style: { margin: 0 } },
+        (sec.paths ?? []).join(' · ') + '——含服务密钥，内容不预览（结构在工具库编辑器可见）');
+    } else if (sec.files != null) {
+      body = sec.files.map((f, j) => h('div', { key: j, style: { marginTop: j === 0 ? 0 : 6 } },
+        h('div', { className: 'wb-kv' },
+          f.path, f.exists ? (f.truncated ? `（截断，全文 ${f.bytes}B）` : '') : '（文件不存在——未物化或已解绑）'),
+        f.exists && f.text !== '' ? h('pre', { style: PRE_STYLE }, f.text) : null));
+    } else {
+      body = h('pre', { style: PRE_STYLE }, sec.text ?? '');
+    }
+    return h('div', { key: i, style: { marginTop: i === 0 ? 0 : 10 } }, head, body);
+  });
+
+  const memoryBlocks = bundle.memories.map((m) => {
+    const head = h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' } },
+      h('span', { style: { fontSize: 13 } }, m.name),
+      h(TypeBadge, { h, type: 'memory' }),
+      h(ModeBadge, { h, mode: m.mode }),
+      h('span', { className: 'wb-chip' }, `${m.count}/${m.cap} 条`),
+      h('span', { className: 'wb-hint' }, `来源：${m.originLabel}`));
+    const notes = m.notes.length === 0
+      ? [h('p', { className: 'wb-hint', style: { margin: 0 } }, '（暂无条目——对话中产出沉淀标记后自动累积）')]
+      : m.notes.map((n, i) => h('div', {
+          key: i, className: 'wb-kv',
+          style: { padding: '6px 10px', background: 'rgba(127,127,127,.08)', borderRadius: 6 },
+        }, `${i + 1}. ${n}`));
+    return h('div', { key: m.assetId, style: { marginBottom: 12 } }, head, notes);
+  });
+
+  const skillBlocks = bundle.skills.map((s) => {
+    const head = h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' } },
+      h('span', { style: { fontSize: 13 } }, s.name),
+      h(TypeBadge, { h, type: 'skill' }),
+      h(ModeBadge, { h, mode: s.mode }),
+      s.version != null ? h('span', { className: 'wb-chip' }, `v${s.version}`) : null,
+      h('span', { className: 'wb-hint' }, `来源：${s.originLabel}`));
+    const desc = s.description !== '' ? [h('div', { className: 'wb-kv' }, s.description)] : [];
+    return h('div', { key: s.assetId, style: { marginBottom: 10 } },
+      head, desc, h('pre', { style: PRE_STYLE },
+        s.body + (s.truncated ? `\n\n…（正文 ${s.bodyChars} 字，此处截断）` : '')));
+  });
+
+  const versionBlocks = bundle.versions.map((v) => renderVersionEntry(
+    { h, TypeBadge, ModeBadge, VIA_LABEL, fmtAt }, v, setRollbackFor, busy));
+
+  const curationRows = (bundle.curation ?? []).map((c, i) => h('div', {
+    key: i, className: 'wb-kv',
+    style: { padding: '4px 0', borderBottom: '1px solid rgba(127,127,127,.15)' },
+  }, `${fmtAt(c.at)} ${c.ok === true ? '✅' : '❌'} ${c.summary ?? c.reason ?? ''}${c.guidance ? `（引导：${String(c.guidance).slice(0, 60)}）` : ''}`));
+
+  return h('div', null, [
+    curateModal,
+    rollbackModal,
+    actionError != null ? h('div', { className: 'error', style: { marginBottom: 10 } }, actionError) : null,
+    rollbackNote != null ? h('div', { className: 'wb-notice', style: { marginBottom: 10 } }, rollbackNote) : null,
+
+    h(Group, {
+      WAO, title: '提示词预览（最终送引擎的完整知识面）',
+      open: groups.prompt, onToggle: () => toggle('prompt'),
+    },
+    bundle.delivery !== '' ? h('p', { className: 'wb-hint' }, bundle.delivery) : null,
+    promptSections,
+    (bundle.prompt?.sections ?? []).length === 0
+      ? h('p', { className: 'wb-hint' }, '该引擎未提供送达面说明。') : null),
+
+    h(Group, {
+      WAO, title: `跨会话记忆（${bundle.memories.length} 份）`,
+      open: groups.memory, onToggle: () => toggle('memory'),
+    },
+    bundle.memories.length === 0
+      ? h('p', { className: 'wb-hint' }, '未绑定记忆资产——对话中的沉淀标记会被丢弃。去「设置 → 工具库」创建 memory 资产并绑定到这个机器人。')
+      : memoryBlocks),
+
+    h(Group, {
+      WAO, title: `技能文档（${bundle.skills.length} 份）`,
+      open: groups.skills, onToggle: () => toggle('skills'),
+    },
+    bundle.skills.length === 0
+      ? h('p', { className: 'wb-hint' }, '未绑定技能文档——高频操作模式可由 AI 整理轮升级为技能，或在「设置 → 工具库」手工创建。')
+      : skillBlocks),
+
+    h(Group, {
+      WAO, title: 'AI 整理（自我进化）',
+      open: groups.curate, onToggle: () => toggle('curate'),
+    },
+    h('p', { className: 'wb-hint' },
+      '整理由这个机器人自己的 AI 完成：合并重复记忆、剔除过时内容、把高频操作模式升级为技能文档。人只负责补充引导；结果自动生效，每次变更留版本可回滚。'),
+    h('textarea', {
+      className: 'wb-textarea', rows: 2, value: guidance, maxLength: 2000,
+      placeholder: '整理引导（可选，≤2000 字）——例：合并重复的 SLS 查询记忆；把舱位捕手排查步骤沉淀成技能文档',
+      onChange: (e) => setGuidance(e.target.value),
+    }),
+    guidance.length > 1800 ? h('span', { className: 'wb-hint', style: { marginTop: 4, display: 'block' } }, `已 ${guidance.length}/2000 字——超过 2000 字将被拒绝发起`) : null,
+    h('div', { className: 'wb-toolbar', style: { marginTop: 8 } },
+      h('button', {
+        className: 'wb-btn', disabled: busy || curating, onClick: openCurate,
+      }, curating ? '整理中…预计 1-5 分钟，可离开本页' : '开始整理'),
+      result != null && !curating
+        ? h('button', { className: 'wb-btn', onClick: () => setResult(null) }, '收起回执')
+        : null),
+    resultCard,
+    curationRows.length > 0 ? h('div', { style: { marginTop: 12 } },
+      h('div', { style: { fontSize: 12, color: 'var(--muted)', marginBottom: 4 } }, '整理史（最近 10 次）'),
+      curationRows) : null),
+
+    h(Group, {
+      WAO, title: '版本与回滚',
+      open: groups.versions, onToggle: () => toggle('versions'),
+    },
+    versionBlocks.length === 0
+      ? h('p', { className: 'wb-hint' }, '没有绑定记忆/技能资产，暂无版本面。')
+      : versionBlocks),
+  ]);
+};
+
 const DetailSettings = ({ WAO, bot, ports, onSaved, onDeleted, focusTest }) => {
   const { h, useState, useEffect, api } = WAO;
   const [draft, setDraft] = useState(null);
@@ -898,6 +1173,7 @@ export default {
           tab === 'session' ? h(DetailSession, { WAO, botId: selected, agent: agent ?? { provider: bot.provider } })
           : tab === 'logs' ? h(DetailLogs, { WAO, botId: selected })
           : tab === 'tools' ? h(DetailTools, { WAO, botId: selected })
+          : tab === 'knowledge' ? h(DetailKnowledge, { WAO, botId: selected })
           : h(DetailSettings, {
             WAO, bot, ports, focusTest: testFocus,
             onSaved: async (name) => {

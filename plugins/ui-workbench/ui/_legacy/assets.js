@@ -8,6 +8,7 @@
 // =unbind，重新物化=rematerialize，下架=DELETE 资产；技术词（type/mode 原值、
 // 落盘路径）收进 tooltip/副标题——双层语言，运维不歧义。
 import { ensurePageStyle } from '../style.js';
+import { goRobots } from '../nav.js';
 import { IconEl } from '../icons.js';
 
 // （词表：skill=技能…；wizard 第 3.5 步复用同一张类型标签表）
@@ -185,7 +186,7 @@ export default {
     const [assets, setAssets] = useState(null);
     const [bots, setBots] = useState(null);
     const [loadError, setLoadError] = useState(null);
-    const [view, setView] = useState('registry'); // 'registry' 清单 | 'equip' 装备台
+    const [view, setView] = useState('registry'); // 'registry' 清单 | 'equip' 装备台 | 'matrix' 知识总览
     const [editor, setEditor] = useState(null); // null | {mode:'new'} | {mode:'edit', id, name}
     const [form, setForm] = useState(blankForm());
     const [formErrors, setFormErrors] = useState(null);
@@ -227,7 +228,8 @@ export default {
     const [pendingEdit, setPendingEdit] = useState(null);
     useEffect(() => {
       const q = new URLSearchParams(location.search);
-      if (q.get('view') === 'equip') setView('equip');
+      const v = q.get('view');
+      if (v === 'equip' || v === 'matrix') setView(v);
       const b = q.get('bot');
       if (b != null && b !== '') setBotId(b);
       if (q.get('new') === '1') { setEditor({ mode: 'new' }); setForm(blankForm()); }
@@ -694,7 +696,47 @@ export default {
         receipt != null ? h(Receipt, { h, title: receipt.title, receipt: receipt.data }) : null));
     }
 
+
+    // —— 知识总览（DESIGN-KNOWLEDGE 平台维度）：bot × 记忆/技能资产矩阵 ——————————
+    // 哪台 bot 记了什么、哪些资产被多台共享、记忆条数逼近 50 上限一眼可见；
+    // 点 bot 名跳它的「知识」tab 看内容与整理。
+    const knowledgeAssets = (assets ?? []).filter((a) => a.type === 'memory' || a.type === 'skill');
+    const cellOf = (bot, asset) => (Array.isArray(bot?.assets) ? bot.assets : [])
+      .find((x) => x?.assetId === asset.id) ?? null;
+    const goKnowledge = (botId) => goRobots(botId, 'knowledge');
+    let matrixBody = null;
+    if (bots.length === 0) {
+      matrixBody = h('div', { className: 'wb-empty' },
+        h('p', null, '还没有机器人——先去机器人管理创建一个，回来在这里看知识资产总览。'));
+    } else if (knowledgeAssets.length === 0) {
+      matrixBody = h('div', { className: 'wb-empty' },
+        h('p', null, '还没有记忆/技能资产——到「工具清单」添加，或让机器人在「知识」tab 自己整理出技能。'));
+    } else {
+      const headRow = h('tr', null,
+        h('th', null, '机器人'),
+        knowledgeAssets.map((a) => h('th', { key: a.id, title: `${a.id} · v${a.version ?? '?'} · 绑定 ${a.bindings ?? 0} 个` },
+          h(TypeBadge, { h, type: a.type }), ' ', a.name,
+          a.type === 'memory' && Array.isArray(a.content?.notes)
+            ? `（${a.content.notes.length}/50 条）` : '')));
+      const bodyRows = bots.map((b) => h('tr', { key: b.id },
+        h('td', null, h('button', {
+          className: 'wb-linklike', title: '查看这台机器人的知识（提示词/记忆/技能/整理）',
+          onClick: () => goKnowledge(b.id),
+        }, b.name ?? b.id)),
+        knowledgeAssets.map((a) => {
+          const cell = cellOf(b, a);
+          return h('td', { key: a.id, style: { textAlign: 'center' } },
+            cell == null ? h('span', { className: 'wb-hint' }, '—') : h(ModeBadge, { h, mode: cell.mode }));
+        })));
+      matrixBody = h('div', null,
+        h('div', { className: 'wb-table-scroll' },
+          h('table', { className: 'wb-table' }, h('thead', null, headRow), h('tbody', null, bodyRows))),
+        h('p', { className: 'wb-hint', style: { marginTop: 8 } },
+          '共享=跟源更新（多台绑定即平台级共享知识）；独立=快照隔离（本机生效，AI 整理轮写的是这份）；「—」=未绑定。点机器人名进它的「知识」页看内容、触发 AI 整理。'));
+    }
+
     // —— 页骨架 ————————————————————————————————————————————————————————
+
 
     return h('div', { className: 'page' },
       h('h2', null, '工具库'),
@@ -708,11 +750,15 @@ export default {
           h('button', {
             className: `wb-tab${view === 'equip' ? ' active' : ''}`,
             onClick: () => { setView('equip'); setReceipt(null); },
-          }, '工具配置')),
+          }, '工具配置'),
+          h('button', {
+            className: `wb-tab${view === 'matrix' ? ' active' : ''}`,
+            onClick: () => { setView('matrix'); setReceipt(null); },
+          }, '知识总览')),
         view === 'registry' && assets.length > 0 && editor == null
           ? h('button', { className: 'wb-btn wb-btn-primary', onClick: openNew }, '＋ 添加工具') : null),
       actionError != null ? h('div', { className: 'error', style: { marginTop: 12 } }, actionError) : null,
-      view === 'registry' ? registryBody : equipBody,
+      view === 'registry' ? registryBody : view === 'matrix' ? matrixBody : equipBody,
       deleteModal,
       unbindModal,
       rematModal,

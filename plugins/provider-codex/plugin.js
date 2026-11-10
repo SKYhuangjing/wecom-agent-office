@@ -325,6 +325,35 @@ export default {
         return { writes, notes, entries: [], tools };
       },
 
+      // 知识呈现面（DESIGN-KNOWLEDGE §4.2）：codex 无每轮 append 旗标（F10）——
+      // 人设/记忆/提示词约束全走 AGENTS.md 标记节，技能走 skills/ 盘面。
+      knowledgeFace(bot, { plan }) {
+        const pc = bot.providerConfig ?? {};
+        const home = typeof pc.codexHome === 'string' && pc.codexHome !== '' ? pc.codexHome : null;
+        const agentsMd = home ? join(home, 'AGENTS.md') : join(pc.cwd, 'AGENTS.md');
+        const skillsRoot = home ? join(home, 'skills') : join(pc.cwd, '.agents', 'skills');
+        const configToml = home ? join(home, 'config.toml') : join(pc.cwd, '.codex', 'config.toml');
+        const entries = Array.isArray(plan) ? plan : [];
+        const sections = [];
+        if (entries.some((e) => e?.type === 'memory' || e?.type === 'prompt' || (e?.type === 'tool' && e.content?.kind === 'ripgrep'))) {
+          sections.push({ kind: 'file', title: 'AGENTS.md 标记节（记忆 / 提示词约束 / 工具指引）', paths: [agentsMd] });
+        }
+        const skillPaths = entries.filter((e) => e?.type === 'skill')
+          .map((e) => join(skillsRoot, e.content?.name ?? e.name, 'SKILL.md'));
+        if (skillPaths.length > 0) sections.push({ kind: 'file', title: '技能文档（skills/*/SKILL.md）', paths: skillPaths });
+        if (entries.some((e) => e?.type === 'mcp')) {
+          sections.push({ kind: 'file', title: 'MCP 服务配置（config.toml 标记节，含密钥不预览内容）', paths: [configToml], secret: true });
+        }
+        sections.push({
+          kind: 'stdin', title: '任务信封（stdin `-`）',
+          text: '每轮任务 = [会话自愈 handoff 前缀] + 用户消息 + [附件段] + [失败注记段]，以 \n\n---\n\n 连接后经 stdin 传入；人设若无 prompt 资产则不生效（codex 无独立人设键）。',
+        });
+        return {
+          delivery: 'codex：记忆/提示词约束物化进 AGENTS.md 标记节（CODEX_HOME 或 cwd）；技能走 skills/ 盘面；MCP 走 config.toml 标记节。',
+          sections,
+        };
+      },
+
       createRunner({ bot, providerConfig, log }) {
         return createRunner({ bot, providerConfig, log });
       },

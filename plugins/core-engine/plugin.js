@@ -21,6 +21,7 @@ import { maskOutbound } from './middleware.js';
 import { loadBots, revalidateAll, validateBot, BOT_ID_RE } from './bots.js';
 import { loadAssets, buildPlan, saveAssets, seedBuiltinToolAssets } from './assets.js';
 import { createDistillMiddleware } from './distill.js';
+import { applyMemoryNotes, memoryTargetOf } from './knowledge.js';
 import { createMaterializer } from './materializer.js';
 import { companyOps, createApi, rosterSummary, updateAssetOp } from './api.js';
 
@@ -380,19 +381,18 @@ export default {
       get assetsDoc() { return assetsDoc; },
     };
     // 记忆蒸馏中间件（DESIGN-TOKEN-OPT §4.3）：最终回复先剥 wao-memory 标记
-    // （协议绝不外泄），再把条目并进该 bot 绑定的首个 memory 资产——走
-    // updateAssetOp（REST 面），§3.2 eager 扇出自动重物化，下一轮生效。
-    // 引擎对 onOutbound 逐 impl 隔离：写回失败=标记已剥但条目丢弃，绝不吞回复。
+    // （协议绝不外泄），再把条目并进该 bot 的**生效**记忆目标——shared 走
+    // updateAssetOp（REST 面，§3.2 eager 扇出自动重物化）；exclusive 走快照覆写
+    // +本 bot 重物化（knowledge.js applyMemoryNotes，2026-11-11 修掉「exclusive
+    // 记忆收不到蒸馏写回」的既有缺口）。引擎对 onOutbound 逐 impl 隔离：写回
+    // 失败=标记已剥但条目丢弃，绝不吞回复。
     ctx.registerMiddleware(createDistillMiddleware({
-      findMemoryAsset: (bot) => {
-        for (const b of bot?.assets ?? []) {
-          if (b == null || typeof b !== 'object') continue;
-          const asset = state.assetsDoc.assets.find((a) => a?.id === b.assetId);
-          if (asset?.type === 'memory') return asset;
-        }
-        return null;
+      getMemory: (bot) => {
+        const target = memoryTargetOf(state, bot);
+        if (target == null) return null;
+        return { assetId: target.assetId, mode: target.mode, notes: target.notes };
       },
-      updateNotes: (assetId, notes) => updateAssetOp(state, assetId, { content: { notes } }),
+      writeNotes: (bot, assetId, notes) => applyMemoryNotes(state, bot, notes, 'distill'),
       log,
     }));
 

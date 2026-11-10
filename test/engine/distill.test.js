@@ -73,7 +73,7 @@ function fakeLog() {
 
 test('distill middleware: strips markers even with NO memory asset bound (protocol never leaks)', async () => {
   const log = fakeLog();
-  const mw = createDistillMiddleware({ findMemoryAsset: () => null, updateNotes: () => { throw new Error('must not persist'); }, log });
+  const mw = createDistillMiddleware({ getMemory: () => null, writeNotes: () => { throw new Error('must not persist'); }, log });
   const out = await mw.onOutbound('回复正文\n<!--wao-memory:Q → A-->', { bot: { id: 'b1', assets: [] } });
   assert.equal(out, '回复正文');
   assert.match(log.lines.warn.join('\n'), /未绑定 memory 资产/);
@@ -81,11 +81,11 @@ test('distill middleware: strips markers even with NO memory asset bound (protoc
 
 test('distill middleware: appends into the first bound memory asset and returns clean text', async () => {
   const log = fakeLog();
-  const asset = { id: 'ast-m1', type: 'memory', content: { notes: ['旧知识'] } };
+  const memory = { assetId: 'ast-m1', mode: 'shared', notes: ['旧知识'] };
   const updates = [];
   const mw = createDistillMiddleware({
-    findMemoryAsset: (bot) => bot.assets.some((b) => b.assetId === 'ast-m1') ? asset : null,
-    updateNotes: async (id, notes) => { updates.push({ id, notes }); },
+    getMemory: (bot) => bot.assets.some((b) => b.assetId === 'ast-m1') ? memory : null,
+    writeNotes: async (bot, assetId, notes) => { updates.push({ botId: bot.id, assetId, notes }); },
     log,
   });
   const out = await mw.onOutbound(
@@ -94,19 +94,36 @@ test('distill middleware: appends into the first bound memory asset and returns 
   );
   assert.equal(out, '结论在这里。');
   assert.equal(updates.length, 1);
-  assert.deepEqual(updates[0], { id: 'ast-m1', notes: ['旧知识', '问题甲 → 答案甲'] }, 'duplicate marker persisted once');
+  assert.deepEqual(updates[0], { botId: 'b1', assetId: 'ast-m1', notes: ['旧知识', '问题甲 → 答案甲'] }, 'duplicate marker persisted once');
   assert.match(log.lines.info.join('\n'), /\+1 条记忆/);
 });
 
 test('distill middleware: no new notes → no persistence call; non-marker text untouched', async () => {
   const mw = createDistillMiddleware({
-    findMemoryAsset: () => ({ id: 'a', content: { notes: ['已有此条'] } }),
-    updateNotes: () => { throw new Error('must not persist a no-op'); },
+    getMemory: () => ({ assetId: 'a', mode: 'shared', notes: ['已有此条'] }),
+    writeNotes: () => { throw new Error('must not persist a no-op'); },
   });
   const out = await mw.onOutbound('正文\n<!--wao-memory:已有此条-->', { bot: { id: 'b', assets: [{ assetId: 'a' }] } });
   assert.equal(out, '正文');
   const untouched = await mw.onOutbound('plain', {});
   assert.equal(untouched, 'plain');
+});
+
+// exclusive 生效目标（2026-11-11 接口升级）：getMemory 返回快照 notes（mode
+// exclusive），写回走同一条 writeNotes（plugin.js 的 applyMemoryNotes 路由
+// 快照覆写）——快照记忆从此也能收到蒸馏写回。
+test('distill middleware: exclusive snapshot target carries mode and snapshot notes', async () => {
+  const log = fakeLog();
+  const written = [];
+  const mw = createDistillMiddleware({
+    getMemory: () => ({ assetId: 'ast-m1', mode: 'exclusive', notes: ['快照旧知识'] }),
+    writeNotes: async (bot, assetId, notes) => { written.push({ assetId, mode: 'exclusive', notes }); },
+    log,
+  });
+  const out = await mw.onOutbound('正文\n<!--wao-memory:新条目-->', { bot: { id: 'b1', assets: [{ assetId: 'ast-m1', mode: 'exclusive' }] } });
+  assert.equal(out, '正文');
+  assert.deepEqual(written, [{ assetId: 'ast-m1', mode: 'exclusive', notes: ['快照旧知识', '新条目'] }]);
+  assert.match(log.lines.info.join('\n'), /独立副本/);
 });
 
 test('every provider memory writer carries the distillation footer (marker protocol present)', () => {

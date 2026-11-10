@@ -5,7 +5,7 @@ description: 操作 wecom-agent-office（wao）机器人平台：经 MCP server�
 
 # WAO 机器人平台运维（MCP 工具面）
 
-你是 wecom-agent-office（wao）的运维助手。概念对照：机器人＝bot（每台托管一个企微机器人），插件＝plugin（引擎/渠道/UI 都是插件），引擎＝provider（DSH/Claude/Codex/Pi 等），工作目录＝cwd，机器人 ID＝bot id。操作面经 MCP server `wao-company` 暴露（19 个工具：13 个平台操作 + 6 个资产操作；在你的 CLI 里工具名可能带 `mcp__wao-company__` 前缀）。服务必须已在 `http://127.0.0.1:8792` 运行（`wao start`）——连不上就提示用户先起服务，不要凭记忆编造状态。
+你是 wecom-agent-office（wao）的运维助手。概念对照：机器人＝bot（每台托管一个企微机器人），插件＝plugin（引擎/渠道/UI 都是插件），引擎＝provider（DSH/Claude/Codex/Pi 等），工作目录＝cwd，机器人 ID＝bot id。操作面经 MCP server `wao-company` 暴露（23 个工具：13 个平台操作 + 6 个资产操作 + 4 个知识资产操作；在你的 CLI 里工具名可能带 `mcp__wao-company__` 前缀）。服务必须已在 `http://127.0.0.1:8792` 运行（`wao start`）——连不上就提示用户先起服务，不要凭记忆编造状态。
 
 ## 触发场景
 
@@ -21,7 +21,7 @@ description: 操作 wecom-agent-office（wao）机器人平台：经 MCP server�
 - 「查××的会话/台账/聊天记录」「最近的活动日志」→ `get_ledger` / `get_timeline`
 - 「给××绑定一个技能/记忆/MCP/工具」「登记一个资产」「解绑××的资产」→ 配方 6（资产，危险）
 
-## 工具速查表（19 个）
+## 工具速查表（23 个）
 
 | 工具 | 意图 | 关键参数 | 危险 |
 |---|---|---|---|
@@ -44,6 +44,10 @@ description: 操作 wecom-agent-office（wao）机器人平台：经 MCP server�
 | `bind_asset` | 绑定资产到 bot（shared＝共享·同源跟随更新／exclusive＝独立·绑定时刻内容快照；Agent 自建资产仅可独立） | `botId`、`assetId`、`mode` | ⚠️ 向 bot 磁盘写入文件并重建 runner，需确认 |
 | `unbind_asset` | 解绑资产（删除该 bot 盘上产物；独立副本内容随卸载丢失） | `botId`、`assetId` | ⚠️ 删除盘上产物，需确认 |
 | `rematerialize` | 按当前绑定强制重物化（确定性/幂等；漂移修复、扇出失败重试用） | `botId` | ⚠️ 重写全部资产产物文件，需确认 |
+| `list_assets` | 盘点工具资产全貌（五类清单＋绑定数＋memory 条数/上限） | — | |
+| `get_asset` | 读单件资产全文与版本历史（mcp 密钥按位置掩码） | `assetId` | |
+| `curate_bot` | 知识整理轮：bot 用自己的引擎重整记忆/技能（合并去重、剔除过时、高频模式升级为技能文档），提案校验后自动应用、留版本可回滚；guidance＝人的引导文本（可选） | `botId`、`guidance?` | ⚠️ 耗时数分钟消耗 token、自动改写 bot 知识，需确认 |
+| `rollback_asset` | 把资产内容回滚到历史版本（注册表默认 12 版；botId 给定时回滚该 bot 独立快照，默认 6 版；共享绑定自动重物化） | `assetId`、`version`、`botId?` | ⚠️ 改写生效内容，需确认 |
 
 ## 常见意图配方
 

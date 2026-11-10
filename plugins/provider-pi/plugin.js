@@ -268,6 +268,49 @@ export default {
         return { removed };
       },
 
+      // 知识呈现面（DESIGN-KNOWLEDGE §4.2）：pi 的人设/资产走显式旗标
+      //（--append-system-prompt 可重复），记忆正文物化 wao-memory.md 后由
+      // runner 读文件拼文本传参，技能走 --skill 旗标 + 盘面。
+      knowledgeFace(bot, { plan }) {
+        const pc = bot.providerConfig ?? {};
+        const agentDir = piAgentDirFor({ botId: bot.id, piAgentDir: pc.piAgentDir });
+        const entries = Array.isArray(plan) ? plan : [];
+        const argvTexts = [];
+        if (typeof pc.prompt === 'string' && pc.prompt.trim() !== '') argvTexts.push(pc.prompt);
+        for (const entry of entries) {
+          if (entry?.type === 'prompt') argvTexts.push(String(entry.content?.text ?? ''));
+          if (entry?.type === 'tool' && entry.content?.kind === 'ripgrep') {
+            argvTexts.push([RIPGREP_GUIDANCE, ...(entry.content.options?.extraHints ? [String(entry.content.options.extraHints)] : [])].join('\n'));
+          }
+        }
+        const sections = [{
+          kind: 'argv', title: '--append-system-prompt · 每轮追加的系统提示词（可重复）',
+          text: argvTexts.join('\n\n') || '（空——未配置人设，也未绑定 prompt/ripgrep 资产）',
+        }];
+        if (entries.some((e) => e?.type === 'memory')) {
+          sections.push({
+            kind: 'file', title: '跨会话记忆（wao-memory.md，runner 读文件拼文本传参）',
+            paths: [join(agentDir, 'wao-memory.md')],
+          });
+        }
+        const skillPaths = entries.filter((e) => e?.type === 'skill')
+          .map((e) => join(agentDir, 'skills', e.content?.name ?? e.name, 'SKILL.md'));
+        if (skillPaths.length > 0) {
+          sections.push({ kind: 'file', title: '技能文档（skills/*/SKILL.md，另经 --skill 旗标显式传入）', paths: skillPaths });
+        }
+        if (entries.some((e) => e?.type === 'mcp')) {
+          sections.push({ kind: 'file', title: 'MCP 服务配置（mcp.json 整文件，含密钥不预览内容）', paths: [join(agentDir, 'mcp.json')], secret: true });
+        }
+        sections.push({
+          kind: 'stdin', title: '任务信封（stdin）',
+          text: '每轮任务 = [会话自愈 handoff 前缀] + 用户消息 + [附件段] + [失败注记段]，以 \n\n---\n\n 连接后经 stdin 传入；人设/资产不在这里（走上面的旗标与盘面文件）。',
+        });
+        return {
+          delivery: 'pi：人设/prompt/ripgrep 走 --append-system-prompt 旗标；记忆物化 wao-memory.md 后读文件传参；技能走 --skill 旗标 + agent 目录盘面；MCP 走 mcp.json。',
+          sections,
+        };
+      },
+
       createRunner({ bot, providerConfig, assets, log }) {
         return createRunner({ bot, providerConfig, assets, log });
       },

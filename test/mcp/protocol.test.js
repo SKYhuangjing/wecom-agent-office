@@ -94,13 +94,13 @@ test('initialize version negotiation: unknown client version gets the server val
   assert.equal(body.result.protocolVersion, '2025-06-18');
 });
 
-test('tools/list with session: full 19-tool roster shape + session header echoed', async () => {
+test('tools/list with session: full 23-tool roster shape + session header echoed', async () => {
   const { sessionId } = await initialize();
   const r = await rpc({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, { 'mcp-session-id': sessionId });
   assert.equal(r.status, 200);
   assert.equal(r.headers.get('mcp-session-id'), sessionId);
   const tools = r.body.result.tools;
-  assert.ok(Array.isArray(tools) && tools.length === 19, `19 tools shipped (T2 13 + W3 asset 6), got ${tools?.length}`);
+  assert.ok(Array.isArray(tools) && tools.length === 23, `23 tools shipped (T2 13 + W3 asset 6 + knowledge 4), got ${tools?.length}`);
   for (const t of tools) {
     assert.equal(typeof t.name, 'string', 'tool name');
     assert.equal(typeof t.description, 'string', 'tool description');
@@ -257,7 +257,7 @@ test('two concurrent sessions stay isolated: distinct ids, each echoes its own',
 
   const viaA = await rpc({ jsonrpc: '2.0', id: 10, method: 'tools/list' }, { 'mcp-session-id': a.sessionId });
   assert.equal(viaA.headers.get('mcp-session-id'), a.sessionId);
-  assert.equal(viaA.body.result.tools.length, 19);
+  assert.equal(viaA.body.result.tools.length, 23);
 
   const viaB = await rpc({ jsonrpc: '2.0', id: 11, method: 'tools/list' }, { 'mcp-session-id': b.sessionId });
   assert.equal(viaB.headers.get('mcp-session-id'), b.sessionId);
@@ -274,7 +274,7 @@ test('GET /api/mcp: tool roster with dangerous flags, session count tracks live 
   assert.equal(boot.ok, true);
   assert.equal(boot.endpoint, '/mcp');
   assert.equal(typeof before, 'number');
-  assert.equal(boot.tools.length, 19);
+  assert.equal(boot.tools.length, 23);
   const byName = new Map(boot.tools.map((t) => [t.name, t]));
   assert.equal(byName.get('list_bots').dangerous, false);
   assert.equal(byName.get('set_enabled').dangerous, false);
