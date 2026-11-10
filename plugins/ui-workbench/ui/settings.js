@@ -432,10 +432,11 @@ const SystemInfo = ({ WAO }) => {
     setNetBusy(true);
     setNetMsg(null);
     try {
+      // 关闭开关时绝不能把存量 URL 清掉（回评 P0-2）：draft 即当前存量值
       const res = await api('/api/service/network', { enabled, url: netUrlDraft.trim() });
       setNetProxy(res?.proxy ?? { enabled: false, url: '' });
       setNetEff(res?.effective ?? null);
-      setNetMsg(enabled ? `已启用：${res?.proxy?.url}` : '已关闭（直连）');
+      setNetMsg(enabled ? `已启用：${res?.proxy?.proxyUrl}` : '已关闭（直连）');
     } catch (err) {
       setNetMsg(`保存失败：${err?.message ?? String(err)}`);
     } finally {
@@ -463,7 +464,7 @@ const SystemInfo = ({ WAO }) => {
   useEffect(() => { void refreshTools(); }, []);
   useEffect(() => {
     void api('/api/service/network')
-      .then((d) => { setNetProxy(d?.proxy ?? { enabled: false, url: '' }); setNetUrlDraft(d?.proxy?.url ?? ''); setNetEff(d?.effective ?? null); })
+      .then((d) => { setNetProxy(d?.proxy ?? { enabled: false, proxyUrl: '' }); setNetUrlDraft(d?.proxy?.proxyUrl ?? ''); setNetEff(d?.effective ?? null); })
       .catch(() => { setNetProxy({ enabled: false, url: '' }); });
   }, []);
 

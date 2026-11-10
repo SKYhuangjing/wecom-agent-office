@@ -145,7 +145,7 @@ async function installBrew(plan, { log, spawnCliImpl, proxy }) {
   // 的 GHCR/Homebrew 拉取走用户代理；注入式 spawnCliImpl（测试）不带 env 面。
   const run = spawnCliImpl ?? ((bin, args) => execFileAsync(bin, args, {
     stdio: 'ignore', timeout: 900_000, // generous cap — brew can compile from source
-    env: { ...process.env, ...proxyEnv(plan.proxy) },
+    env: { ...process.env, ...proxyEnv(proxy) },
   }));
   log?.(`brew install ${plan.formula}（可能需要数分钟）`);
   await run('brew', ['install', '-q', plan.formula]);

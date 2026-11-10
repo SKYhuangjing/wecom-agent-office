@@ -110,6 +110,32 @@ export function getCurrentCommit(dataDir) {
 
 // 检查 GitHub 远程最新 Commit（跨平台、免登录公共 API，带超时与限流保护）
 // /api/service/network/test 的失败原因翻译：代理配置错误要能自我解释。
+// 更新器的代理通道（回评 P1-2/P1-3）：不把 HTTP(S)_PROXY 注进更新器 env——
+// 它重启的后继服务会永久继承（企微 WS/provider CLI 违反「不经代理」红线）；
+// 也不走 argv（ps 可见带凭证的 URL）。单一 env 键 WAO_PROXY_URL：更新器自己
+// 消费（下载走代理），重启后继时天然不带走（spawn env 显式构造自 process.env
+// ＋本键仅在本进程用后即弃——见 updater 的 successor spawn 剥离）。
+// 带凭证代理地址的日志脱敏（回评 P1-3）：user:pass@ 只在配置里，日志/回显一律
+// 换成 ***@。
+export function maskUrlCreds(u) {
+  try { const p = new URL(u); if (p.username || p.password) { p.username = '***'; p.password = ''; } return p.toString(); } catch { return u; }
+}
+
+// P1-1（回评）：环境变量代理态真实生效——checkRemoteUpdate 与更新器决策都用
+// effective 解析后的网络（config 优先，其次进程 env 的 HTTPS_PROXY），UI 文案
+// 与实际行为不再两张皮。
+export function effectiveNetwork(network) {
+  const eff = effectiveProxy(network);
+  return eff.enabled ? { enabled: true, proxyUrl: eff.url } : { enabled: false, proxyUrl: '' };
+}
+
+function updaterEnv(network) {
+  if (network?.enabled === true && network.proxyUrl) {
+    return { ...process.env, WAO_PROXY_URL: network.proxyUrl };
+  }
+  return { ...process.env };
+}
+
 function proxyTestError(err, eff) {
   // undici 把真实拒绝码包在 err.cause（fetch failed 只是外壳）
   const raw = [err?.message, err?.cause?.code, err?.cause?.message]
@@ -568,14 +594,14 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
     prefix: '/api/service/update', owner: 'kernel', handler: async (req, res) => {
       if (req.method === 'GET') {
         const cur = getCurrentCommit(dir);
-        const info = await checkRemoteUpdate(cur, serviceConfig.network);
+        const info = await checkRemoteUpdate(cur, effectiveNetwork(serviceConfig.network));
         return json(res, 200, { ok: true, ...info });
       }
       if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' }, { Allow: 'GET, POST' });
 
       try {
         const cur = getCurrentCommit(dir);
-        const check = await checkRemoteUpdate(cur, serviceConfig.network);
+        const check = await checkRemoteUpdate(cur, effectiveNetwork(serviceConfig.network));
         const targetCommit = check.remoteCommit || '';
         if (!targetCommit) {
           return json(res, 503, { ok: false, error: `无法确定远程最新 Commit（${check.error ?? 'GitHub 不可达'}），稍后重试` });
@@ -598,15 +624,12 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
           '--target-commit', targetCommit,
         ];
         if (isLanMode) updaterArgs.push('--lan');
-        if (serviceConfig.network.enabled === true && serviceConfig.network.proxyUrl) {
-          updaterArgs.push('--proxy', serviceConfig.network.proxyUrl);
-        }
 
         const child = spawn(process.execPath, updaterArgs, {
           detached: true,
           stdio: 'ignore',
           cwd: repoRoot,
-          env: { ...process.env, ...proxyEnv(serviceConfig.network) },
+          env: updaterEnv(serviceConfig.network),
         });
         child.unref();
 
@@ -681,7 +704,7 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
           registryFile: regFile,
           stageDir: join(resolve(dir), '.tools-stage', id),
           mirror: process.env.WAO_DOWNLOAD_MIRROR,
-          proxy: serviceConfig.network, // 设置的网络代理：下载/brew 即时走
+          proxy: effectiveNetwork(serviceConfig.network), // config/env 生效态：下载/brew 即时走
           which: whichBin,
           log: (m) => logger.info(`tools: ${id} ${m}`),
         }).then((entry) => {
@@ -745,7 +768,7 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
       serviceConfig = { ...serviceConfig, network: next };
       saveServiceConfig(serviceConfigFile, serviceConfig);
       resetProxyDispatcherCache(); // 旧 ProxyAgent 退役
-      logger.info(`wao: 网络代理已更新 → ${next.enabled ? next.proxyUrl : '关闭'}（服务出网三链路即时生效）`);
+      logger.info(`wao: 网络代理已更新 → ${next.enabled ? maskUrlCreds(next.proxyUrl) : '关闭'}（服务出网三链路即时生效）`);
       return json(res, 200, { ok: true, proxy: next, effective: effectiveProxy(next) });
     },
   });
@@ -768,10 +791,7 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
           '--restart-mode', restartMode,
         ];
         if (isLanMode) updaterArgs.push('--lan');
-        if (serviceConfig.network.enabled === true && serviceConfig.network.proxyUrl) {
-          updaterArgs.push('--proxy', serviceConfig.network.proxyUrl);
-        }
-        const child = spawn(process.execPath, updaterArgs, { detached: true, stdio: 'ignore', cwd: repoRoot, env: { ...process.env, ...proxyEnv(serviceConfig.network) } });
+        const child = spawn(process.execPath, updaterArgs, { detached: true, stdio: 'ignore', cwd: repoRoot, env: updaterEnv(serviceConfig.network) });
         child.unref();
         logger.info(`wao: restart delegated to detached updater (mode=${restartMode}), pid=${child.pid}`);
         return json(res, 200, { ok: true, message: '服务重启中（十几秒），页面就绪后自动刷新', restartMode });

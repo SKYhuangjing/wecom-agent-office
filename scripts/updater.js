@@ -191,7 +191,11 @@ export async function runUpdater(argv = process.argv.slice(2)) {
   const host = flags.host || '127.0.0.1';
   const lan = flags.lan === true;
   const restartMode = flags['restart-mode'] || 'auto';
-  const proxyUrl = typeof flags.proxy === 'string' ? flags.proxy : '';
+  // 代理通道（回评 P1-2/P1-3）：服务经 WAO_PROXY_URL env 传入（ps 不可见、
+  // 后继进程不继承）；--proxy 旗标保留兼容（显式传则优先）。
+  const proxyUrl = typeof flags.proxy === 'string' && flags.proxy !== ''
+    ? flags.proxy
+    : (typeof process.env.WAO_PROXY_URL === 'string' ? process.env.WAO_PROXY_URL : '');
 
   if ((!restartOnly && !stageDir && !zipUrl) || !targetDir || !dataDir) {
     console.error('updater: missing required --stage-dir/--zip-url/--restart-only, --target-dir, or --data-dir');
@@ -205,7 +209,8 @@ export async function runUpdater(argv = process.argv.slice(2)) {
     try { writeFileSync(logFile, line, { flag: 'a' }); } catch { /* ignore */ }
   };
 
-  log(`updater started: parentPid=${parentPid}, restartMode=${restartMode}, targetCommit=${targetCommit}, mode=${restartOnly ? 'restart-only' : zipUrl ? 'zip-url' : 'stage-dir'}${proxyUrl ? `, proxy=${proxyUrl}` : ''}`);
+  const maskCreds = (u) => { try { const p = new URL(u); if (p.username || p.password) { p.username = '***'; p.password = ''; } return p.toString(); } catch { return u; } };
+log(`updater started: parentPid=${parentPid}, restartMode=${restartMode}, targetCommit=${targetCommit}, mode=${restartOnly ? 'restart-only' : zipUrl ? 'zip-url' : 'stage-dir'}${proxyUrl ? `, proxy=${maskCreds(proxyUrl)}` : ''}`);
 
   try {
     // —— Phase 1: prepare the stage (parent keeps serving — zero downtime here) ——
@@ -319,11 +324,13 @@ export async function runUpdater(argv = process.argv.slice(2)) {
       const startArgs = [entry, 'start', '--port', String(port), '--host', host, '--data-dir', dataDir];
       if (lan) startArgs.push('--lan');
       log(`spawning detached process: ${process.execPath} ${startArgs.join(' ')}`);
+      const successorEnv = { ...process.env };
+      delete successorEnv.WAO_PROXY_URL; // 回评 P1-2：代理通道键绝不进后继服务
       const child = spawn(process.execPath, startArgs, {
         detached: true,
         stdio: 'ignore',
         cwd: targetDir,
-        env: process.env,
+        env: successorEnv,
       });
       child.unref();
       log(`detached child spawned: pid=${child.pid}`);

@@ -11,7 +11,8 @@ import {
   validateProxyUrl, proxyEnv, effectiveProxy, proxyFetch,
   loadServiceConfig, saveServiceConfig,
 } from '../../src/kernel/proxy.js';
-import { createKernel } from '../../src/index.js';
+import { createKernel, effectiveNetwork, maskUrlCreds } from '../../src/index.js';
+import { readFileSync } from 'node:fs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -174,4 +175,54 @@ test('proxyFetch: undici ABSENT degrades to direct with a trace, never kills the
   assert.equal(out.ok, true, 'the call itself survives on the direct path');
   assert.equal(notes.length, 1);
   assert.match(notes[0], /undici unavailable/);
+});
+
+
+// —— 回评修复回归（P0-1/P0-2/P1-1/P1-2/P1-3）———————————————————————————
+test('P0-1: brew child env carries the proxy (source contract + shape)', async () => {
+  const src = readFileSync(join(repoRoot, 'src', 'tools-installer.js'), 'utf8');
+  assert.match(src, /\.\.\.proxyEnv\(proxy\)/, 'installBrew passes the DESTRUCTURED proxy, not plan.proxy');
+  assert.doesNotMatch(src, /proxyEnv\(plan\.proxy\)/, 'the undefined plan.proxy hop is gone');
+  const env = proxyEnv({ enabled: true, proxyUrl: 'http://p:1' });
+  assert.ok(env.HTTPS_PROXY && env.NO_PROXY.includes('127.0.0.1'));
+});
+
+test('P0-2: UI mock speaks the SAME shape as the real route (proxyUrl, not url)', async () => {
+  const fakeMod = await import('../../plugins/ui-workbench/ui/fake-data.js');
+  const fn = fakeMod.FAKE_API?.['/api/service/network'];
+  assert.equal(typeof fn, 'function', 'mock entry exists');
+  const mocked = fn(undefined);
+  assert.ok('proxyUrl' in mocked.proxy && !('url' in mocked.proxy), `mock uses proxyUrl: ${JSON.stringify(mocked.proxy)}`);
+  // the UI reads the same key (settings.js net loader)
+  const ui = readFileSync(join(repoRoot, 'plugins', 'ui-workbench', 'ui', 'settings.js'), 'utf8');
+  assert.match(ui, /d\?\.proxy\?\.proxyUrl/, 'settings.js loads proxyUrl into the draft');
+  assert.doesNotMatch(ui, /d\?\.proxy\?\.url\b/, 'the old wrong key is gone');
+});
+
+test('P1-1: effectiveNetwork makes the env-inherited proxy REAL for update-check/upgrader', () => {
+  // config off + env HTTPS_PROXY set → the effective network proxies (the UI copy
+  // and /test already claim it; now the update-check path does too)
+  const eff = effectiveNetwork({ enabled: false, proxyUrl: '' });
+  // (this process has no HTTPS_PROXY — assert the none branch)
+  assert.deepEqual(eff, { enabled: false, proxyUrl: '' });
+  const viaEnv = effectiveProxy({ enabled: false, proxyUrl: '' }, { HTTPS_PROXY: 'http://env:2' });
+  assert.equal(viaEnv.enabled, true, 'env proxy recognized upstream');
+  // source wiring: both checkRemoteUpdate call sites pass effectiveNetwork(...)
+  const src = readFileSync(join(repoRoot, 'src', 'index.js'), 'utf8');
+  assert.equal(src.match(/checkRemoteUpdate\(cur, effectiveNetwork\(serviceConfig\.network\)\)/g)?.length, 2,
+    'both GET and POST update-check ride the effective network');
+});
+
+test('P1-2: updater env channel only — no HTTP(S)_PROXY bleed, successor strips the key', () => {
+  const src = readFileSync(join(repoRoot, 'scripts', 'updater.js'), 'utf8');
+  assert.match(src, /delete successorEnv\.WAO_PROXY_URL/, 'successor service never inherits the proxy channel key');
+  assert.match(src, /WAO_PROXY_URL/, 'updater reads the env channel');
+  const route = readFileSync(join(repoRoot, 'src', 'index.js'), 'utf8');
+  assert.doesNotMatch(route, /\.\.\.proxyEnv\(serviceConfig\.network\)\s*\}/, 'routes no longer inject HTTP(S)_PROXY into the updater env');
+});
+
+test('P1-3: proxy credentials are masked in logs', () => {
+  assert.equal(maskUrlCreds('http://user:pass@10.0.0.2:7890'), 'http://***@10.0.0.2:7890/');
+  assert.equal(maskUrlCreds('http://10.0.0.2:7890'), 'http://10.0.0.2:7890/');
+  assert.equal(maskUrlCreds('garbage'), 'garbage');
 });
