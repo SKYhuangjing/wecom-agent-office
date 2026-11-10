@@ -134,7 +134,16 @@ export default {
       // (PLUGIN-DEV §8).
       configSchema: [
         { key: 'cwd', label: '工作目录（pi 作业目录，决定会话文件的 cwd slug 归属）', type: 'string', required: true },
-        { key: 'model', label: '模型 {model 必填（models.json 里的模型 id）, apiKey?, apiKeyEnv?, contextWindow?, maxTokens?}', type: 'object', required: true },
+        // model：结构化子字段（2026-11-10 UI 治理）。
+        { key: 'model', label: '模型', type: 'object', required: true,
+          hint: '模型名必填（models.json 里的 id）；其余可选——密钥留空走登录态，上下文/输出上限一般用模型默认',
+          fields: [
+            { key: 'model', label: '模型名', type: 'string', placeholder: '如 workbuddy、auto/glm-5.3-flash' },
+            { key: 'apiKey', label: '网关密钥（可选）', type: 'password' },
+            { key: 'apiKeyEnv', label: '密钥环境变量名（可选）', type: 'string', placeholder: 'PI_MAGPIE_API_KEY' },
+            { key: 'contextWindow', label: '上下文窗口（可选）', type: 'string', placeholder: '如 1000000' },
+            { key: 'maxTokens', label: '单次输出上限（可选）', type: 'string', placeholder: '如 32000' },
+          ] },
         { key: 'provider', label: 'models.json 里的 provider 键名（→ --provider）', type: 'string', default: 'magpie' },
         { key: 'baseUrl', label: '网关地址（写入 models.json；默认本机 magpie）', type: 'string', default: 'http://127.0.0.1:3425' },
         { key: 'api', label: '网关协议（写入 models.json）', type: 'enum', options: APIS, default: 'anthropic-messages' },
@@ -142,7 +151,7 @@ export default {
         { key: 'piArgs', label: '额外 CLI 参数（列表，逐项原样追加；不校验内容）', type: 'list' },
         { key: 'apiKeyEnv', label: '凭证环境变量名（models.json 写 $该名字，值来自 model.apiKey 字面量注入；默认 PI_MAGPIE_API_KEY）', type: 'string', default: 'PI_MAGPIE_API_KEY' },
         { key: 'piBin', label: 'pi 可执行文件（PATH 或绝对路径）', type: 'string', default: 'pi' },
-        { key: 'piAgentDir', label: 'pi agent 目录（注入 $PI_CODING_AGENT_DIR；models.json 与 sessions/ 都在其下。默认 ~/.pi/agent-wao-<botId>，删除机器人只清 models.json、保留会话数据）', type: 'string' },
+        { key: 'piAgentDir', label: 'pi agent 目录', hint: '默认 ~/.pi/agent-wao-<botId>；models.json 与会话数据都在其下，删除机器人保留会话', type: 'string' },
         { key: 'env', label: '注入子进程的环境变量（值必须是字符串）', type: 'object' },
         // progressStyle/progressText (2026-11-06 拟人播报)：进度行风格与播报
         // 文案，core-engine 出站面消费（polite=企微只播报一句「思考中…请稍
@@ -153,7 +162,6 @@ export default {
         // progressCoT 已废弃（2026-11-06，被 progressStyle 取代，保留兼容）：
         // 仅在 cot 风格内抑制 💭 行，不再能把进度行变回详细汇报——默认已
         // 翻转为 polite（owner 决策）。
-        { key: 'progressCoT', label: '进度行展示思维链摘要（已废弃，改用工作汇报风格）', type: 'bool', default: true },
         // visionInput（DESIGN-MULTIMODAL Phase 2）：图片输入总开关，默认关。
         // 开启后图片以位置参数 @<path> 挂进首提示（print 模式实证）；模型
         // 必须具备视觉能力，图片按视觉 token 计费。

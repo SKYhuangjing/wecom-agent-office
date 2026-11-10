@@ -29,13 +29,20 @@ export default {
       // (PLUGIN-DEV §8).
       configSchema: [
         { key: 'cwd', label: '工作目录（agent 作业目录，也是会话 projects 归属）', type: 'string', required: true },
-        { key: 'model', label: '模型 {model（如 gpt-5、sonnet-4-thinking；缺省用账号默认）, apiKey?, apiKeyEnv?}（apiKey 走 Cursor API key，不填则用 CLI 已登录态——login 入口保留）', type: 'object' },
+        // model：结构化子字段（2026-11-10 UI 治理）。
+        { key: 'model', label: '模型', type: 'object',
+          hint: '模型名留空=账号默认；密钥留空用 CLI 已登录态（login 入口保留）',
+          fields: [
+            { key: 'model', label: '模型名（可选）', type: 'string', placeholder: '如 gpt-5、sonnet-4-thinking' },
+            { key: 'apiKey', label: 'Cursor API 密钥（可选）', type: 'password' },
+            { key: 'apiKeyEnv', label: '密钥环境变量名（可选）', type: 'string', placeholder: 'CURSOR_API_KEY' },
+          ] },
         { key: 'mode', label: '模式（agent 默认/plan 只规划/ask 只问答）', type: 'enum', options: MODES },
         { key: 'force', label: '免确认执行工具（-f；机器人无人值守需要，默认开。关掉后工具调用会卡在确认）', type: 'bool', default: true },
         { key: 'cursorArgs', label: '额外 CLI 参数（列表，逐项原样追加；不校验内容）', type: 'list' },
         { key: 'apiKeyEnv', label: '凭证环境变量名（值为 model.apiKey 字面量时注入；cursor 自身读 CURSOR_API_KEY）', type: 'string', default: 'CURSOR_API_KEY' },
         { key: 'cursorBin', label: 'agent 可执行文件（PATH 或绝对路径）', type: 'string', default: 'agent' },
-        { key: 'cursorHome', label: 'cursor 配置目录（注入 $CURSOR_CONFIG_DIR+$CURSOR_DATA_DIR；默认 ~/.cursor，会话 projects/ 也在其下——readHistory 同源；登录态不建议重定向，多 bot 共用同一登录）', type: 'string' },
+        { key: 'cursorHome', label: 'cursor 配置目录', hint: '默认 ~/.cursor（会话 projects 同源）；登录态不建议重定向——多 bot 共用同一登录', type: 'string' },
         { key: 'env', label: '注入子进程的环境变量（值必须是字符串）', type: 'object' },
         // progressStyle/progressText (2026-11-06 拟人播报)：进度行风格与播报
         // 文案，core-engine 出站面消费。same row as dsh so the UI renders

@@ -77,7 +77,48 @@ export function SchemaFields({ WAO, schema, state, onChange, editingExisting }) 
           });
           break;
         case 'object': {
+          // 结构化子字段（2026-11-10 UI 治理）：schema 带 fields 时按子字段渲染
+          // 独立输入框（model 这类「一两个关键子键+可选网关项」的对象不该逼运营
+          // 手写 JSON）。表单态仍是 JSON 文本（序列化面零改动）——每个子输入框
+          // 编辑 parsed 对象的一个键后整体重序列化；空值子键省略（不提交空串）。
+          const subFields = Array.isArray(item.fields) ? item.fields : null;
           const parsed = parseJsonObject(value);
+          if (subFields != null && subFields.length > 0) {
+            const obj = parsed.error == null && parsed.value != null ? parsed.value : {};
+            control = h('div', { className: 'wb-form' },
+              subFields.map((sub) => {
+                if (sub == null || typeof sub.key !== 'string') return null;
+                const raw = obj[sub.key];
+                const subVal = raw == null ? '' : String(raw);
+                const setSub = (v) => {
+                  const next = { ...obj };
+                  if (String(v ?? '').trim() === '') delete next[sub.key];
+                  else next[sub.key] = v;
+                  set(Object.keys(next).length > 0 ? jsonOf(next) : '');
+                };
+                const subInput = sub.type === 'password'
+                  ? h('input', {
+                    type: 'password', className: 'wb-input', value: subVal,
+                    autoComplete: 'new-password', placeholder: sub.placeholder ?? '不填则保持不变',
+                    onChange: (e) => setSub(e.target.value),
+                  })
+                  : h('input', {
+                    type: 'text', className: 'wb-input', value: subVal,
+                    placeholder: sub.placeholder ?? '',
+                    onChange: (e) => setSub(e.target.value),
+                  });
+                return h('div', { key: sub.key, className: 'wb-field' },
+                  h('label', null, sub.label ?? sub.key, sub.required === true ? h('span', { className: 'wb-req' }, ' *') : null),
+                  subInput,
+                  sub.hint ? h('span', { className: 'wb-hint' }, sub.hint) : null);
+              }));
+            if (String(value ?? '').trim() !== '' && parsed.error != null) {
+              hint = h('span', { className: 'wb-field-error' }, `当前值不是合法 JSON（${parsed.error}）——修改任意子项将以合法结构整体替换`);
+            } else if (String(value ?? '').includes('__MASKED__')) {
+              hint = h('span', { className: 'wb-hint' }, '敏感值回显为 __MASKED__：保持原样保存即不修改，填入新值才会替换');
+            }
+            break;
+          }
           control = h('textarea', {
             className: 'wb-textarea', rows: 4, value, placeholder: '{\n  "key": "value"\n}',
             onChange: (e) => set(e.target.value),
@@ -133,7 +174,8 @@ export function SchemaFields({ WAO, schema, state, onChange, editingExisting }) 
         }
       }
       return h('div', { key, className: 'wb-field' }, labelEl, control,
-        hint ?? (item.type === 'password' && editingExisting
+        hint ?? (item.hint ? h('span', { className: 'wb-hint' }, item.hint) : null)
+        ?? (item.type === 'password' && editingExisting
           ? h('span', { className: 'wb-hint' }, '安全起见不再显示已保存的密码；仅在需要更换时填写')
           : null));
     }));

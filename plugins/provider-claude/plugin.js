@@ -143,28 +143,37 @@ export default {
       // Shape of the providerConfig block a bot carries in bots.json
       // (PLUGIN-DEV §8).
       configSchema: [
-        { key: 'cwd', label: '工作目录（claude 按其 realpath 定位会话历史）', type: 'string', required: true },
-        { key: 'model', label: '模型 {model, baseURL?, apiKey?, apiKeyEnv?}（baseURL→ANTHROPIC_BASE_URL，apiKey→ANTHROPIC_AUTH_TOKEN 或 apiKeyEnv）', type: 'object' },
-        { key: 'permissionMode', label: '权限模式（--permission-mode）', type: 'enum', options: PERMISSION_MODES, default: 'default' },
-        { key: 'allowedTools', label: '允许的工具（列表，逗号拼接传 --allowedTools）', type: 'list' },
-        { key: 'env', label: '注入子进程的环境变量（值必须是字符串）', type: 'object' },
-        { key: 'prompt', label: '人设（多行，--append-system-prompt）', type: 'string', multiline: true, rows: 5 },
+        { key: 'cwd', label: '工作目录', hint: 'claude 按其 realpath 定位会话历史', type: 'string', required: true },
+        // model：结构化子字段（2026-11-10 UI 治理）——运营只填模型名即可；网关
+        // 三项可选（留空走默认：本机 magpie 与登录态）。底层注入机制收进 hint，
+        // 不再写进 label 逼运营读。
+        { key: 'model', label: '模型', type: 'object',
+          hint: '网关三项留空走默认（本机 magpie 与登录态）；填写后 baseURL→ANTHROPIC_BASE_URL、密钥→ANTHROPIC_AUTH_TOKEN（或密钥环境变量名）',
+          fields: [
+            { key: 'model', label: '模型名', type: 'string', placeholder: '如 workbuddy、auto/glm-5.3-flash' },
+            { key: 'baseURL', label: '网关地址（可选）', type: 'string', placeholder: 'http://127.0.0.1:3425' },
+            { key: 'apiKey', label: '网关密钥（可选）', type: 'password' },
+            { key: 'apiKeyEnv', label: '密钥环境变量名（可选）', type: 'string', placeholder: 'ANTHROPIC_AUTH_TOKEN' },
+          ] },
+        { key: 'permissionMode', label: '权限模式', hint: '传 --permission-mode；bypassPermissions=工具调用不再逐一确认', type: 'enum', options: PERMISSION_MODES, default: 'default' },
+        { key: 'allowedTools', label: '允许的工具', hint: '留空=不限制；逐项拼接传 --allowedTools', type: 'list' },
+        { key: 'env', label: '注入子进程的环境变量', hint: 'JSON 对象、值必须是字符串；一般无需填写', type: 'object' },
+        { key: 'prompt', label: '人设（多行）', hint: '每轮追加为系统提示（--append-system-prompt）', type: 'string', multiline: true, rows: 5 },
         // visionInput（DESIGN-MULTIMODAL Phase 2）：图片输入总开关，默认关。
         // 开启后企微图片/图文混排才下载解密并送引擎（runner 换 stream-json
         // 信封）；关闭时渠道直接婉拒。注意模型必须具备视觉能力，图片按
         // 视觉 token 计费（约 1-1.6k token/图，按尺寸）。
-        { key: 'visionInput', label: '图片输入（允许用户发图；需模型具备视觉能力，图片按视觉 token 计费）', type: 'bool', default: false },
+        { key: 'visionInput', label: '图片输入', hint: '允许用户发图；需模型具备视觉能力，图片按视觉 token 计费', type: 'bool', default: false },
         // progressStyle/progressText (2026-11-06 拟人播报)：进度行风格与播报
         // 文案，core-engine 出站面消费（polite=企微只播报一句「思考中…请稍
         // 等」，不露思维链/工具内容；cot=旧 §6.1 详细汇报）。
-        { key: 'progressStyle', label: '工作汇报风格（拟人播报=polite：只播报「思考中…请稍等」，企微不露思维链；详细汇报=cot：进度行展示思维链/工具摘要）', type: 'enum', options: ['polite', 'cot'], default: 'polite' },
-        { key: 'progressText', label: '播报文案（拟人播报模板；占位符 {bot}=名字 {dots}=呼吸点 {elapsed}=已用时 {step}=步数；≤120 字）', type: 'string', default: '{bot} 思考中{dots} 请稍等（已 {elapsed}）' },
-        // progressCoT 已废弃（2026-11-06，被 progressStyle 取代，保留兼容）：
-        // 仅在 cot 风格内抑制 💭 行，不再能把进度行变回详细汇报——默认已
-        // 翻转为 polite（owner 决策）。same row as dsh so the M3 UI renders uniformly.
-        { key: 'progressCoT', label: '进度行展示思维链摘要（已废弃，改用工作汇报风格）', type: 'bool', default: true },
-        { key: 'claudeBin', label: 'claude 可执行文件（PATH 或绝对路径）', type: 'string', default: 'claude' },
-        { key: 'claudeConfigDir', label: 'claude 配置目录（默认 ~/.claude，会话历史所在；重定向时注入子进程 $CLAUDE_CONFIG_DIR——readHistory 同源）', type: 'string' },
+        { key: 'progressStyle', label: '工作汇报风格', hint: '拟人=只播报「思考中…请稍等」；详细=进度行展示思维链/工具摘要', type: 'enum', options: ['polite', 'cot'], default: 'polite' },
+        { key: 'progressText', label: '播报文案', hint: '占位符 {bot}=名字 {dots}=呼吸点 {elapsed}=已用时 {step}=步数；≤120 字', type: 'string', default: '{bot} 思考中{dots} 请稍等（已 {elapsed}）' },
+        // progressCoT 已废弃（2026-11-06，被 progressStyle 取代）：键仍被引擎
+        // 兼容读取（默认 true），但 2026-11-10 UI 治理后不再出现在编辑面——
+        // 废弃开关给运营的只有困惑。
+        { key: 'claudeBin', label: 'claude 可执行文件', hint: 'PATH 上的命令名或绝对路径', type: 'string', default: 'claude' },
+        { key: 'claudeConfigDir', label: 'claude 配置目录', hint: '默认 ~/.claude（会话历史所在）；重定向时注入子进程 $CLAUDE_CONFIG_DIR，会话历史同源', type: 'string' },
       ],
 
       // P1-B（11-09 owner 裁定）：新建 claude bot 默认配专属 claudeConfigDir 时

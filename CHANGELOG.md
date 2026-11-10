@@ -5,6 +5,22 @@
 
 ## [Unreleased]
 
+### Changed — 引擎配置编辑面 UI 治理：结构化模型编辑器替代手写 JSON（2026-11-10 PC1 真机用户困惑）
+
+用户在 PC1 机器人设置页问「模型输入为啥是这么写」——`model` 是 object 类型，渲染成
+手写 JSON textarea（placeholder `{ "key": "value" }`），label 里塞满内部机制
+（`baseURL→ANTHROPIC_BASE_URL…`）；同页还有已废弃的 progressCoT 开关在渲染。
+- **form.js**：schema 带 `fields` 的 object 按子字段渲染独立输入框（表单态仍是
+  JSON 文本，序列化面零改动）；子键空值即省略；`password` 子型不回显；新增
+  `item.hint` 渲染位。无 fields 的 object（env 等）保持 JSON textarea。
+- **五家 provider schema**：model 全部改结构化子字段（模型名/网关地址/网关密钥/
+  密钥环境变量名，按家裁剪），label 收敛为「模型」，机制细节进 hint；废弃的
+  progressCoT 从编辑面移除（引擎仍兼容读取存量键）；工作目录/权限模式/允许的
+  工具/人设/播报文案等长 label 一并拆成「短 label + hint」。
+- fake-data 同步；新增引擎配置区基线 `ui-workbench-robots-engine`（34 张）。
+- 测试：结构化编辑器渲染/编辑回路（改名保留他键、补键、清唯一键置空、无
+  fields 仍 textarea）+ hint 渲染 + 序列化形状不变。全量 825/825。
+
 ### Fixed — run-settle 看门狗 + adapter 换代终帧兜底 + runner abort 自愈（2026-11-10 PC1 真机 P0×2）
 
 真机症状：①熔断 abort（61>60）触发后 claude 又跑 13 分钟自然完成（无 SIGTERM

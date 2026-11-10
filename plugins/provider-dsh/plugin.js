@@ -138,7 +138,16 @@ export default {
       configSchema: [
         { key: 'cwd', label: '工作目录（agent 作业目录，也是沙箱 workspaceRoot）', type: 'string', required: true },
         { key: 'profile', label: 'dsh profile 名（默认 wecom-<botId>）', type: 'string' },
-        { key: 'model', label: '模型 {provider, model, baseURL?, api?, apiKeyEnv?, apiKey?, contextWindow?, maxTokens?}', type: 'object' },
+        // model：结构化子字段（2026-11-10 UI 治理）。
+        { key: 'model', label: '模型', type: 'object',
+          hint: '提供方+模型名即可（默认 magpie 网关）；其余可选',
+          fields: [
+            { key: 'provider', label: '提供方', type: 'string', placeholder: '如 magpie' },
+            { key: 'model', label: '模型名', type: 'string', placeholder: '如 workbuddy/deepseek-v4.1-flash' },
+            { key: 'baseURL', label: '网关地址（可选）', type: 'string' },
+            { key: 'apiKey', label: '网关密钥（可选）', type: 'password' },
+            { key: 'apiKeyEnv', label: '密钥环境变量名（可选）', type: 'string' },
+          ] },
         { key: 'permission', label: '权限', type: 'enum', options: PERMS, default: 'workspace-write' },
         { key: 'prompt', label: '人设（多行，写入 profile system-prompt personaPrefix）', type: 'string', multiline: true, rows: 5 },
         { key: 'writableDirs', label: '沙箱额外可写目录（绝对路径列表）', type: 'list' },
@@ -151,7 +160,6 @@ export default {
         // progressCoT 已废弃（2026-11-06，被 progressStyle 取代，保留兼容）：
         // 仅在 cot 风格内抑制 💭 行，不再能把进度行变回详细汇报——默认已
         // 翻转为 polite（owner 决策）。consumed by the core-engine wiring.
-        { key: 'progressCoT', label: '进度行展示思维链摘要（已废弃，改用工作汇报风格）', type: 'bool', default: true },
         { key: 'dshBin', label: 'dsh 可执行文件（PATH 或绝对路径）', type: 'string', default: 'dsh' },
         { key: 'nodeBin', label: 'node 可执行文件（profile 引导 PATH 用）', type: 'string' },
       ],
