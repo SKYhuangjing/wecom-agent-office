@@ -7,11 +7,14 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # 钉 ubuntu-24.04：ubuntu-latest 将于 2026-10 滚到 Ubuntu 26，钉死避免
+    # 镜像在我们不知情时切换（CI 可复现）。
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      # v5 原生 node24（v4 target node20 会被 runner 强制跑 node24 并报弃用）。
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
