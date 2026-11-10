@@ -32,7 +32,7 @@ Set-ExecutionPolicy -Scope Process Bypass -Force; & .\win-install.ps1
 | WAO 代码（GitHub codeload zip） | `%USERPROFILE%\wao\` |
 | 生产依赖 | `wao\node_modules\`（`npm.cmd install --omit=dev`） |
 | 服务进程 | 分离后台进程，日志 `wao\wao.out.log` / `wao.err.log` |
-| magpie（可选 `-Magpie`） | **桌面应用**（Windows 安装包静默 /S 安装，`%LOCALAPPDATA%\Programs\magpie\magpie.exe`；自带 `127.0.0.1:3425` 网关与订阅管理界面，自更新）。2026-11-10 裁定：弃 CLI/TUI 形态 |
+| magpie（可选 `-Magpie`） | **桌面应用**（`magpie-windows-amd64.exe` 便携单文件，落位 `%LOCALAPPDATA%\Programs\magpie\magpie.exe` 即装即用；自带 `127.0.0.1:3425` 网关与订阅管理界面，自更新）。2026-11-10 裁定：弃 CLI/TUI 形态 |
 
 装完自检：浏览器开 `http://127.0.0.1:8792`，或
 `Invoke-WebRequest http://127.0.0.1:8792/healthz` 应返回 `{"ok":true,...}`。
@@ -76,7 +76,12 @@ PreToolUse hook 静默不生效、Bash 工具降级 cmd（11-09 实证）；`wao
 8. **远控剪贴板通道污染**——经 UU 远程等粘贴长命令时，剪贴板可能被别的进程
    改写（实测混入过 Vite 日志、提单文本）。粘贴后**先截图核对再回车**；带 `/`
    的 URL 用粘贴而非 `typeText`（后者会把 `/` 吃成 `?`）。
-9. **跨设备 / 局域网访问（--lan 模式）**——默认仅监听 `127.0.0.1` 且严格拦截
+9. **防火墙首绑弹窗（`--lan` 必经）**——WAO 首次以 `--lan` 启动绑定 `0.0.0.0`
+   时，Windows 弹「Windows 安全中心：是否允许公共网络和专用网络访问
+   Node.js？」——**必须点「允许」**，否则局域网完全不可达（本机 127.0.0.1
+   不受影响）。PC2 2026-11-10 实测：无人值守装机时弹窗会一直挂着等点。
+   已放行过的机器不重复弹。
+10. **跨设备 / 局域网访问（--lan 模式）**——默认仅监听 `127.0.0.1` 且严格拦截
    非回环 Host 头（防 DNS-Rebinding）。从局域网其他电脑访问时必须以 `--lan`
    （或环境变量 `WAO_LAN=1`）启动，绑定 `0.0.0.0` 并放行 RFC 1918 私网 IP
    （10.x, 192.168.x, 172.16-31.x）与本机主机名；恶意公网域名依然被 403 阻断。

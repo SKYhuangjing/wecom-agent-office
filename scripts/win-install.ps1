@@ -84,24 +84,22 @@ $hz = (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8792/healthz).Content
 Write-Output "HEALTHZ=$hz"
 
 if ($Magpie) {
-  Write-Output '=== [+magpie] desktop app via Windows installer (silent /S, per-user, self-updating) ==='
-  $magpieInstaller = "$env:TEMP\magpie-windows-setup.exe"
-  if (-not (Test-Path "$env:LOCALAPPDATA\Programs\magpie\magpie.exe")) {
-    Get-File 'https://github.com/yetone/magpie-releases/releases/latest/download/magpie-windows-amd64.exe' $magpieInstaller 'magpie-windows-amd64.exe'
-    Start-Process $magpieInstaller -ArgumentList '/S' -Wait
+  Write-Output '=== [+magpie] desktop app (portable single-file, place + launch) ==='
+  # 2026-11-10 owner ruling: DESKTOP APP build (serves 127.0.0.1:3425 gateway +
+  # subscription UI, self-updates), NOT the CLI/TUI headless form.
+  # Field truth from PC2: magpie-windows-amd64.exe is a PORTABLE single-file
+  # Tauri app, NOT an NSIS installer (/S is parsed as an agent name!) -
+  # placing the exe and launching it IS the install.
+  $magpieDir = "$env:LOCALAPPDATA\Programs\magpie"
+  if (-not (Test-Path "$magpieDir\magpie.exe")) {
+    New-Item -ItemType Directory -Force $magpieDir | Out-Null
+    Get-File 'https://github.com/yetone/magpie-releases/releases/latest/download/magpie-windows-amd64.exe' "$magpieDir\magpie.exe" 'magpie-windows-amd64.exe'
   }
-  $magpieExe = @("$env:LOCALAPPDATA\Programs\magpie\magpie.exe", "$env:ProgramFiles\magpie\magpie.exe") |
-    Where-Object { Test-Path $_ } | Select-Object -First 1
-  # 2026-11-10 owner ruling: use the Windows INSTALLER (desktop app; serves the
-  # 127.0.0.1:3425 gateway + subscription UI, self-updates), NOT the CLI/TUI form.
-  if (-not $magpieExe) { Write-Output 'MAGPIE-EXE-NOT-FOUND - installer layout changed? check %LOCALAPPDATA%\Programs\magpie' }
-  else {
-    Write-Output "MAGPIE=$magpieExe"
-    Start-Process $magpieExe
-    Start-Sleep -Seconds 10
-    if (netstat -ano | Select-String ':3425 .*LISTENING') { Write-Output 'MAGPIE-GATEWAY-LISTENING-3425' }
-    else { Write-Output 'MAGPIE-PORT-NOT-LISTENING - desktop app may need first-run interaction; open it from Start Menu' }
-  }
+  Write-Output "MAGPIE=$magpieDir\magpie.exe"
+  Start-Process "$magpieDir\magpie.exe"
+  Start-Sleep -Seconds 10
+  if (netstat -ano | Select-String ':3425 .*LISTENING') { Write-Output 'MAGPIE-GATEWAY-LISTENING-3425' }
+  else { Write-Output 'MAGPIE-PORT-NOT-LISTENING - desktop app may need first-run interaction; open it from Start Menu' }
 }
 Pop-Location
 Write-Output 'DONE'
