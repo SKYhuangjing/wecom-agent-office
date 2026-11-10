@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+### Added — 服务网络代理可配置（2026-11-10）
+
+- 设置页「网络代理」：HTTP(S) 代理地址 + 启停 + 测试连通（负路径可读文案：代理拒连/超时/重置）；`GET/POST /api/service/network(+/test)`；`data/service.json` 原子持久化、即时生效。
+- 作用面=服务自身出网三链路（检查更新/更新器 codeload 下载/工具下载）+ brew 子进程（`--proxy` 旗标 + 环境变量注入，`NO_PROXY=localhost,127.0.0.1` 红线）；provider CLI/magpie/企微 WS 刻意不经此代理。
+- undici 生产依赖（ProxyAgent）；**版本配套红线**：npm undici 8 的 agent 不能注入 Node 内置 fetch（跨大版本接口校验 UND_ERR_INVALID_ARG）——代理态连 fetch 用 undici 自家的，成对缓存绝不混搭。本机实测：死端口→「代理拒连」，本机 Surge 6152→「GitHub 可达 389ms」。+6 用例，735/735 绿。
+
 ### Added — Token 优化全量落地（2026-11-09 深夜，c8b76ff..0166dfc，723/723）
 
 - **P2-B** 岗前测试轮回 usage 读数（方言归一累计器，优化验证不等生产流量）。

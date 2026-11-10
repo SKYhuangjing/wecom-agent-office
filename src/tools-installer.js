@@ -10,6 +10,7 @@ import {
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { planInstall, verifyChecksum, buildPathAppendCommand, TOOLS_INSTALL_ROOT_DIRNAME } from './tools-spec.js';
+import { proxyEnv, proxyFetch } from '../src/kernel/proxy.js';
 
 const installRoot = () => join(homedir(), TOOLS_INSTALL_ROOT_DIRNAME);
 
@@ -45,11 +46,13 @@ export function probeTool(spec, which) {
 // download(urls, log) — try each URL in order (direct → mirror); buffers the
 // whole body (updater.downloadZip discipline: AbortSignal timeout, generous
 // patience — background job, nobody waits on us). Throws the LAST error.
-export async function downloadWithFallback(urls, log, { timeoutMs = 600_000, fetchImpl = fetch } = {}) {
+export async function downloadWithFallback(urls, log, { timeoutMs = 600_000, fetchImpl = null, proxy } = {}) {
+  // 默认走 proxyFetch（设置的网络代理即时生效）；测试可注入 fetchImpl 旁路。
+  const doFetch = fetchImpl ?? ((url, opts) => proxyFetch(url, opts, { proxy }));
   let lastErr = null;
   for (const url of urls) {
     try {
-      const res = await fetchImpl(url, {
+      const res = await doFetch(url, {
         headers: { 'User-Agent': 'WAO-Tools/1.0' },
         signal: AbortSignal.timeout(timeoutMs),
       });
@@ -80,9 +83,9 @@ export function locateExe(dir, exe) {
 }
 
 // win32 zip install: stage → verify → extract → flatten exe into installDir.
-async function installZip(plan, { stageDir, log, fetchImpl }) {
+async function installZip(plan, { stageDir, log, fetchImpl, proxy }) {
   const urls = [plan.url, ...(plan.mirrorUrl ? [plan.mirrorUrl] : [])];
-  const buf = await downloadWithFallback(urls, log, { fetchImpl });
+  const buf = await downloadWithFallback(urls, log, { fetchImpl, proxy });
   if (!verifyChecksum(buf, plan.sha256)) {
     throw new Error(`SHA256 校验失败（期望 ${plan.sha256}，实得 ${buf.length} 字节——网络截断或文件被换，拒绝安装）`);
   }
@@ -103,9 +106,9 @@ async function installZip(plan, { stageDir, log, fetchImpl }) {
 }
 
 // win32 7z-SFX install (PortableGit): run the self-extractor with -o<dir> -y.
-async function installSfx(plan, { stageDir, log, fetchImpl }) {
+async function installSfx(plan, { stageDir, log, fetchImpl, proxy }) {
   const urls = [plan.url, ...(plan.mirrorUrl ? [plan.mirrorUrl] : [])];
-  const buf = await downloadWithFallback(urls, log, { fetchImpl });
+  const buf = await downloadWithFallback(urls, log, { fetchImpl, proxy });
   if (!verifyChecksum(buf, plan.sha256)) {
     throw new Error(`SHA256 校验失败（期望 ${plan.sha256.slice(0, 16)}…，实得 ${buf.length} 字节——拒绝执行未知二进制）`);
   }
@@ -137,9 +140,12 @@ export function appendUserPath(dirs) {
 const execFileAsync = (bin, args, opts) => new Promise((resolve, reject) => {
   execFile(bin, args, opts, (err) => (err ? reject(err) : resolve()));
 });
-async function installBrew(plan, { log, spawnCliImpl }) {
+async function installBrew(plan, { log, spawnCliImpl, proxy }) {
+  // 代理环境（含 NO_PROXY=localhost,127.0.0.1 红线）合入子进程——brew 自己
+  // 的 GHCR/Homebrew 拉取走用户代理；注入式 spawnCliImpl（测试）不带 env 面。
   const run = spawnCliImpl ?? ((bin, args) => execFileAsync(bin, args, {
     stdio: 'ignore', timeout: 900_000, // generous cap — brew can compile from source
+    env: { ...process.env, ...proxyEnv(plan.proxy) },
   }));
   log?.(`brew install ${plan.formula}（可能需要数分钟）`);
   await run('brew', ['install', '-q', plan.formula]);
@@ -154,14 +160,15 @@ export async function installTool(id, opts) {
     platform = process.platform, mirror = process.env.WAO_DOWNLOAD_MIRROR,
     registryFile, stageDir, log = () => {}, which,
     fetchImpl, spawnCliImpl, appendPathImpl = appendUserPath,
+    proxy, // {enabled, proxyUrl}——设置页网络代理；download/brew 全走它
   } = opts;
   const { ok, reason, plan } = planInstall(id, platform, { mirror });
   if (!ok) throw new Error(reason);
   mkdirSync(stageDir, { recursive: true });
   let result;
-  if (plan.method === 'zip') result = await installZip(plan, { stageDir, log, fetchImpl });
-  else if (plan.method === 'sfx') result = await installSfx(plan, { stageDir, log, fetchImpl });
-  else if (plan.method === 'brew') result = await installBrew(plan, { log, spawnCliImpl });
+  if (plan.method === 'zip') result = await installZip(plan, { stageDir, log, fetchImpl, proxy });
+  else if (plan.method === 'sfx') result = await installSfx(plan, { stageDir, log, fetchImpl, proxy });
+  else if (plan.method === 'brew') result = await installBrew(plan, { log, spawnCliImpl, proxy });
   else throw new Error(`未知安装方式：${plan.method}`);
   if (result.pathEntries.length > 0) appendPathImpl(result.pathEntries);
   // post-verify with the freshly appended PATH when we can

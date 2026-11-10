@@ -105,11 +105,32 @@ export function killProcess(pid) {
 }
 
 // Download a zip with generous patience (slow networks: no caller waiting on us).
-export async function downloadZip(url, outFile, log, timeoutMs = 600000) {
-  const res = await fetch(url, {
+// proxyFetch（--proxy 传入时）：动态 import 仓库 node_modules 的 undici 拿
+// ProxyAgent——失败静默回退直连（更新器保零依赖韧性：undici 缺席/损坏不致命，
+// 只是慢网直连），日志留痕。
+let cachedProxy = null; // { fetch, agent } — 版本配套成对缓存，绝不与全局 fetch 混搭
+let cachedProxyUrl = '';
+async function proxyFetchWith(url, opts, proxyUrl) {
+  if (!proxyUrl) return fetch(url, opts);
+  try {
+    if (cachedProxyUrl !== proxyUrl || cachedProxy == null) {
+      const { ProxyAgent, fetch: undiciFetch } = await import('undici');
+      cachedProxy = { fetch: undiciFetch, agent: new ProxyAgent(proxyUrl) };
+      cachedProxyUrl = proxyUrl;
+    }
+    return cachedProxy.fetch(url, { ...opts, dispatcher: cachedProxy.agent });
+  } catch (err) {
+    log2(`proxy agent unavailable (${err?.message ?? err}) — falling back to direct`);
+    return fetch(url, opts);
+  }
+}
+function log2(msg) { try { console.error(`[updater] ${msg}`); } catch { /* ignore */ } }
+
+export async function downloadZip(url, outFile, log, timeoutMs = 600000, proxyUrl = '') {
+  const res = await proxyFetchWith(url, {
     headers: { 'User-Agent': 'WAO-Updater/1.0' },
     signal: AbortSignal.timeout(timeoutMs),
-  });
+  }, proxyUrl);
   if (!res.ok) throw new Error(`download failed (HTTP ${res.status})`);
   const buf = Buffer.from(await res.arrayBuffer());
   writeFileSync(outFile, buf);
@@ -170,6 +191,7 @@ export async function runUpdater(argv = process.argv.slice(2)) {
   const host = flags.host || '127.0.0.1';
   const lan = flags.lan === true;
   const restartMode = flags['restart-mode'] || 'auto';
+  const proxyUrl = typeof flags.proxy === 'string' ? flags.proxy : '';
 
   if ((!restartOnly && !stageDir && !zipUrl) || !targetDir || !dataDir) {
     console.error('updater: missing required --stage-dir/--zip-url/--restart-only, --target-dir, or --data-dir');
@@ -183,7 +205,7 @@ export async function runUpdater(argv = process.argv.slice(2)) {
     try { writeFileSync(logFile, line, { flag: 'a' }); } catch { /* ignore */ }
   };
 
-  log(`updater started: parentPid=${parentPid}, restartMode=${restartMode}, targetCommit=${targetCommit}, mode=${restartOnly ? 'restart-only' : zipUrl ? 'zip-url' : 'stage-dir'}`);
+  log(`updater started: parentPid=${parentPid}, restartMode=${restartMode}, targetCommit=${targetCommit}, mode=${restartOnly ? 'restart-only' : zipUrl ? 'zip-url' : 'stage-dir'}${proxyUrl ? `, proxy=${proxyUrl}` : ''}`);
 
   try {
     // —— Phase 1: prepare the stage (parent keeps serving — zero downtime here) ——
@@ -196,7 +218,7 @@ export async function runUpdater(argv = process.argv.slice(2)) {
       mkdirSync(stage, { recursive: true });
       const zipPath = join(stage, 'wao-update.zip');
       log(`downloading ${zipUrl} (parent ${parentPid} stays up during download)...`);
-      await downloadZip(zipUrl, zipPath, log);
+      await downloadZip(zipUrl, zipPath, log, 600000, proxyUrl);
       src = extractZip(zipPath, join(stage, 'ext'), log);
     }
 

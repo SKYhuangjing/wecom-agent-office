@@ -291,6 +291,13 @@ const SystemInfo = ({ WAO }) => {
   const [toolsBusy, setToolsBusy] = useState(null); // id of the installing tool
   const [toolsMsg, setToolsMsg] = useState(null);
   const [restarting, setRestarting] = useState(false);
+  // 网络代理（/api/service/network）：服务自身出网走用户代理
+  const [netProxy, setNetProxy] = useState(null); // {enabled, url}
+  const [netEff, setNetEff] = useState(null); // {source, url}
+  const [netUrlDraft, setNetUrlDraft] = useState('');
+  const [netBusy, setNetBusy] = useState(false);
+  const [netTest, setNetTest] = useState(null); // {ok, ms?, message?/error?}
+  const [netMsg, setNetMsg] = useState(null);
 
   const checkUpdate = async () => {
     if (checkBusy) return;
@@ -420,10 +427,45 @@ const SystemInfo = ({ WAO }) => {
     }
   };
 
+  const saveNetProxy = async (enabled) => {
+    if (netBusy) return;
+    setNetBusy(true);
+    setNetMsg(null);
+    try {
+      const res = await api('/api/service/network', { enabled, url: netUrlDraft.trim() });
+      setNetProxy(res?.proxy ?? { enabled: false, url: '' });
+      setNetEff(res?.effective ?? null);
+      setNetMsg(enabled ? `已启用：${res?.proxy?.url}` : '已关闭（直连）');
+    } catch (err) {
+      setNetMsg(`保存失败：${err?.message ?? String(err)}`);
+    } finally {
+      setNetBusy(false);
+    }
+  };
+
+  const testNetProxy = async () => {
+    if (netBusy) return;
+    setNetBusy(true);
+    setNetTest({ pending: true });
+    try {
+      const res = await api('/api/service/network/test', {});
+      setNetTest(res ?? {});
+    } catch (err) {
+      setNetTest({ ok: false, error: err?.message ?? String(err) });
+    } finally {
+      setNetBusy(false);
+    }
+  };
+
   const refreshTools = async () => {
     try { setTools(await api('/api/service/tools')); } catch { setTools({ error: '工具装备态不可用' }); }
   };
   useEffect(() => { void refreshTools(); }, []);
+  useEffect(() => {
+    void api('/api/service/network')
+      .then((d) => { setNetProxy(d?.proxy ?? { enabled: false, url: '' }); setNetUrlDraft(d?.proxy?.url ?? ''); setNetEff(d?.effective ?? null); })
+      .catch(() => { setNetProxy({ enabled: false, url: '' }); });
+  }, []);
 
   const refresh = async () => {
     setError(null);
@@ -538,6 +580,44 @@ const SystemInfo = ({ WAO }) => {
             }, restarting ? '重启中…' : '重启服务使装备生效') : null,
             toolsMsg ? h('div', { className: 'wb-hint', style: { fontSize: 12, padding: '4px 0' } }, toolsMsg) : null),
           'rtk/ripgrep/git-bash——省 token 与检索的装备前提；win 的 claude hook 依赖 bash'),
+        row('网络代理',
+          netProxy == null ? h('span', { className: 'wb-hint' }, '读取中…')
+          : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
+              h('label', {
+                className: 'wb-switch',
+                title: netProxy.enabled ? '已启用：服务自身的检查更新/在线升级/工具安装走此代理。点击关闭' : '启用后服务自身的 GitHub 访问走下面的代理地址',
+              },
+                h('input', {
+                  type: 'checkbox', checked: netProxy.enabled === true, disabled: netBusy,
+                  onChange: (e) => void saveNetProxy(e.target.checked),
+                }),
+                h('span', { className: 'wb-track' })),
+              h('input', {
+                className: 'wb-input', style: { flex: '1 1 220px', minWidth: 200 },
+                placeholder: 'http://127.0.0.1:7890（代理软件的 HTTP 端口）',
+                value: netUrlDraft, spellCheck: false,
+                onChange: (e) => setNetUrlDraft(e.target.value),
+              }),
+              h('button', {
+                className: 'wb-btn wb-btn-sm', disabled: netBusy,
+                onClick: () => void saveNetProxy(netProxy.enabled === true),
+                title: '保存代理地址（启用状态下校验合法性）',
+              }, netBusy ? '处理中…' : '保存地址'),
+              h('button', {
+                className: 'wb-btn wb-btn-sm', disabled: netBusy,
+                onClick: () => void testNetProxy(),
+                title: '经当前生效代理实测 GitHub 可达性',
+              }, '测试连通')),
+            netTest != null && !netTest.pending ? h('div', {
+              className: 'wb-hint', style: { fontSize: 12 },
+            }, netTest.ok
+              ? h('span', { style: { color: 'var(--ok, #16a34a)' } }, netTest.message ?? `✓ 可达 · ${netTest.ms}ms`)
+              : h('span', { style: { color: 'var(--warn, #eab308)' } }, `✗ ${netTest.error ?? '不可达'}`)) : null,
+            netMsg ? h('div', { className: 'wb-hint', style: { fontSize: 12 } }, netMsg) : null,
+            h('div', { className: 'wb-hint', style: { fontSize: 12 } },
+              `生效范围：检查更新 / 在线升级 / 工具安装${netEff?.source === 'env' ? '（当前经环境变量代理生效）' : ''}；magpie 与企微连接不走代理。仅支持 http/https 代理（SOCKS 请用代理软件的 HTTP 端口）`)),
+          '国内访问 GitHub 慢/不通时配置；服务自身出网三链路即时生效'),
         row('运行时间', h('span', { className: 'wb-mono' }, uptime), '自服务启动起（实时走秒）'),
         row('进程', state?.pid != null ? h('span', { className: 'wb-mono' }, `pid ${state.pid}`) : '—'),
         row('数据目录', state?.dataDir != null

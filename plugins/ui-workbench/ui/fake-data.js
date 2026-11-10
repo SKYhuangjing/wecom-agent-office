@@ -388,6 +388,12 @@ export const FAKE_API = {
             { id: 'ripgrep', label: 'ripgrep', bin: 'rg', version: '15.2.0', state: 'missing', path: null, detectedVersion: null, description: '代码检索：rg 关键词定位（Bash/Grep 工具的底层引擎）', install: null },
           ],
         } : { ok: true, id: body?.id ?? 'ripgrep', state: 'installing', restartRequired: true, message: '后台安装中（下载→校验→解压→PATH）' }),
+        '/api/service/network': (body) => (body === undefined ? {
+          ok: true,
+          proxy: { enabled: true, url: 'http://127.0.0.1:7890' },
+          effective: { source: 'config', url: 'http://127.0.0.1:7890', enabled: true },
+        } : { ok: true, proxy: body, effective: { source: body?.enabled ? 'config' : 'none', url: body?.url ?? '', enabled: !!body?.enabled } }),
+        '/api/service/network/test': (body) => ({ ok: true, ms: 342, via: 'config', message: '✓ GitHub 可达 · 342ms（经配置代理）' }),
         '/api/service/restart': (body) => ({ ok: true, message: '服务重启中（十几秒），页面就绪后自动刷新', restartMode: 'detached' }),
         '/api/service/update': {
     ok: true,
