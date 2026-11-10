@@ -106,10 +106,20 @@ export const ModeBadge = ({ h, mode }) => h('span', {
 // 工具装备态徽章（§7.1/§7.2 manifest.tools 经 /api/agents assetTools 回显）：
 // armed/available → ✓ 已配置 <kind> <version>；unavailable → ⚠ 未安装（绑定
 // 在册、盘面未装备——装好二进制后「重新物化」即可）；无清单条目 → 未物化。
+// 例外：中间件型工具资产（cost-tracker）经引擎中间件链生效、不往 bot 目录写
+// 文件，物化清单天然无记录——显示「中间件·免物化」而非误导的「未物化」
+// （2026-11-10 用户困惑修复：「未物化」看着像坏了，其实正常生效）。
 // 徽章配色单色收敛：ok/warn 语义色 + 内联 SVG icon。
 const TOOL_OK_STATES = new Set(['armed', 'available']);
-export const ToolBadge = ({ h, entry }) => {
+const MIDDLEWARE_TOOL_KINDS = new Set(['cost-tracker']);
+export const ToolBadge = ({ h, entry, kind }) => {
   if (entry == null) {
+    if (MIDDLEWARE_TOOL_KINDS.has(kind)) {
+      return h('span', {
+        className: 'wb-hint',
+        title: `${kind} 是中间件插件，经引擎中间件链生效（如 token 用量播报），不往 bot 目录写文件——物化清单无记录是正常的，不是未配置`,
+      }, '中间件·免物化');
+    }
     return h('span', {
       className: 'wb-hint',
       title: '物化清单（manifest.tools）暂无此工具的记录——绑定已记录但尚未物化，点「重新物化」补跑',
@@ -648,7 +658,7 @@ export default {
                           title: `快照 v${x.snapshotVersion ?? '?'}，源工具当前 v+${x.exclusiveBehind ?? 0}`,
                         }, (x.exclusiveBehind ?? 0) > 0 ? `落后源 ${x.exclusiveBehind} 版` : `快照 v${x.snapshotVersion ?? '?'}`)),
                 h('td', null, x.type === 'tool'
-                  ? h(ToolBadge, { h, entry: toolStateOf(x.assetId) })
+                  ? h(ToolBadge, { h, entry: toolStateOf(x.assetId), kind: x.content?.kind ?? (assets ?? []).find((a) => a.id === x.assetId)?.content?.kind })
                   : h('span', { className: 'wb-hint', title: '配置态只对工具类有意义（技能/记忆/MCP/提示词随物化直接落盘）' }, '—')),
                 h('td', null, h('button', {
                   className: 'wb-btn wb-btn-danger', disabled: busy, onClick: () => setUnbindFor(x),

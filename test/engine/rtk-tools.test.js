@@ -17,7 +17,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, ut
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createMaterializer, probeBin } from '../../plugins/core-engine/materializer.js';
+import { createMaterializer, probeBin, invalidateProbe } from '../../plugins/core-engine/materializer.js';
 import { noopMaterializer } from '../../plugins/core-engine/assets.js';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -80,6 +80,32 @@ test('state unavailable: rtk binary missing → bind-safe no-op products, note +
   assert.deepEqual(mat.toolWarnings(bot, [RTK_ENTRY]), ['rtk 未安装：工具资产未装备（unavailable）——安装 rtk 后 POST rematerialize-assets 装备'], 'agents-face standing warning');
   // noop materializer keeps the same seam (T1 contract): no tool warnings.
   assert.deepEqual(noopMaterializer().toolWarnings(bot, [RTK_ENTRY]), []);
+});
+
+// 2026-11-10 PC1 真机回归：升级后首次 rematerialize 把 rtk 判 unavailable（二进制
+// 明明在、手动 rematerialize 即 armed）——根因 probeBin 默认 3s，Windows 二进制
+// 首执冷启动 >3s 超时。fake --version 睡 4s（>旧 3s，<新 15s）：旧超时必判
+// unavailable，新超时须 armed。invalidateProbe 清缓存，否则命中前例 ok 绕过探测。
+test('rtk probe survives a 4s cold-start --version (Windows Defender scan) → armed, not unavailable', async () => {
+  const sc = scenario('rtk-slow-probe');
+  const cfgDir = join(sc, 'claude-cfg');
+  mkdirSync(cfgDir, { recursive: true });
+  writeFileSync(join(cfgDir, 'CLAUDE.md'), '# 用户段\n');
+  const bot = claudeBotOver(sc, cfgDir);
+  setFakeMode(sc, 'ok');
+  process.env.FAKE_RTK_VERSION_SLEEP_MS = '4000';
+  invalidateProbe(FAKE_RTK);
+  const mat = matOver(stubProvider(rtkWrite(cfgDir)), join(sc, 'data'), FAKE_RTK);
+  try {
+    await mat.materialize(bot, [RTK_ENTRY]);
+    const t = manifestOf(mat, bot).tools.find((x) => x.kind === 'rtk');
+    assert.equal(t.state, 'armed', 'a slow-but-present rtk must not be misread as unavailable');
+    assert.match(t.version, /^fake-rtk 9\.9\.9/);
+  } finally {
+    delete process.env.FAKE_RTK_VERSION_SLEEP_MS;
+    invalidateProbe(FAKE_RTK);
+    clearFakeMode();
+  }
 });
 
 test('state armed (main path): dry-run prefix check → real init → readback entry into manifest, .bak swept, idempotent bytes', async () => {

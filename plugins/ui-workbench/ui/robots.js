@@ -337,7 +337,7 @@ const DetailTools = ({ WAO, botId }) => {
                       title: `快照 v${x.snapshotVersion ?? '?'}，源工具当前 v+${x.exclusiveBehind ?? 0}`,
                     }, (x.exclusiveBehind ?? 0) > 0 ? `落后源 ${x.exclusiveBehind} 版` : `快照 v${x.snapshotVersion ?? '?'}`)),
             h('td', null, x.type === 'tool'
-              ? h(ToolBadge, { h, entry: toolStateOf(x.assetId) })
+              ? h(ToolBadge, { h, entry: toolStateOf(x.assetId), kind: x.content?.kind ?? (assets ?? []).find((a) => a.id === x.assetId)?.content?.kind })
               : h('span', { className: 'wb-hint', title: '配置态只对工具类有意义（技能/记忆/MCP/提示词随物化直接落盘）' }, '—')),
             h('td', null, h('button', {
               className: 'wb-btn wb-btn-danger', disabled: busy, onClick: () => setUnbindFor(x),

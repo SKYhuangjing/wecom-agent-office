@@ -5,6 +5,20 @@
 
 ## [Unreleased]
 
+### Fixed — 工具徽章两处真机困惑（2026-11-10 PC1 用户问「rtk 未安装/cost-tracker 未物化什么意思」）
+
+- **rtk 升级后误判「未安装」**：二进制明明在（/api/service/tools available），但
+  升级重启时的自动 rematerialize 把 manifest 记成 unavailable。根因=`probeBin`
+  默认 3s，Windows 升级后 rtk 二进制首执被 Defender 实时扫描冷启动 >3s 超时
+  （ripgrep 原生快二进制不受影响）——与 scope-recall 同款冷启动坑。rtk 探测超时
+  3s→**15s**（RTK_PROBE_TIMEOUT_MS，三处调用统一）。回归：fake-rtk --version 睡
+  4s（>旧 3s/<新 15s）须 armed 非 unavailable（invalidateProbe 清缓存防绕过）。
+- **cost-tracker「未物化」误导**：它是中间件插件，经引擎中间件链生效（token 播报）、
+  不往 bot 目录写文件，物化清单天然无记录——「未物化」看着像坏了。ToolBadge 对
+  中间件型工具资产（cost-tracker）改显「中间件·免物化」+ 说明 tooltip；robots.js
+  与 _legacy/assets.js 两处调用同步传 kind。单测钉四分支。
+- 全量 819/819；33 张 UI 基线重截。
+
 ### Added — Token 利用率观测 + 工具循环熔断（2026-11-10 PC1 治理续）
 
 - **usage 细分落台账**：每轮 `ledger.recordTurn` 增 `usage`

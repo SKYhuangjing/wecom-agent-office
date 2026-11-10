@@ -165,6 +165,12 @@ const resolveScopeRecall = (bin) => {
   return { ok: false, bin: null, error: 'not-found' };
 };
 
+// rtk 探测超时 15s（2026-11-10 PC1 真机：升级后首次 rematerialize 把 rtk 判
+// unavailable，但二进制明明在、手动 rematerialize 即 armed——根因是 probeBin
+// 默认 3s，Windows 升级后 rtk 二进制首执被 Defender 实时扫描冷启动 >3s 超时；
+// ripgrep 原生快二进制不受影响。与 scope-recall 同款冷启动坑，留足余量）。
+const RTK_PROBE_TIMEOUT_MS = 15_000;
+
 // 跑一条 scope-recall 命令（stdin 关闭=免交互），CLAUDE_CONFIG_DIR 注入同 rtk
 // flavor 的重定向口径（--home 已显式，env 是双保险——其子进程发现面同源）。
 // extraEnv=服务代理（2026-11-10 PC1 真机教训：uv tool install 要下托管 Python
@@ -574,7 +580,7 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk', scopeR
       rtkSweepBaks(flavor, w.path, notes);
       return false;
     }
-    const probe = probeBin(rtkBin);
+    const probe = probeBin(rtkBin, RTK_PROBE_TIMEOUT_MS);
     if (probe.ok) {
       const r = await runRtk(rtkBin, ['init', '-g', ...rtkFlavorArgs(flavor), '--uninstall'], flavor, w.path);
       if (r.status === 0) {
@@ -600,7 +606,7 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk', scopeR
     const assetId = typeof w.for === 'string' ? w.for : undefined;
     const state = { assetId, kind: 'rtk', flavor, target };
     // 态 1：unavailable —— 二进制不在，绑定保留、零产物（§7.1）。
-    const probe = probeBin(rtkBin);
+    const probe = probeBin(rtkBin, RTK_PROBE_TIMEOUT_MS);
     if (!probe.ok) {
       toolsOut.push({ ...state, state: 'unavailable' });
       notes.push({ assetId, detail: 'rtk 未安装（unavailable）：绑定保留但未装备——安装 rtk（brew install rtk 或 GitHub releases）后 POST rematerialize-assets 装备' });
@@ -938,7 +944,7 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk', scopeR
     toolWarnings(bot, plan = []) {
       const out = [];
       const toolEntries = (Array.isArray(plan) ? plan : []).filter((e) => e?.type === 'tool');
-      if (toolEntries.some((e) => e?.content?.kind === 'rtk') && !probeBin(rtkBin).ok) {
+      if (toolEntries.some((e) => e?.content?.kind === 'rtk') && !probeBin(rtkBin, RTK_PROBE_TIMEOUT_MS).ok) {
         out.push('rtk 未安装：工具资产未装备（unavailable）——安装 rtk 后 POST rematerialize-assets 装备');
       }
       if (toolEntries.some((e) => e?.content?.kind === 'ripgrep') && !probeBin('rg').ok) {

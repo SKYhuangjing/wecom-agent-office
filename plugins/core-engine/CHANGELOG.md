@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### Fixed — rtk 探测超时 3s→15s（2026-11-10 PC1 升级后误判未安装）
+
+- `probeBin(rtkBin)` 三处统一用 `RTK_PROBE_TIMEOUT_MS=15000`：Windows 升级后 rtk
+  二进制首执被 Defender 扫描冷启动 >3s，原默认 3s 超时把装好的 rtk 判 unavailable
+  （manifest 永不 armed，手动 rematerialize 才好）。与 scope-recall 冷启动坑同款。
+
 ### Added — Token 利用率观测 + 工具循环熔断（2026-11-10）
 
 - bookkeep 的 `recordTurn` 增 `usage` 细分（inputTokens/cacheReadTokens/

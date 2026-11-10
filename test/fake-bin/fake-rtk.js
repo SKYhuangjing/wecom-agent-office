@@ -29,6 +29,10 @@ if (sleepMs > 0) await new Promise((r) => setTimeout(r, sleepMs));
 
 const args = process.argv.slice(2);
 if (args[0] === '--version') {
+  // 探针慢响应（仅 --version）：模拟 Windows 升级后二进制首执被 Defender 扫描
+  // 冷启动 >3s。回归钉 rtk 探测超时须容得下（RTK_PROBE_TIMEOUT_MS=15s）。
+  const vSleep = Number(process.env.FAKE_RTK_VERSION_SLEEP_MS || 0);
+  if (vSleep > 0) await new Promise((r) => setTimeout(r, vSleep));
   console.log('fake-rtk 9.9.9');
   process.exit(0);
 }
