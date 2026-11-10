@@ -5,6 +5,22 @@
 
 ## [Unreleased]
 
+### Changed — 记忆蒸馏优先沉淀「操作路径」（2026-11-10 PC1 token 利用率治理）
+
+- 真机观测：main bot 一轮「查日志」空转 11.3 分钟烧掉 **215,227 token**——新会话
+  丢失上下文后，bot 不知道用哪个工具查 SLS，翻历史 transcript 考古、找脚本、
+  甚至自己造查询脚本。诊断反转：SLS MCP 其实 `connected`（26 工具暴露），真缺口
+  是知识没锚定「用什么工具」。
+- 四家 provider 的 `MEMORY_DISTILL_FOOTER` 把「操作路径——用什么工具/命令/参数
+  达成某事」列为**最优先**沉淀项（新会话最需要它），并加方法形示例
+  （`查某业务日志 → 用 MCP 工具 mcp__xxx__sls_execute_sql，project=P、logStore=L`）；
+  保留「绝不为输出而输出」防滥用闸。回归测试钉四家一致。
+- 配套（PC1 数据面，非代码）：sls-usage 技能补「查询工具」段，显式点名
+  `mcp__wao-oneaix-sls__sls_execute_sql` 等并明示「别找脚本/翻历史」；补后知识探针
+  立即直答正确工具+参数（15k tok，无考古）。
+- 测试：dsh personaPrefix 断言由裸 `includes('MCP')` 改为数 section 头（footer
+  方法示例正当地提到 MCP 工具，非 MCP 资产段）。全量 809/809。
+
 ### Fixed — 会话自愈：resume 目标在 CLI 磁盘已不存在时自动重跑（2026-11-10 PC1 真机）
 
 - 症状：企微发图（或任意消息）报「❌ 任务未能完成：result subtype

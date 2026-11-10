@@ -65,7 +65,10 @@ test('dsh combinePersonaPrefix: empty plan = operator prompt alone (pre-asset by
     .map((h) => combined.indexOf(h));
   assert.deepEqual(order, [...order].sort((a, b) => a - b), 'sections in binding order');
   assert.ok(order.every((i) => i >= 0));
-  assert.ok(!combined.includes('MCP'), 'mcp entries never produce a personaPrefix section — they ride mcp-<serverId> profile rows (profiles.js mcpClientRows)');
+  // 精确断言「MCP 资产不产生 personaPrefix 段」：数 section 头恰为 4 个（prompt/
+  // memory/skill/ripgrep），而非裸 includes('MCP')——记忆 footer 的方法示例正当地
+  // 提到「MCP 工具」（2026-11-10 方法沉淀强化），那不是 MCP 资产段。
+  assert.equal((combined.match(/【WAO/g) || []).length, 4, 'exactly 4 sections — mcp entries ride mcp-<serverId> profile rows (profiles.js mcpClientRows), never a personaPrefix section');
   assert.ok(!combined.includes('rtk'), 'rtk section never emitted');
   // deterministic: a rebuild of a single-asset plan equals that plan's prefix
   const solo = combinePersonaPrefix('人设', [ENTRY({ type: 'prompt', name: 'style', content: { text: '简短' } })]);

@@ -7,9 +7,10 @@ import {
   extractMemoryUpdates, mergeMemoryNotes, createDistillMiddleware,
   DISTILL_MAX_NOTES, DISTILL_MAX_NOTE_CHARS,
 } from '../../plugins/core-engine/distill.js';
-import { memoryMarkdown as claudeMemory } from '../../plugins/provider-claude/plugin.js';
-import { memoryMarkdown as codexMemory } from '../../plugins/provider-codex/plugin.js';
-import { memoryMarkdown as piMemory } from '../../plugins/provider-pi/plugin.js';
+import { memoryMarkdown as claudeMemory, MEMORY_DISTILL_FOOTER as claudeFooter } from '../../plugins/provider-claude/plugin.js';
+import { memoryMarkdown as codexMemory, MEMORY_DISTILL_FOOTER as codexFooter } from '../../plugins/provider-codex/plugin.js';
+import { memoryMarkdown as piMemory, MEMORY_DISTILL_FOOTER as piFooter } from '../../plugins/provider-pi/plugin.js';
+import { MEMORY_DISTILL_FOOTER as dshFooter } from '../../plugins/provider-dsh/plugin.js';
 
 test('extractMemoryUpdates: no markers → byte-identical passthrough', () => {
   const text = '普通回复\n没有任何标记\n';
@@ -122,4 +123,18 @@ test('extractMemoryUpdates tolerates CRLF line endings (windows-shaped model out
   const { cleanText, entries } = extractMemoryUpdates(text);
   assert.deepEqual(entries, ['Q → A']);
   assert.ok(!cleanText.includes('wao-memory'), 'marker stripped despite CRLF');
+});
+
+// 2026-11-10 PC1 真机教训：新会话丢失上下文后，bot 为「怎么查 SLS」考古翻历史、
+// 找脚本，单轮空转烧掉 21.5 万 token。根因之一是记忆只沉淀了「查哪个库」（事实）
+// 没沉淀「用什么工具查」（方法）。footer 必须把「操作路径/用什么工具」列为最优先
+// 沉淀项并给方法形示例——四家 provider 一致。
+test('distill footer: 操作路径（用什么工具/命令/参数）优先沉淀，四家一致', () => {
+  for (const [name, footer] of [['claude', claudeFooter], ['codex', codexFooter], ['pi', piFooter], ['dsh', dshFooter]]) {
+    assert.ok(footer.includes('操作路径'), `${name}: 提到操作路径`);
+    assert.ok(/最该沉淀的是「操作路径」/.test(footer), `${name}: 操作路径列为最优先`);
+    assert.ok(/用什么工具\/命令\/参数/.test(footer), `${name}: 明确方法=工具/命令/参数`);
+    assert.ok(/wao-memory:查某业务日志 → 用 MCP 工具/.test(footer), `${name}: 带方法形示例`);
+    assert.ok(footer.includes('绝不为输出而输出'), `${name}: 保留防滥用闸`);
+  }
 });
