@@ -436,11 +436,6 @@ async function createBotOp(state, bot) {
   bot.createdAt = Date.now();
   // P1-B（11-09 owner 裁定）：新建 claude bot 默认配专属 claudeConfigDir
   // （data/claude-config/<botId>）——rtk 绑定硬红线 + 记忆/会话树隔离 + 会话
-  // 历史不落用户 ~/.claude，开箱即得。显式设置的不动；provider port 的
-  // prepareConfigDir 预建目录并拷网关 settings（见 provider-claude），失败
-  // 只告警不阻断创建（目录缺了首个轮次前可补）。
-  // P1-B（11-09 owner 裁定）：新建 claude bot 默认配专属 claudeConfigDir
-  // （data/claude-config/<botId>）——rtk 绑定硬红线 + 记忆/会话树隔离 + 会话
   // 历史不落用户 ~/.claude，开箱即得。显式设置的不改写但同样预建（幂等：
   // 补 settings/.claude.json + mkdir，绝不覆盖既有文件）；预建失败只告警不
   // 阻断创建（缺目录首个轮次前可补）。

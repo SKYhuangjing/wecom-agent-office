@@ -210,7 +210,7 @@ export async function runUpdater(argv = process.argv.slice(2)) {
   };
 
   const maskCreds = (u) => { try { const p = new URL(u); if (p.username || p.password) { p.username = '***'; p.password = ''; } return p.toString(); } catch { return u; } };
-log(`updater started: parentPid=${parentPid}, restartMode=${restartMode}, targetCommit=${targetCommit}, mode=${restartOnly ? 'restart-only' : zipUrl ? 'zip-url' : 'stage-dir'}${proxyUrl ? `, proxy=${maskCreds(proxyUrl)}` : ''}`);
+  log(`updater started: parentPid=${parentPid}, restartMode=${restartMode}, targetCommit=${targetCommit}, mode=${restartOnly ? 'restart-only' : zipUrl ? 'zip-url' : 'stage-dir'}${proxyUrl ? `, proxy=${maskCreds(proxyUrl)}` : ''}`);
 
   try {
     // —— Phase 1: prepare the stage (parent keeps serving — zero downtime here) ——

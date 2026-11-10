@@ -85,15 +85,6 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
       .catch(() => { if (alive) setAssets([]); }); // 资产面不可用不拦创建——这步可跳过
     return () => { alive = false; };
   }, []);
-  // 资产清单一到就按当前引擎预选省 token 装备包（assets 为 null 时等下一拍）。
-  useEffect(() => {
-    if (assets == null) return;
-    setDraft((d) => {
-      if (ports?.providers?.find((p) => p.id === d.provider)?.assets === false) return d;
-      const want = tokenSaverIds(assets, d.provider).filter((id) => !d.equip.includes(id));
-      return want.length > 0 ? { ...d, equip: [...d.equip, ...want] } : d;
-    });
-  }, [assets]);
   const [draft, setDraft] = useState(() => {
     const channel = ports?.channels?.[0]?.id ?? '';
     const provider = ports?.providers?.[0]?.id ?? '';
@@ -107,6 +98,16 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
       equipMode: 'shared', // 默认配发（跟源更新）——与装备台口径一致（盲评 P2-4）
     };
   });
+  // 资产清单一到就按当前引擎预选省 token 装备包（assets 为 null 时等下一拍）。
+  useEffect(() => {
+    if (assets == null) return;
+    setDraft((d) => {
+      if (ports?.providers?.find((p) => p.id === d.provider)?.assets === false) return d;
+      const want = tokenSaverIds(assets, d.provider).filter((id) => !d.equip.includes(id));
+      return want.length > 0 ? { ...d, equip: [...d.equip, ...want] } : d;
+    });
+  }, [assets]);
+
   const channelSchema = ports?.channels?.find((c) => c.id === draft.channel)?.accountSchema ?? [];
   const providerSchema = ports?.providers?.find((p) => p.id === draft.provider)?.configSchema ?? [];
   // 所选引擎是否支持工具（/api/ports assets:false = provider 无 materializeAssets）

@@ -360,7 +360,7 @@ export const FAKE_API = {
         const src = FAKE_ASSETS.find((a) => a.id === assetId);
         if (src != null) src.bindings = Math.max(0, (src.bindings ?? 1) - 1);
         return {
-          ok: true,
+        ok: true,
           removed: { assetId: x.assetId, mode: x.mode, name: x.name, type: x.type, exclusiveContentLost: x.mode === 'exclusive' },
           rematerialized: [bot.id], failed: [],
           writes: [{ action: 'unlink', path: `${bot.providerConfig?.cwd ?? '/tmp'}/.wao/${x.type}--${x.name}.md` }],
@@ -382,16 +382,16 @@ export const FAKE_API = {
   // —— v2 设置页（系统信息 section）————————————————————————————————————
   '/healthz': { ok: true, version: '0.1.0' },
   '/api/service/tools': (body) => (body === undefined ? {
-          ok: true, platform: 'darwin',
-          tools: [
+        ok: true, platform: 'darwin',
+        tools: [
             { id: 'rtk', label: 'rtk', bin: 'rtk', version: '1.2.0', state: 'available', path: '/Users/demo/.local/bin/rtk', detectedVersion: 'rtk 1.1.0', description: 'Token 瘦身 hook：PreToolUse 拦截 Bash 命令输出过滤（实测单轮 -18%）', install: null },
             { id: 'ripgrep', label: 'ripgrep', bin: 'rg', version: '15.2.0', state: 'missing', path: null, detectedVersion: null, description: '代码检索：rg 关键词定位（Bash/Grep 工具的底层引擎）', install: null },
           ],
         } : { ok: true, id: body?.id ?? 'ripgrep', state: 'installing', restartRequired: true, message: '后台安装中（下载→校验→解压→PATH）' }),
         '/api/service/network': (body) => (body === undefined ? {
-          ok: true,
-          proxy: { enabled: true, proxyUrl: 'http://127.0.0.1:7890' },
-          effective: { source: 'config', url: 'http://127.0.0.1:7890', enabled: true },
+        ok: true,
+        proxy: { enabled: true, proxyUrl: 'http://127.0.0.1:7890' },
+        effective: { source: 'config', url: 'http://127.0.0.1:7890', enabled: true },
         } : { ok: true, proxy: { enabled: !!body?.enabled, proxyUrl: body?.url ?? '' }, effective: { source: body?.enabled ? 'config' : 'none', url: body?.url ?? '', enabled: !!body?.enabled } }),
         '/api/service/network/test': (body) => ({ ok: true, ms: 342, via: 'config', message: '✓ GitHub 可达 · 342ms（经配置代理）' }),
         '/api/service/restart': (body) => ({ ok: true, message: '服务重启中（十几秒），页面就绪后自动刷新', restartMode: 'detached' }),

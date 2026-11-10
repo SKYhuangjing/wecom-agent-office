@@ -292,7 +292,7 @@ const SystemInfo = ({ WAO }) => {
   const [toolsMsg, setToolsMsg] = useState(null);
   const [restarting, setRestarting] = useState(false);
   // 网络代理（/api/service/network）：服务自身出网走用户代理
-  const [netProxy, setNetProxy] = useState(null); // {enabled, url}
+  const [netProxy, setNetProxy] = useState(null); // {enabled, proxyUrl}
   const [netEff, setNetEff] = useState(null); // {source, url}
   const [netUrlDraft, setNetUrlDraft] = useState('');
   const [netBusy, setNetBusy] = useState(false);
@@ -465,7 +465,7 @@ const SystemInfo = ({ WAO }) => {
   useEffect(() => {
     void api('/api/service/network')
       .then((d) => { setNetProxy(d?.proxy ?? { enabled: false, proxyUrl: '' }); setNetUrlDraft(d?.proxy?.proxyUrl ?? ''); setNetEff(d?.effective ?? null); })
-      .catch(() => { setNetProxy({ enabled: false, url: '' }); });
+      .catch(() => { setNetProxy({ enabled: false, proxyUrl: '' }); });
   }, []);
 
   const refresh = async () => {
