@@ -16,7 +16,10 @@
 #   -Mirror       <url-prefix>     LAN mirror prefix for big binaries
 #                                  (fallback when GitHub/nodejs.org are slow/blocked;
 #                                   serves node-v<NODE_VERSION>-win-x64.zip and magpie.exe)
-#   -Magpie       switch           also install magpie CLI + headless gateway (fresh, no credentials)
+#   -Magpie       switch           also install the magpie DESKTOP APP (Windows
+#                                  installer magpie-windows-amd64.exe, silent /S) —
+#                                  NOT the CLI/TUI build; the desktop app serves
+#                                  the 127.0.0.1:3425 gateway and self-updates
 #   -Lan          switch           bind 0.0.0.0 and admit private LAN IPs / hostname
 param(
   [string]$NodeVersion = '22.23.4',
@@ -62,9 +65,10 @@ Push-Location $InstallRoot
 Write-Output '=== [3/5] production deps (npm.cmd — execution policy safe) ==='
 npm.cmd install --omit=dev --no-audit --no-fund
 
-Write-Output '=== [4/5] persist user PATH (node' + ($(if ($Magpie) { ' + magpie' } else { '' })) + ') ==='
+Write-Output '=== [4/5] persist user PATH (node) ==='
 $u = [Environment]::GetEnvironmentVariable('Path', 'User')
-$want = if ($Magpie) { @("$NodeDir", "$H\tools\magpie") } else { @("$NodeDir") }
+# 桌面版 magpie 自管目录与自更新，不进 PATH（2026-11-10：弃 CLI/TUI 形态）
+$want = @("$NodeDir")
 $missing = @($want | Where-Object { $u -notlike "*$_*" })
 if ($missing.Count -gt 0) {
   [Environment]::SetEnvironmentVariable('Path', ($missing + $u) -join ';', 'User')
@@ -80,19 +84,24 @@ $hz = (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8792/healthz).Content
 Write-Output "HEALTHZ=$hz"
 
 if ($Magpie) {
-  Write-Output '=== [+magpie] fresh CLI + headless gateway (NO credentials copied) ==='
-  New-Item -ItemType Directory -Force "$H\tools\magpie" | Out-Null
-  if (-not (Test-Path "$H\tools\magpie\magpie.exe")) {
-    Get-File 'https://github.com/yetone/magpie-releases/releases/latest/download/magpie-cli-windows-amd64.exe' "$H\tools\magpie\magpie.exe" 'magpie.exe'
+  Write-Output '=== [+magpie] desktop app via Windows installer (silent /S, per-user, self-updating) ==='
+  # 2026-11-10 用户裁定：用 Windows 安装包（magpie-windows-amd64.exe，桌面应用，
+  # 自带 127.0.0.1:3425 网关与订阅管理界面），不用 magpie-cli-*-amd64.exe 的
+  # TUI/无头形态。Tauri NSIS 安装器 /S 静默、per-user 免管理员。
+  $magpieInstaller = "$env:TEMP\magpie-windows-setup.exe"
+  if (-not (Test-Path "$env:LOCALAPPDATA\Programs\magpie\magpie.exe")) {
+    Get-File 'https://github.com/yetone/magpie-releases/releases/latest/download/magpie-windows-amd64.exe' $magpieInstaller 'magpie-windows-amd64.exe'
+    Start-Process $magpieInstaller -ArgumentList '/S' -Wait
   }
-  Write-Output ("MAGPIE=" + (& "$H\tools\magpie\magpie.exe" --version))
-  Start-Process "$H\tools\magpie\magpie.exe" -ArgumentList 'web', '--gateway', '--no-open', '--addr', '127.0.0.1:3425' -RedirectStandardOutput magpie.out.log -RedirectStandardError magpie.err.log -WindowStyle Hidden
-  Start-Sleep -Seconds 6
-  if (netstat -ano | Select-String ':3425 .*LISTENING') { Write-Output 'MAGPIE-GATEWAY-LISTENING-3425' }
+  $magpieExe = @("$env:LOCALAPPDATA\Programs\magpie\magpie.exe", "$env:ProgramFiles\magpie\magpie.exe") |
+    Where-Object { Test-Path $_ } | Select-Object -First 1
+  if (-not $magpieExe) { Write-Output 'MAGPIE-EXE-NOT-FOUND — installer layout changed? check %LOCALAPPDATA%\Programs\magpie' }
   else {
-    Write-Output 'MAGPIE-PORT-NOT-LISTENING — tail logs:'
-    Get-Content magpie.err.log -Tail 15 -ErrorAction SilentlyContinue
-    Get-Content magpie.out.log -Tail 15 -ErrorAction SilentlyContinue
+    Write-Output "MAGPIE=$magpieExe"
+    Start-Process $magpieExe
+    Start-Sleep -Seconds 10
+    if (netstat -ano | Select-String ':3425 .*LISTENING') { Write-Output 'MAGPIE-GATEWAY-LISTENING-3425' }
+    else { Write-Output 'MAGPIE-PORT-NOT-LISTENING — desktop app may need first-run interaction; open it from Start Menu' }
   }
 }
 Pop-Location

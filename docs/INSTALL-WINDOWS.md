@@ -16,7 +16,7 @@ Bypass -Force; & .\win-install.ps1` 最稳——PS 5.1 默认禁 `.ps1`，`iex` 
 # 脚本本体纯 ASCII + UTF-8 BOM，避免中文注释被按 GBK 解码导致 ParseException）
 curl.exe -s -o win-install.ps1 '<URL>'
 Set-ExecutionPolicy -Scope Process Bypass -Force; & .\win-install.ps1
-# 同时装 magpie 网关（全新空装，不带任何凭证）：
+# 同时装 magpie 桌面应用（Windows 安装包静默装；订阅在应用界面里登录）：
 #   ... -Magpie
 # 启用局域网模式（绑定 0.0.0.0 并允许私网 IP 访问，方便其他电脑通过 AI 操作此机器）：
 #   ... -Lan
@@ -32,7 +32,7 @@ Set-ExecutionPolicy -Scope Process Bypass -Force; & .\win-install.ps1
 | WAO 代码（GitHub codeload zip） | `%USERPROFILE%\wao\` |
 | 生产依赖 | `wao\node_modules\`（`npm.cmd install --omit=dev`） |
 | 服务进程 | 分离后台进程，日志 `wao\wao.out.log` / `wao.err.log` |
-| magpie（可选 `-Magpie`） | `%USERPROFILE%\tools\magpie\magpie.exe`，无头网关监听 `127.0.0.1:3425` |
+| magpie（可选 `-Magpie`） | **桌面应用**（Windows 安装包静默 /S 安装，`%LOCALAPPDATA%\Programs\magpie\magpie.exe`；自带 `127.0.0.1:3425` 网关与订阅管理界面，自更新）。2026-11-10 裁定：弃 CLI/TUI 形态 |
 
 装完自检：浏览器开 `http://127.0.0.1:8792`，或
 `Invoke-WebRequest http://127.0.0.1:8792/healthz` 应返回 `{"ok":true,...}`。
