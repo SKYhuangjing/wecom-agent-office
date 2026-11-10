@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### Added — Token 利用率观测 + 工具循环熔断（2026-11-10）
+
+- bookkeep 的 `recordTurn` 增 `usage` 细分（inputTokens/cacheReadTokens/
+  outputTokens/totalTokens）durable 落台账，`/api/ledger` 可查历史缓存命中；
+  `tokens`（总数）保留向后兼容，旧行无 usage 字段消费方容忍。timeline usage
+  行文案增「缓存读」。
+- 工具循环熔断：`toolLoopMaxCalls(bot)`（providerConfig.toolLoopMaxCalls，
+  默认 60，0=关闭，防御式解析同 sessionTtlMin）；onEvent 计 `tool` 事件超限即
+  `ac.abort()`，aborted 终帧给 TOOL_LOOP_TEXT，台账标 `stopCause=tool-loop`
+  （仅在 effCode='aborted' 时落，避免与硬超时竞速的矛盾行）。截考古式空转。
+
 ### Added — 附件信封与文件分级（DESIGN-MULTIMODAL Phase 1-2，2026-11-10）
 
 - defaultRunTurn 消费 `msg.attachments` / `msg.attachmentFailures`：图片透传

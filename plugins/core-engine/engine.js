@@ -89,6 +89,9 @@ const ABORT_BANNER = '> ⚠️ 已被新消息打断';
 const ERROR_BANNER = '⚠️ 运行未正常结束';
 const EMPTY_DONE_TEXT = '（任务已完成）';
 const DRAIN_INFLIGHT_TEXT = '⚠️ 服务维护，任务已中断，请重发';
+// 工具循环熔断（2026-11-10 token 利用率治理）：单轮工具调用超上限自动中止，
+// 防「翻历史考古/找脚本」式空转（PC1 曾单轮烧 21.5 万 token / 11 分钟）。
+const TOOL_LOOP_TEXT = '⚠️ 本轮工具调用过多，已自动中止以避免空转。请把问题缩小、或分步提问后重发。';
 // Exported: api.js answers PER-BOT drain refusals with the same copy the
 // global sendDrainRefusals uses (one source for the user-facing line).
 export const DRAIN_REFUSAL_TEXT = '⚠️ 服务维护，未处理，请重发';
@@ -251,6 +254,18 @@ export const SESSION_TTL_MIN_DEFAULT = 45;
 export function sessionTtlMinutes(bot) {
   const v = bot?.providerConfig?.sessionTtlMin;
   return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : SESSION_TTL_MIN_DEFAULT;
+}
+
+// 工具循环熔断阈值（2026-11-10 token 利用率治理）：单轮工具调用数上限。
+// providerConfig.toolLoopMaxCalls：非负有限数才有效（向下取整），0=关闭熔断；
+// 非法/缺省→默认。与 sessionTtlMin 同款防御式解析（providerConfig 未知键自由
+// 通过）。默认 60 给正常重工具轮留足余量，只截「考古式」失控循环（PC1 实测那轮
+// 30+ 次还在涨）。注：codex 的 tool 事件含计划更新（update_plan），有效余量略
+// 小于其余三家（盲评 P2-1，口径差异已知，默认值留了余量）。
+export const TOOL_LOOP_MAX_CALLS_DEFAULT = 60;
+export function toolLoopMaxCalls(bot) {
+  const v = bot?.providerConfig?.toolLoopMaxCalls;
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : TOOL_LOOP_MAX_CALLS_DEFAULT;
 }
 
 // 纯判定（导出供单测）：pe 无时间戳（历史遗留条目）视为未过期——升级后首条
@@ -527,6 +542,12 @@ export async function defaultRunTurn(bot, msg, ac) {
   // turns in several chats concurrently (cross-chatKey parallelism), so a
   // bot-keyed accumulator would blend runs.
   const usageAcc = createUsageAccumulator();
+  // 工具循环熔断（token 利用率治理）：统计本轮工具调用，超 toolLoopMaxCalls
+  // 即 abort——截「翻历史考古/找脚本」式失控空转。0=关闭。tripped 后不再重复
+  // abort（幂等），并在终帧/台账标明 stopCause=tool-loop。
+  const maxToolCalls = toolLoopMaxCalls(bot);
+  let toolCalls = 0;
+  let toolLoopTripped = false;
   // onOutbound (PLUGIN-DEV §5.5): the outbound middleware that may TRANSFORM
   // the final reply text (cost-tracker's token footer & co). Only the
   // completed branch's final frame passes here — progress/heartbeat frames
@@ -548,6 +569,14 @@ export async function defaultRunTurn(bot, msg, ac) {
   const onEvent = (ev) => {
     try {
       usageAcc.observe(ev);
+      if (ev?.type === 'tool') {
+        toolCalls++;
+        if (maxToolCalls > 0 && toolCalls > maxToolCalls && !toolLoopTripped) {
+          toolLoopTripped = true;
+          engine.log.warn?.(`engine: tool-loop circuit breaker tripped for ${chatKey} (${toolCalls} > ${maxToolCalls}) — aborting turn`);
+          ac.abort();
+        }
+      }
       if (ev?.type === 'text' && typeof ev.text === 'string') answer = ev.text; // cumulative
       if (politeStyle && ev?.type === 'step' && Number.isFinite(ev.n)) politeStep = ev.n;
       let line = null;
@@ -671,7 +700,14 @@ export async function defaultRunTurn(bot, msg, ac) {
       user: msg.text, assistant: result?.finalText || '', provider,
       sessionId: result?.sessionId || sessionId || '',
       ok: reason === 'completed', reason,
-      tokens: usageAcc.summary().totalTokens, cost: null,
+      tokens: usage.totalTokens, cost: null,
+      // usage 细分落台账（token 利用率治理）：输入/缓存读/输出 durable 可查，
+      // 不再只靠环形 timeline（会淘汰）。旧行无此字段，消费方须容忍缺失。
+      usage,
+      // stopCause 仅在确以 aborted 结算时落（盲评 P2-2）：若熔断 abort 与硬超时
+      // 竞速、timeout 先到，effCode='timeout' 才是 truthful 主因，避免落
+      // 「reason=timeout 却 stopCause=tool-loop」的矛盾行。
+      ...(toolLoopTripped && effCode === 'aborted' ? { stopCause: 'tool-loop' } : {}),
       attachments: attachmentsSummary.length > 0 ? attachmentsSummary : undefined,
     });
     // UI bridge (§8 SSE ledger/turn): the row is durable — announce it right
@@ -700,7 +736,7 @@ export async function defaultRunTurn(bot, msg, ac) {
     // of this turn in the local ring, beside the ledger's durable tokens field.
     engine.timeline?.push({
       botId: bot.id, chatKey, kind: 'usage',
-      text: `📊 输入 ${usage.inputTokens} · 输出 ${usage.outputTokens}`,
+      text: `📊 输入 ${usage.inputTokens} · 缓存读 ${usage.cacheReadTokens} · 输出 ${usage.outputTokens}`,
     });
     // run done log line (P2): the one line an operator greps wao.log for —
     // outcome, reason, burned tokens and wall time on a single greppable row.
@@ -822,9 +858,12 @@ export async function defaultRunTurn(bot, msg, ac) {
         // During a drain (global lifecycle, or THIS bot's reconnect/delete
         // swap) the abort cause is maintenance, not a newer message.
         const maintenance = engine.draining || engine._botDrains?.has(bot.id) === true;
-        const text = maintenance
-          ? (base ? `${base}\n\n${DRAIN_INFLIGHT_TEXT}` : DRAIN_INFLIGHT_TEXT)
-          : (base ? `${base}\n\n${ABORT_BANNER}` : CANCEL_TEXT);
+        // 熔断中止优先于 maintenance/普通打断文案——给用户明确的「为何停」。
+        const text = toolLoopTripped
+          ? (base ? `${base}\n\n${outboundText(TOOL_LOOP_TEXT)}` : outboundText(TOOL_LOOP_TEXT))
+          : maintenance
+            ? (base ? `${base}\n\n${DRAIN_INFLIGHT_TEXT}` : DRAIN_INFLIGHT_TEXT)
+            : (base ? `${base}\n\n${ABORT_BANNER}` : CANCEL_TEXT);
         await deliverFinal(text);
         break;
       }

@@ -717,7 +717,7 @@ test('end-to-end message through the engine service feeds ledger/export/timeline
 
   const tl = await (await get('/api/timeline?bot=b1')).json();
   assert.ok(Array.isArray(tl) && tl.length >= 1, 'timeline rows from the turn');
-  assert.ok(tl.some((r) => r.kind === 'usage' && r.text === '📊 输入 0 · 输出 0'),
+  assert.ok(tl.some((r) => r.kind === 'usage' && r.text === '📊 输入 0 · 缓存读 0 · 输出 0'),
     `one usage summary row per run end: ${JSON.stringify(tl.filter((r) => r.kind === 'usage'))}`);
 
   // server-side push: chatRef = the raw chatKey; the CHANNEL parses its own

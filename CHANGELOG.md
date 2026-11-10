@@ -5,6 +5,21 @@
 
 ## [Unreleased]
 
+### Added — Token 利用率观测 + 工具循环熔断（2026-11-10 PC1 治理续）
+
+- **usage 细分落台账**：每轮 `ledger.recordTurn` 增 `usage`
+  （inputTokens/cacheReadTokens/outputTokens/totalTokens），`/api/ledger` 可查
+  历史缓存命中——不再只靠会淘汰的环形 timeline。旧行无此字段，消费方容忍缺失；
+  `tokens`（总数）保留向后兼容。timeline usage 行同步显示「缓存读」。
+- **工具循环熔断**：`providerConfig.toolLoopMaxCalls`（默认 60，0=关闭，防御式
+  解析同 sessionTtlMin）——单轮 `tool` 事件计数超限即 `ac.abort()`，终帧给专用
+  文案（「工具调用过多已中止，请缩小问题」），台账标 `stopCause=tool-loop`
+  （reason=interrupted）。截「翻历史考古/找脚本」式失控空转（PC1 曾单轮 21.5 万
+  token/11min）。熔断优先于 maintenance/普通打断文案。口径注：codex 的 tool
+  事件含计划更新（update_plan），有效余量略小于其余三家（默认 60 已留余量）。
+- 测试：usage 落库细分、熔断触发（超限 abort+文案+stopCause+日志）、0 关闭、
+   cap 内正常完成、toolLoopMaxCalls 纯函数解析。全量 814/814。
+
 ### Changed — 记忆蒸馏优先沉淀「操作路径」（2026-11-10 PC1 token 利用率治理）
 
 - 真机观测：main bot 一轮「查日志」空转 11.3 分钟烧掉 **215,227 token**——新会话

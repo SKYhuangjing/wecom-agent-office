@@ -916,7 +916,7 @@ test('run start/done pairing: a skipped turn logs neither; a mid-run abort logs 
 test('usage timeline row: one 📊 summary per run end, beside the turn row', async () => {
   const h = makeHarness({
     steps: [{
-      emit: [{ type: 'text', text: 'x', usage: { inputTokens: 7, outputTokens: 3 } }],
+      emit: [{ type: 'text', text: 'x', usage: { inputTokens: 7, outputTokens: 3, cacheReadTokens: 5 } }],
       code: 'completed', finalText: '答', returnsSessionId: 's1',
     }],
   });
@@ -926,7 +926,7 @@ test('usage timeline row: one 📊 summary per run end, beside the turn row', as
   assert.equal(usageRows.length, 1, 'exactly one usage row');
   assert.equal(usageRows[0].botId, 'bot1');
   assert.equal(usageRows[0].chatKey, K);
-  assert.equal(usageRows[0].text, '📊 输入 7 · 输出 3');
+  assert.equal(usageRows[0].text, '📊 输入 7 · 缓存读 5 · 输出 3');
   // the closing turn row (bookkeep's), not the in-run text-event row that
   // also maps to kind 'turn' (EV_TO_KIND) — usage lands right after it.
   const turnIdx = rows.map((r) => r.kind).lastIndexOf('turn');
@@ -1009,7 +1009,7 @@ test('sendDrainRefusals: a hung adapter reply is bounded by the same outbound de
 });
 
 // —— 会话 TTL 退役（DESIGN-TOKEN-OPT §4.4）————————————————————————————
-import { isSessionStale, sessionTtlMinutes, SESSION_TTL_MIN_DEFAULT } from '../../plugins/core-engine/engine.js';
+import { isSessionStale, sessionTtlMinutes, SESSION_TTL_MIN_DEFAULT, toolLoopMaxCalls, TOOL_LOOP_MAX_CALLS_DEFAULT } from '../../plugins/core-engine/engine.js';
 
 test('isSessionStale: pure TTL decision boundaries', () => {
   const now = Date.now();
@@ -1040,6 +1040,85 @@ test('sessionTtlMinutes: defensive providerConfig parsing (unknown keys pass val
   assert.equal(sessionTtlMinutes({ providerConfig: { sessionTtlMin: -5 } }), SESSION_TTL_MIN_DEFAULT);
   assert.equal(sessionTtlMinutes({ providerConfig: { sessionTtlMin: '45' } }), SESSION_TTL_MIN_DEFAULT);
   assert.equal(sessionTtlMinutes({ providerConfig: { sessionTtlMin: NaN } }), SESSION_TTL_MIN_DEFAULT);
+});
+
+test('toolLoopMaxCalls: defensive parsing — default 60, 0 disables, junk floors to default', () => {
+  assert.equal(TOOL_LOOP_MAX_CALLS_DEFAULT, 60);
+  assert.equal(toolLoopMaxCalls({ providerConfig: {} }), 60);
+  assert.equal(toolLoopMaxCalls({}), 60);
+  assert.equal(toolLoopMaxCalls({ providerConfig: { toolLoopMaxCalls: 3 } }), 3);
+  assert.equal(toolLoopMaxCalls({ providerConfig: { toolLoopMaxCalls: 0 } }), 0, '0 = 关闭熔断');
+  assert.equal(toolLoopMaxCalls({ providerConfig: { toolLoopMaxCalls: 5.9 } }), 5, '取整');
+  assert.equal(toolLoopMaxCalls({ providerConfig: { toolLoopMaxCalls: -1 } }), 60);
+  assert.equal(toolLoopMaxCalls({ providerConfig: { toolLoopMaxCalls: '60' } }), 60);
+  assert.equal(toolLoopMaxCalls({ providerConfig: { toolLoopMaxCalls: NaN } }), 60);
+});
+
+// token 利用率治理①：usage 细分（输入/缓存读/输出）durable 落台账，不再只靠
+// 环形 timeline。旧行无此字段——这里钉新行必带完整细分。
+test('ledger row carries usage breakdown (input/cacheRead/output/total), not just total', async () => {
+  const h = makeHarness({
+    steps: [{
+      emit: [{ type: 'text', text: 'x', usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 50, totalTokens: 120 } }],
+      code: 'completed', finalText: '答', returnsSessionId: 's1',
+    }],
+  });
+  await h.send('问题');
+  const row = h.ledger.turns({ chatKey: K })[0];
+  assert.equal(row.tokens, 120, 'total still present (backward compat)');
+  assert.deepEqual(row.usage, { inputTokens: 100, outputTokens: 20, cacheReadTokens: 50, totalTokens: 120 });
+});
+
+// token 利用率治理②：工具循环熔断——单轮工具调用超 toolLoopMaxCalls 即 abort，
+// 终帧给专用文案、台账标 stopCause=tool-loop（reason=interrupted），防考古空转。
+test('tool-loop circuit breaker: trips over cap → aborted, TOOL_LOOP copy, stopCause=tool-loop', async () => {
+  const h = makeHarness({
+    bot: mkBot({ providerConfig: { toolLoopMaxCalls: 3 } }),
+    steps: [{
+      // 5 个 tool 事件：第 4 个触发熔断 ac.abort()；hang 腿监听 signal，见已
+      // aborted 立即结算 aborted。hangMs=60000 远大于 harness 硬超时(5000)——
+      // 若回归成「只置 tripped 不 abort」，硬定时器必先到期→reason=timeout→
+      // 下方 interrupted 断言失败。证明链不靠定时器巧合（盲评 P2-4）。
+      emit: Array.from({ length: 5 }, (_, i) => ({ type: 'tool', brief: `t${i}` })),
+      hangMs: 60000, hangCode: 'aborted',
+    }],
+  });
+  await h.send('查个复杂问题');
+  const finals = h.adapter.frames.filter((f) => f.finish);
+  assert.equal(finals.length, 1);
+  assert.ok(finals[0].text.includes('工具调用过多'), `breaker copy delivered: ${finals[0].text}`);
+  const row = h.ledger.turns({ chatKey: K })[0];
+  assert.equal(row.reason, 'interrupted');
+  assert.equal(row.stopCause, 'tool-loop');
+  assert.ok(h.log.lines.warn.some((m) => /circuit breaker tripped/.test(m)), 'trip is logged');
+});
+
+test('tool-loop breaker disabled (toolLoopMaxCalls=0): many tool calls still complete', async () => {
+  const h = makeHarness({
+    bot: mkBot({ providerConfig: { toolLoopMaxCalls: 0 } }),
+    steps: [{
+      emit: Array.from({ length: 8 }, (_, i) => ({ type: 'tool', brief: `t${i}` })),
+      code: 'completed', finalText: '完成', returnsSessionId: 's1',
+    }],
+  });
+  await h.send('正常重工具轮');
+  const row = h.ledger.turns({ chatKey: K })[0];
+  assert.equal(row.reason, 'completed', '0 = 不熔断');
+  assert.equal(row.stopCause, undefined);
+});
+
+test('tool-loop breaker: under cap completes normally, no stopCause', async () => {
+  const h = makeHarness({
+    bot: mkBot({ providerConfig: { toolLoopMaxCalls: 10 } }),
+    steps: [{
+      emit: Array.from({ length: 3 }, (_, i) => ({ type: 'tool', brief: `t${i}` })),
+      code: 'completed', finalText: '完成', returnsSessionId: 's1',
+    }],
+  });
+  await h.send('轻度工具轮');
+  const row = h.ledger.turns({ chatKey: K })[0];
+  assert.equal(row.reason, 'completed');
+  assert.equal(row.stopCause, undefined);
 });
 
 test('SessionCache: upsert stamps lastAt; expire removes the entry and clears current', () => {
