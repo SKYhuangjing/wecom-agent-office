@@ -43,6 +43,9 @@ import { readHistory } from './history.js';
 // of this against the REAL wording once M3 observes an actual conflict.
 const LOCK_CONFLICT_RE = /thread is locked|locked by another (?:codex |process|instance)|thread lock|SessionAlreadyOwnedError|IsolationError|another (?:process|instance).*thread|thread.*already in use/i;
 const MISSING_CREDENTIAL_RE = /CODEX_API_KEY|OPENAI_API_KEY|invalid api key|unauthorized|authentication|missing credential/i;
+// resume 目标的 thread 在磁盘已不存在（与 claude 的 session-not-found 同款
+// 自愈通道：引擎退役缓存后 fresh 重跑一次；2026-11-10 教训）。
+const SESSION_MISSING_RE = /no conversation found|session .* not found|thread .* not found|unknown (?:session|thread)/i;
 const DEFAULT_ESCALATION_MS = 3000;
 const STDERR_TAIL_CHARS = 4000;
 
@@ -332,6 +335,7 @@ export function createRunner({ bot, providerConfig, log, escalationMs = DEFAULT_
         else if (ok) code = 'completed';
         else if (LOCK_CONFLICT_RE.test(errText)) code = 'lock-conflict';
         else if (MISSING_CREDENTIAL_RE.test(errText)) code = 'missing-credential';
+        else if (SESSION_MISSING_RE.test(errText)) code = 'session-not-found';
         else code = 'error';
         // §5 abort 处置: a run killed before the CLI ever emitted its session
         // event leaves a half-written thread — hand back NO id. A resume that

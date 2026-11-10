@@ -48,6 +48,9 @@ import { piAgentDirFor } from './models.js';
 // actual conflict is observed.
 const LOCK_CONFLICT_RE = /session is locked|locked by another (?:codex |pi |process|instance)|session lock|(?:thread|session).*already in use|IsolationError|another (?:process|instance).*(?:thread|session)/i;
 const MISSING_CREDENTIAL_RE = /PI_[A-Z_]*API_KEY|MAGPIE_API_KEY|missing credential|invalid api key|unauthorized|authentication|401/i;
+// resume 目标的 session 在磁盘已不存在（与 claude 的 session-not-found 同款
+// 自愈通道；2026-11-10 教训）。
+const SESSION_MISSING_RE = /no conversation found|session .* not found|thread .* not found|unknown (?:session|thread)/i;
 const DEFAULT_ESCALATION_MS = 3000;
 const STDERR_TAIL_CHARS = 4000;
 
@@ -384,6 +387,7 @@ export function createRunner({ bot, providerConfig, assets, log, escalationMs = 
         else if (ok) code = 'completed';
         else if (LOCK_CONFLICT_RE.test(errText)) code = 'lock-conflict';
         else if (MISSING_CREDENTIAL_RE.test(errText)) code = 'missing-credential';
+        else if (SESSION_MISSING_RE.test(errText)) code = 'session-not-found';
         else code = 'error';
         // §5 abort 处置: a run killed before the CLI ever emitted its session
         // event leaves a half-written session — hand back NO id. A resume

@@ -169,6 +169,15 @@ async function main() {
       process.exitCode = 1;
       return;
     }
+    case 'session-missing': {
+      // 2026-11-10 PC1 真机原话（改过 CLAUDE_CONFIG_DIR 后 resume 旧 session）：
+      // 引擎据此退役缓存 + fresh 重跑（自愈），不能当普通错误吞掉。
+      const msg = 'No conversation found with session ID: 33140bf9-6988-4418-b99c-76ab7c6d7dd4';
+      process.stderr.write(`${msg}\n`);
+      emit({ type: 'result', subtype: 'error_during_execution', is_error: true, result: msg, num_turns: 0 });
+      process.exitCode = 1;
+      return;
+    }
     case 'credential': {
       const msg = 'Error: Missing credentials. Please set ANTHROPIC_API_KEY (or configure authentication via ANTHROPIC_AUTH_TOKEN) and retry.';
       process.stderr.write(`${msg}\n`);

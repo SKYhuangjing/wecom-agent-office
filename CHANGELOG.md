@@ -5,6 +5,19 @@
 
 ## [Unreleased]
 
+### Fixed — 会话自愈：resume 目标在 CLI 磁盘已不存在时自动重跑（2026-11-10 PC1 真机）
+
+- 症状：企微发图（或任意消息）报「❌ 任务未能完成：result subtype
+  error_during_execution」。根因：bot 改过 `claudeConfigDir` 后，session 缓存里
+  仍留着落在旧目录（`~/.claude`）的会话 id；`--resume` 撞「No conversation
+  found with session ID」秒败，且缓存不退役 → 该会话此后每条消息都同样失败。
+- 修复：runner（claude/codex/pi）把该失败映射成 `code='session-not-found'`；
+  引擎退役缓存并以全新会话**重跑一次**（补 handoff 前缀，历史不丢）；新
+  session id 正常落缓存。附带：`isSessionStale` 对**缺 `lastAt` 的 legacy
+  缓存条目**判陈旧（TTL 特性上线前落盘的条目此前永不退役）。
+- 回归：引擎自愈（退役→fresh→新 session 入缓存）+ runner 码映射 + legacy
+  条目退役 + ttl≤0 语义不变。全量 808/808。
+
 ### Added — 多模态输入（图片/文件，DESIGN-MULTIMODAL Phase 0-2，2026-11-10）
 
 - 企微图片/文件/图文混排/语音入站全链路（出站多模态 Phase 3 不在本次）：

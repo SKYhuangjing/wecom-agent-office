@@ -49,6 +49,11 @@ const ripgrepAssetText = (entry) => [
 // of this against the REAL wording once M3 observes an actual conflict.
 const LOCK_CONFLICT_RE = /session is locked|locked by another (?:claude |process|instance)|session lock|SessionAlreadyOwnedError|IsolationError|another instance.*session|session.*already in use/i;
 const MISSING_CREDENTIAL_RE = /ANTHROPIC_API_KEY|invalid api key|authentication|unauthorized/i;
+// --resume 指向的 session 在 CLI 磁盘上不存在（2026-11-10 PC1 真机：bot 改过
+// claudeConfigDir 后，缓存里的旧 session 仍留在 ~/.claude 一侧，resume 直接
+// error_during_execution——用户只看到「任务未能完成」，且该会话永久坏掉）。
+// 单独成码让引擎退役缓存 + fresh 重跑（自愈），而不是当普通错误吞掉。
+const SESSION_MISSING_RE = /No conversation found with session ID|session .* not found|unknown session/i;
 const DEFAULT_ESCALATION_MS = 3000;
 const STDERR_TAIL_CHARS = 4000;
 
@@ -350,6 +355,7 @@ export function createRunner({ bot, providerConfig, assets, log, escalationMs = 
         else if (ok) code = 'completed';
         else if (LOCK_CONFLICT_RE.test(errText)) code = 'lock-conflict';
         else if (MISSING_CREDENTIAL_RE.test(errText)) code = 'missing-credential';
+        else if (SESSION_MISSING_RE.test(errText)) code = 'session-not-found';
         else code = 'error';
         // §5 abort 处置: a run killed before the CLI ever emitted its session
         // event leaves a half-written session — hand back NO id. A resume that

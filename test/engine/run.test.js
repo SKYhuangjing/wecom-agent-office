@@ -423,6 +423,38 @@ test('lock-conflict: retried once with the same sessionId, then normal final', a
   assert.equal(row.reason, 'completed');
 });
 
+// 2026-11-10 PC1 真机回归：缓存里的 session 在 CLI 磁盘已不存在（改过 config
+// dir / transcript 被清 / 迁移只带缓存）时 --resume 秒败 error_during_execution
+// ——用户只看到「任务未能完成」，且该会话永久坏掉。runner 映射成
+// code='session-not-found'；引擎必须退役缓存 + fresh 重跑一次（带 handoff
+// 前缀，续上历史），并把新 session 落到缓存。
+test('session-not-found: cache retired, ONE fresh retry with handoff prefix, new session cached', async () => {
+  const h = makeHarness({
+    steps: [
+      COMPLETE({ returnsSessionId: 's1', finalText: '第一轮' }),          // turn 1: 建立会话
+      { code: 'session-not-found', returnsSessionId: 's1' },             // turn 2: resume 撞化石 id
+      COMPLETE({ returnsSessionId: 's2', finalText: '自愈后回答' }),      // turn 2 retry: fresh
+    ],
+  });
+  await h.send('第一问');
+  // 默认 bot 的 provider 决定缓存键（mkBot: codex）
+  const pk = h.bot.provider;
+  assert.equal(h.cache.get(K)?.cache?.[pk]?.sessionId, 's1');
+
+  await h.send('发图问路');
+
+  assert.equal(h.runner.calls.length, 3, 'one turn = one self-heal retry');
+  const retry = h.runner.calls[2];
+  assert.equal(retry.sessionId, null, 'the retry is a FRESH session (stale id never reused)');
+  assert.ok(retry.prompt.includes('发图问路'), 'user text survives the retry');
+  assert.match(retry.prompt, /以下是本对话此前的记录/, 'handoff prefix replayed so context is not lost');
+  assert.equal(h.cache.get(K)?.cache?.[pk]?.sessionId, 's2', 'new session adopted');
+  const second = h.ledger.turns({ chatKey: K })[0];
+  assert.equal(second.reason, 'completed', 'the user sees an answer, not a hard error');
+  assert.equal(second.ok, true);
+  assert.ok(h.log.lines.warn.some((m) => /missing on disk/.test(m)), 'self-heal is logged');
+});
+
 test('lock-conflict twice: exact 防线三 reply, error row, no session cached', async () => {
   const h = makeHarness({
     steps: [{ code: 'lock-conflict' }, { code: 'lock-conflict' }],
@@ -987,9 +1019,12 @@ test('isSessionStale: pure TTL decision boundaries', () => {
   assert.equal(isSessionStale({ lastAt: now - 10 * 60_000 }, now, -1), false);
   // null pe / non-object → false
   assert.equal(isSessionStale(null, now, 45), false);
-  // legacy entries without lastAt keep the old resume behavior (no surprise resets post-upgrade)
-  assert.equal(isSessionStale({}, now, 45), false);
-  assert.equal(isSessionStale({ lastAt: 'yesterday' }, now, 45), false);
+  // legacy entries without lastAt (TTL 特性上线前落盘) 判陈旧——2026-11-10
+  // PC1 真机：11-09 旧 session 无 lastAt → 永不退役 → resume 撞「No
+  // conversation found」永久坏会话。ttl<=0 显式关闭时仍照旧 resume。
+  assert.equal(isSessionStale({}, now, 45), true);
+  assert.equal(isSessionStale({ lastAt: 'yesterday' }, now, 45), true);
+  assert.equal(isSessionStale({}, now, 0), false, 'ttl<=0 时一切照旧');
   // boundary: exactly TTL minutes elapsed is NOT stale (strict >)
   assert.equal(isSessionStale({ lastAt: now - 45 * 60_000 }, now, 45), false);
   assert.equal(isSessionStale({ lastAt: now - 45 * 60_001 }, now, 45), true);
@@ -1061,7 +1096,9 @@ test('turn flow: sessionTtlMin=0 disables retirement; legacy entries without las
   await h1.send('a');
   delete h1.cache._data[K].cache.codex.lastAt; // legacy persisted entry
   await h1.send('b');
-  assert.equal(h1.runner.calls[1].sessionId, 's1', 'legacy no-lastAt entry keeps resume behavior');
+  // 2026-11-10 PC1 真机反转：legacy 无 lastAt 的条目现在判陈旧 → fresh 会话
+  // （原行为「照旧 resume」会撞上 CLI 磁盘已不存在的 session，永久坏会话）。
+  assert.equal(h1.runner.calls[1].sessionId, null, 'legacy no-lastAt entry retires to a fresh session');
 });
 
 test('turn flow: within TTL the session resumes natively (the resume we WANT to pay for)', async () => {

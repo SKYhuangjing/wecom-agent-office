@@ -259,7 +259,11 @@ export function isSessionStale(pe, now, ttlMin) {
   if (pe == null || typeof pe !== 'object') return false;
   if (!(typeof ttlMin === 'number' && ttlMin > 0)) return false;
   const lastAt = pe.lastAt;
-  if (typeof lastAt !== 'number' || !Number.isFinite(lastAt)) return false;
+  // 缺 lastAt 的 legacy 条目（TTL 特性上线前落盘的缓存）判陈旧（2026-11-10
+  // PC1 真机：11-09 的旧 session 无 lastAt → 永不退役 → resume 撞「No
+  // conversation found」永久坏会话）。无反证=不信任，fresh 只会多一次前缀
+  // 重放，比 resume 不存在的 session 便宜得多。
+  if (typeof lastAt !== 'number' || !Number.isFinite(lastAt)) return true;
   return now - lastAt > ttlMin * 60_000;
 }
 
@@ -353,7 +357,7 @@ export async function defaultRunTurn(bot, msg, ac) {
     prefix = expiredByTtl ? '' : ledger.buildHandoffPrefix({ chatKey });
     sessionId = null;
   }
-  const sessionIdWasNull = sessionId === null;
+  let sessionIdWasNull = sessionId === null;
   // —— 附件信封（DESIGN-MULTIMODAL §4.1）：text 语义不变；附件三路分拣 ————
   // 图片 → runner 扇出面（claude 信封 base64 / codex -i / pi @file）；
   // 文件 → fileSectionFor 分级（文本内联/PDF→Read 提示/二进制→路径提示）；
@@ -761,6 +765,26 @@ export async function defaultRunTurn(bot, msg, ac) {
         result = await runner.run(runArgs()); // same prompt + same sessionId
       } catch (e) {
         engine.log.error?.(`engine: lock retry threw for ${chatKey}: ${e?.stack ?? e}`);
+        result = synthError(e);
+      }
+    }
+    // 会话自愈（2026-11-10 PC1 真机）：缓存里的 session 在 CLI 磁盘上不存在
+    // （bot 改过 config dir / transcript 被清理 / 迁移只带了缓存没带文件）时，
+    // --resume 以 error_during_execution 秒败——用户只看到「任务未能完成」，
+    // 且只要缓存不退役，该会话的每条消息都会同样的方式失败。runner 把该失败
+    // 映射成 code='session-not-found'；这里退役缓存并以全新会话重跑一次
+    // （native resume 轮原本没有前缀，补 handoff 让模型仍有上下文）。
+    if (result?.code === 'session-not-found' && sessionId != null) {
+      engine.log.warn?.(`engine: session ${sessionId} missing on disk for ${chatKey} — retiring cache and retrying fresh`);
+      cache.expire(chatKey, provider);
+      const handoff = prefix === '' ? ledger.buildHandoffPrefix({ chatKey }) : '';
+      const retryPrompt = handoff ? `${handoff}\n\n---\n\n${prompt}` : prompt;
+      sessionId = null;
+      sessionIdWasNull = true; // 重跑即新会话：abort 时同样不该缓存半装 session
+      try {
+        result = await runner.run({ ...runArgs(), prompt: retryPrompt, sessionId: null });
+      } catch (e) {
+        engine.log.error?.(`engine: fresh retry threw for ${chatKey}: ${e?.stack ?? e}`);
         result = synthError(e);
       }
     }

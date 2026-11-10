@@ -276,6 +276,19 @@ test('runner: lock stderr/result — code=lock-conflict', async () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+// 2026-11-10 PC1 真机：--resume 指向的 session 已不在 CLI 磁盘（config dir
+// 变更/transcript 被清）→ CLI 原话落 stderr，必须单独成码让引擎自愈重跑。
+test('runner: resume target missing on disk → code=session-not-found (engine self-heals)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wao-cl-sessmiss-'));
+  try {
+    const runner = makeRunner(dir, { claudeBin: makeWrapper(dir, 'session-missing') });
+    const res = await runOnce(runner, { sessionId: '33140bf9-6988-4418-b99c-76ab7c6d7dd4' });
+    assert.equal(res.code, 'session-not-found');
+    assert.equal(res.ok, false);
+    assert.match(res.detail.stderrTail, /No conversation found with session ID/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('runner: IsolationError stderr (no invented lock text) — code=lock-conflict', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'wao-cl-iso-'));
   try {
