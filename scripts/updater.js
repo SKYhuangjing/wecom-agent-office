@@ -178,6 +178,15 @@ export function probeHealth(url, timeoutMs = 20000) {
   return false;
 }
 
+// 后继服务的 host 解析（2026-11-11 PC1 真机事故回归面）：--lan 不带 --host
+// 时绝不能回落 127.0.0.1——与主进程 src/index.js 的 defaultHost 同口径
+// （lan→0.0.0.0），否则重启出的服务绑回环，局域网控制台失联只能上机修。
+// 显式 --host 永远优先。纯函数，单测直接钉。
+export function resolveHost(flags = {}) {
+  if (typeof flags.host === 'string' && flags.host !== '') return flags.host;
+  return flags.lan === true ? '0.0.0.0' : '127.0.0.1';
+}
+
 export async function runUpdater(argv = process.argv.slice(2)) {
   const flags = parseArgs(argv);
   const parentPid = Number(flags['parent-pid'] || 0);
@@ -188,8 +197,8 @@ export async function runUpdater(argv = process.argv.slice(2)) {
   const dataDir = flags['data-dir'] ? resolve(flags['data-dir']) : null;
   const targetCommit = flags['target-commit'] || '';
   const port = Number(flags.port || 8792);
-  const host = flags.host || '127.0.0.1';
   const lan = flags.lan === true;
+  const host = resolveHost(flags);
   const restartMode = flags['restart-mode'] || 'auto';
   // 代理通道（回评 P1-2/P1-3）：服务经 WAO_PROXY_URL env 传入（ps 不可见、
   // 后继进程不继承）；--proxy 旗标保留兼容（显式传则优先）。

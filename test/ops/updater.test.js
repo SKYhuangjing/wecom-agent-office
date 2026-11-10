@@ -42,6 +42,16 @@ test('copyOverlay strictly preserves protected directories (data, .git, logs, .l
   rmSync(tmp, { recursive: true, force: true });
 });
 
+// 2026-11-11 PC1 真机事故回归：--lan 不带 --host 时 host 解析必须是
+// 0.0.0.0（与主进程 defaultHost 同口径）；显式 --host 永远优先。
+test('resolveHost: --lan without --host binds 0.0.0.0; explicit --host wins; default loopback', async () => {
+  const { resolveHost } = await import('../../scripts/updater.js');
+  assert.equal(resolveHost({ lan: true }), '0.0.0.0', '--lan 无 --host → 0.0.0.0');
+  assert.equal(resolveHost({ lan: true, host: '10.1.2.3' }), '10.1.2.3', '显式 --host 优先');
+  assert.equal(resolveHost({}), '127.0.0.1', '无 lan 无 host → 回环');
+  assert.equal(resolveHost({ host: '' }), '127.0.0.1', '空 host 视为未给');
+});
+
 test('needNpmInstall detects dependency changes accurately', () => {
   const tmp = join(tmpdir(), `wao-test-pkg-${Date.now()}`);
   mkdirSync(tmp, { recursive: true });
