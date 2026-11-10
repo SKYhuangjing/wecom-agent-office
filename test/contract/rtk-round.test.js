@@ -13,7 +13,7 @@
 //      tools row unavailable + note (指引段 still injected, 预检不失败).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -237,23 +237,39 @@ test('ripgrep precheck: rg missing on PATH → tools row unavailable + note; gui
     const sc = scenario('rg-missing');
     const bot = { id: 'rg-b1', provider: 'claude', providerConfig: { cwd: join(sc, 'cwd'), claudeConfigDir: join(sc, 'cfg') } };
     const prevPath = process.env.PATH;
-    process.env.PATH = '/usr/bin:/bin'; // no rg here (verified: /usr/bin/rg absent)
+    // 封闭化（CI 修复 2026-11-10）：原写法把 PATH 设成 /usr/bin:/bin 并假设
+    // 「/usr/bin/rg 不存在」——开发机成立，但 GitHub ubuntu-latest runner 自带
+    // /usr/bin/rg，CI 必红。改用临时目录：空目录=缺失、放假 rg=在位，任何宿主
+    // 结果一致，不再依赖宿主装没装 ripgrep。
+    const emptyBin = mkdtempSync(join(tmpdir(), 'wao-rg-empty-'));
+    const fakeBin = mkdtempSync(join(tmpdir(), 'wao-rg-fake-'));
     try {
+      process.env.PATH = emptyBin; // 没有任何可执行文件 → rg 必缺失
       const r = await booted.impl.materializeAssets(bot, [{
         assetId: 'ast-rg1', type: 'tool', name: 'rg', mode: 'shared', content: { kind: 'ripgrep', options: { extraHints: '用 -t 过滤' } },
       }], { log: fakeLog().log });
       assert.ok(r.writes.some((w) => w.kind === 'argv' && w.flags[1].includes('rg（ripgrep）')), 'guidance argv still planned');
       assert.deepEqual(r.tools, [{ assetId: 'ast-rg1', kind: 'ripgrep', state: 'unavailable', version: null }], 'precheck row rides tools');
       assert.ok(r.notes.some((n) => /rg 未安装：ripgrep 指引已注入但本机无效（预检不失败）/.test(n.detail)), 'note explains the no-fail precheck');
+
+      // 在位半：放一个假 rg（--version 吐 ripgrep 版本号）。win32 的 spawnSync
+      // 不带 shell 不执行 .cmd/.bat，故该半仅在 POSIX 跑（CI=ubuntu、开发=mac）。
+      if (process.platform !== 'win32') {
+        const fakeRg = join(fakeBin, 'rg');
+        writeFileSync(fakeRg, '#!/bin/sh\necho "ripgrep 15.2.0 (fake)"\n');
+        chmodSync(fakeRg, 0o755);
+        process.env.PATH = fakeBin;
+        const r2 = await booted.impl.materializeAssets(bot, [{
+          assetId: 'ast-rg1', type: 'tool', name: 'rg', mode: 'shared', content: { kind: 'ripgrep' },
+        }], { log: fakeLog().log });
+        assert.equal(r2.tools[0].state, 'available');
+        assert.match(r2.tools[0].version, /^ripgrep \d/);
+      }
     } finally {
       process.env.PATH = prevPath;
+      rmSync(emptyBin, { recursive: true, force: true });
+      rmSync(fakeBin, { recursive: true, force: true });
     }
-    // and with rg reachable the row flips available
-    const r2 = await booted.impl.materializeAssets(bot, [{
-      assetId: 'ast-rg1', type: 'tool', name: 'rg', mode: 'shared', content: { kind: 'ripgrep' },
-    }], { log: fakeLog().log });
-    assert.equal(r2.tools[0].state, 'available');
-    assert.match(r2.tools[0].version, /^ripgrep \d/);
   } finally {
     await booted.stop();
   }
