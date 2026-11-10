@@ -193,12 +193,16 @@ export default {
     const [rematOpen, setRematOpen] = useState(false);
     const [busy, setBusy] = useState(false);
     const [receipt, setReceipt] = useState(null); // {title, data}
+    // 装备包推荐文案（/api/assets 的 memoryUpgradeHint——B 产品化）
+    const [memoryUpgrade, setMemoryUpgrade] = useState(null);
 
     const reload = async () => {
       try {
         const [a, b] = await Promise.all([api('/api/assets'), api('/api/bots')]);
         setAssets(Array.isArray(a?.assets) ? a.assets : []);
         setBots(Array.isArray(b?.bots) ? b.bots : []);
+        // 装备包推荐（B 产品化）：memory 条数逼近上限 → 升级 scope-recall 提示
+        setMemoryUpgrade(typeof a?.memoryUpgradeHint === 'string' ? a.memoryUpgradeHint : null);
         setLoadError(null);
       } catch (err) {
         setLoadError(err?.message ?? String(err));
@@ -394,7 +398,8 @@ export default {
           onChange: (e) => set({ kind: e.target.value }),
         },
           h('option', { value: 'rtk' }, 'rtk（token 瘦身钩子——要求机器人配了专属配置目录）'),
-          h('option', { value: 'ripgrep' }, 'ripgrep（代码检索指引）')),
+          h('option', { value: 'ripgrep' }, 'ripgrep（代码检索指引）'),
+          h('option', { value: 'scope-recall' }, 'scope-recall（检索式长期记忆——仅 claude 引擎+专属目录；记忆条数逼近上限时的升级项）')),
         f.kind === 'ripgrep'
           ? h('div', { className: 'wb-field', style: { marginTop: 10 } },
               h('label', null, '额外指引', h('span', { className: 'wb-hint', style: { marginLeft: 8 } }, 'options.extraHints，≤1KB，可空')),
@@ -403,7 +408,9 @@ export default {
                 placeholder: '追加到检索指引末尾的提示（如本仓库的目录约定）',
                 onChange: (e) => set({ extraHints: e.target.value }),
               }))
-          : h('span', { className: 'wb-hint' }, 'rtk v1 无可调参数（options 仅空占位）；配置态与瘦身收益见绑定回执与工具配置警示。'))];
+          : h('span', { className: 'wb-hint' }, f.kind === 'scope-recall'
+            ? 'scope-recall v1 无可调参数（原文检索模式；模型路由见 docs/MEMORY-RESEARCH.md §5）——首次绑定会自动 uv tool install hermes-scope-recall 并装备。'
+            : 'rtk v1 无可调参数（options 仅空占位）；配置态与瘦身收益见绑定回执与工具配置警示。'))];
     };
 
     const editorPanel = editor == null ? null : h('div', { className: 'wb-editor', style: { marginBottom: 16 } },
@@ -473,6 +480,7 @@ export default {
 
     const registryBody = h('div', null,
       editorPanel,
+      memoryUpgrade != null ? h('div', { className: 'wb-notice', style: { marginBottom: 12 } }, memoryUpgrade) : null,
       assets.length === 0
         ? h('div', { className: 'wb-empty' },
             h('p', null, '工具库还是空的——第一个工具可以从一份技能或一句提示词开始。'),

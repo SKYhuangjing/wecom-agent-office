@@ -488,20 +488,23 @@ test('closed content schema over HTTP: stray keys 400 with「unexpected key」co
 
 
 // —— P1-B：内置工具资产 seed + claude 新建默认专属目录 ———————————————————
-test('boot seeds ast-tool-rtk / ast-tool-ripgrep (origin plugin); reload stays idempotent', async () => {
+test('boot seeds ast-tool-rtk / ast-tool-ripgrep / ast-tool-scope-recall (origin plugin); reload stays idempotent', async () => {
   const list = await (await get('/api/assets')).json();
-  for (const kind of ['rtk', 'ripgrep']) {
+  for (const kind of ['rtk', 'ripgrep', 'scope-recall']) {
     const rows = list.assets.filter((a) => a.type === 'tool' && a.content?.kind === kind);
     assert.equal(rows.length, 1, `exactly one seeded ${kind}`);
     assert.equal(rows[0].id, `ast-tool-${kind}`);
     assert.equal(rows[0].origin, 'plugin');
   }
+  // 装备包推荐回显（B 产品化）：无 memory 资产 → 无提示字段
+  assert.equal(list.memoryUpgradeHint, undefined);
   // reload re-runs afterAllActivated → the seed must not duplicate
   assert.equal((await post('/api/service/reload')).status, 200);
   await new Promise((r) => setTimeout(r, 300));
   const again = await (await get('/api/assets')).json();
   assert.equal(again.assets.filter((a) => a.content?.kind === 'rtk').length, 1, 'no duplicate after reload');
   assert.equal(again.assets.filter((a) => a.content?.kind === 'ripgrep').length, 1);
+  assert.equal(again.assets.filter((a) => a.content?.kind === 'scope-recall').length, 1);
 });
 
 test('POST /api/bots (provider claude, no claudeConfigDir): auto-filled + dir pre-created', async () => {

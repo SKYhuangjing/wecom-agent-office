@@ -5,6 +5,23 @@
 
 ## [Unreleased]
 
+### Added — 工具资产 kind `scope-recall`（B 产品化，2026-11-10）
+
+- 记忆层外部系统产品化（MEMORY-RESEARCH §4 路径 B）：检索式长期记忆
+  `hermes-scope-recall` 接成第三件工具资产（rtk 状态机同款三态装备/卸载），
+  仅 claude+claudeConfigDir 可绑；per-bot 记忆库落 `<claudeConfigDir>/scope-recall-store`。
+  Phase 0 实证：`claude -p` 下 hooks 全触发、与 rtk 零冲突（不同文件不同事件）、
+  卸载面回读干净；PyPI 包名是 `hermes-scope-recall`（`scope-recall` 名不在 PyPI）。
+  双写协调 v1 决策：WAO 蒸馏保持开 + scope-recall 不配模型路由（原文检索降级模式）。
+- 工具供给面加 `uv`（win zip 钉 SHA256 / mac·linux brew）——scope-recall 的安装前提
+  （绑定即自动 `uv tool install hermes-scope-recall==4.0.3`（钉版），含托管 Python≥3.11
+  免管理员；Win 真机面未实测）；
+  装备包推荐：memory ≥35/50 条时 `GET /api/assets` 回显升级提示（UI 只展示）。
+  **盲评修复（0 P0/2 P1/3 P2 全清）**：卸载改**收据属主判据**（三重门：非空绝对
+  path/安装收据在位/非 unavailable 态 + jailCheck——操作者预装内容绝不按名盲删）；
+  uv install 钉版；manifest 行如实记 state；setup 失败路径补记行（半装残片解绑可
+  回收）；toolWarnings 按 uv 在位分文案。负面回归 5 例锁定。
+
 ### Added — 服务网络代理可配置（2026-11-10）
 
 - 设置页「网络代理」：HTTP(S) 代理地址 + 启停 + 测试连通（负路径可读文案：代理拒连/超时/重置）；`GET/POST /api/service/network(+/test)`；`data/service.json` 原子持久化、即时生效。

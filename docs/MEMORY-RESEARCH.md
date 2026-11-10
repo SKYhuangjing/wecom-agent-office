@@ -60,8 +60,70 @@ Magpie 插件面：全 provider 覆盖 + 零 CLI 差异，代价是 bot 隔离�
 - **mem0**：抽取已自有，基建过重；
 - **basic-memory**：AGPL + 与自有层功能重叠。
 
-## 5. 待验证项（试点 A 的检查单）
-- [ ] `claude -p`（print 模式）下 hooks 自动召回是否触发（WAO bot 全是 -p 驱动）
-- [ ] 与 rtk hook 的共存（同 settings.json PreToolUse 数组）
-- [ ] Win 免管理员安装（PC1 无 py：先装用户级 Python？scope-recall 的 host-local venv 首选项）
-- [ ] 蒸馏（WAO distill）与 scope-recall 抽取（后台 worker）双写的口径协调——试点期先关 WAO 蒸馏或关 scope-recall 模型路由，避免两套记忆
+## 5. 待验证项 → 实证结论（2026-11-10 Phase 0/B 产品化实测，macOS arm64）
+
+> 实测环境：uv 0.6.8、claude 2.1.318、rtk 1.2.0、hermes-scope-recall 4.0.3；
+> scratch `/private/tmp/wao-scope-recall-p0*`（注意：**必须用 realpath**——scope-recall
+> 拒绝符号链接路径，`/tmp` 在 macOS 是 symlink，报
+> `symlink or reparse paths are not allowed: /tmp`）。**PyPI 包名是
+> `hermes-scope-recall`**（`scope-recall` 名不在 PyPI——`uv tool install
+> scope-recall` 报 not found；GitHub README 2026-11 版已改用此名，仓库 checkout
+> 4.0.3）。需 Python ≥3.11，uv 自动落托管 Python（本机 cpython-3.12.9）。
+
+- [x] **`claude -p`（print 模式）下 hooks 自动召回触发——PASS**。
+  `CLAUDE_CONFIG_DIR=<scratch> scope-recall setup --host claude-code --yes`
+  （或 `--home <dir>` 显式）后跑 `claude -p '回复ok' --output-format stream-json`：
+  共享库 `~/.scope-recall/shared/memory.sqlite3` 的 `session_brief_sessions` 出现
+  该会话行（started=1，recall_elapsed_ms=166），`source_events` 记下 user/assistant/
+  session_end 全周期三条——SessionStart 召回 + UserPromptSubmit/Stop/SessionEnd 捕获
+  四类 hook 在 print 模式全触发，无需任何交互批准（-p 非交互面直接生效）。
+  发现：setup 不写 settings.json——hooks/MCP/skill 三面全在
+  `<configDir>/skills/scope-recall/` 的 **claude-code 插件 bundle** 里
+  （`.claude-plugin/plugin.json` + `hooks/hooks.json` + `.mcp.json` + SKILL.md），
+  claude 经 `CLAUDE_CONFIG_DIR/skills/` 原生发现插件。
+- [x] **与 rtk hook 共存——PASS（零冲突）**。同一 config dir 再 `rtk init -g
+  --auto-patch --no-trust-filters`：rtk 产物=RTK.md + CLAUDE.md `@RTK.md` 行 +
+  `settings.json` 的 PreToolUse 条目；scope-recall 的 hooks 在自己的插件
+  hooks.json——**不同文件、不同事件**（rtk=PreToolUse，scope-recall=
+  SessionStart/UserPromptSubmit/Stop/SessionEnd）。装两件后再跑一次 claude -p：
+  第二会话照常全周期捕获、settings.json 的 rtk 条目原样。
+- [ ] **Win 免管理员安装——设计通 + 供给面就位，真机未验证**（Windows 面
+  未验证项：uv-windows zip 一键装 → 绑定 scope-recall → WAO 自动
+  `uv tool install hermes-scope-recall`（uv 自带托管 Python≥3.11）→ setup
+  `--host claude-code` → hooks 在 Win 的 `claude -p` 触发。uv 0.6.8 win zip
+  SHA256 已实下载钉死进 src/tools-spec.js；PC1/PC2 下次上真机补验）。
+- [x] **双写口径协调——v1 决策：WAO 蒸馏（L2）保持开 + scope-recall 不配模型
+  路由（原文检索降级模式）**。实证：4.0.3 setup 默认零模型路由（plan-json
+  `existing_models: {embedding:false, extraction:false, budget:全 0}`，README
+  「Without model routes or budget, setup reports 原文检索可用」）——不配路由=
+  scope-recall 的后台抽取/嵌入 worker 不启动，与 WAO distill 无双写；召回走
+  词法检索。要完整记忆功能需 `--configure-models`（交互）或 `--models <json>`
+  （模型键=环境变量引用），**未证明能干净指向 magpie 网关**（127.0.0.1:3425 是
+  Anthropic 形态端点，其路由 schema 是自有 JSON），v1 不做 options 可选项，
+  留待需要向量召回时再试。
+
+### 5.1 B 产品化落地形状（对应 §4 路径 B，2026-11-10 实装）
+
+- 工具资产 kind `scope-recall`（白名单第三员，seed 内置、**不进向导默认
+  装备包**——记忆规模驱动的升级项）；绑定面 v1 仅 claude+claudeConfigDir
+  （codex/pi/dsh 拒，dsh 独立文案）。
+- 物化器 `scope-recall-init` 状态机（学 rtk 三态）：probe（`--help` 探测——
+  真 CLI **无 --version 旗标**；候选=PATH → `~/.local/bin/scope-recall`）→
+  缺 CLI 但有 uv 则自动 `uv tool install hermes-scope-recall==4.0.3`（钉版，
+  盲评 P1-2——latest 浮动=今天验证过的形状明天悄悄变）→
+  `setup --host claude-code --home <cfgDir> --store <cfgDir>/scope-recall-store
+  --yes`（**store 必须显式指 per-bot 目录**——默认 `~/.scope-recall/shared`
+  是全局共享域，违反 bot 隔离）→ 回读断言（`.scope-recall-install-receipt.json`
+  + `skills/scope-recall/hooks/hooks.json`）→ armed 态记 manifest.tools。
+- 卸载（盲评 2026-11-10 后口径，**收据属主判据**）：清扫前过三重门——清单行
+  path 须非空绝对路径（''/相对路径=以服务进程 CWD 为基准的越狱删，拒绝告警）；
+  `.scope-recall-install-receipt.json` 在位=属主凭证（unavailable 必然无收据；
+  收据被删=缺证不删）；行态 unavailable 不扫（零产物承诺——试点期操作者手工
+  预装的同名 `skills/scope-recall/`/记忆库绝不能被按名盲删）。过门后
+  `apply-uninstall --instance-root <cfgDir>`（删插件四件套、retain_memory）+
+  WAO 清扫残片（收据/`scope-recall/` 目录/attachment lock/per-bot store——bot
+  卸载即记忆随走），清扫目标再过 §8.3 jail；setup 失败路径也在 manifest 补记
+  state:'failed' 行——首败半装残片（收据在位时）解绑可回收。
+- uv 进 `/api/service/tools` 供给面（win zip/darwin+linux brew，钉版 SHA256），
+  `wao doctor` 自动带 `tool uv` 行；scope-recall 本体不进供给面（materializer
+  首次装备时装，钉版 spec，幂等）。

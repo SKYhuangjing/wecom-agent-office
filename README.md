@@ -38,7 +38,9 @@
   → provider runner（`dsh --json -` 子进程，NDJSON → 统一事件）→ 流式回传企微。
 - 资产（W3）：技能/记忆/提示词/MCP/工具五类资产（`data/assets.json` 注册表 + per-bot 绑定），
   物化到 bot 声明目录（标记节/独立文件/JSON 条目型，卸载精确回收）；工具类 rtk（PreToolUse hook
-  输出裁剪，真机实测省 ~18% tool 输出）与 ripgrep（指引段注入 + 环境预检）——见 docs/DESIGN-ASSETS.md。
+  输出裁剪，真机实测省 ~18% tool 输出）、ripgrep（指引段注入 + 环境预检）与 scope-recall
+  （检索式长期记忆，hermes-scope-recall——记忆条数逼近 50 上限时的升级项，v1 仅 claude 引擎）
+  ——见 docs/DESIGN-ASSETS.md。
 - 会话延续：chatKey → sessionId 缓存（`data/sessions/`），下一条消息带 `--session-id` 续跑。
 - 停机 = SIGINT/SIGTERM 触发四阶段（drain 补终帧 → 逆序拆插件 → 关监听 → 孤儿扫尾 → 释放锁），不是裸 kill；
   每阶段在日志留一行（`wao: stopping (four-phase)` … `wao: stopped (lock released)`），见 `data/logs/wao.log`。
@@ -158,7 +160,7 @@ curl -s localhost:8792/healthz          # 确认起来
 | 场景 | 手段 | 为什么 |
 |---|---|---|
 | **在线一键升级（多端通用）** | 打开 Web 控制台「设置 → 系统信息」，点「检查更新」→「一键升级」 | 跨平台平滑升级：自动比对 GitHub 远程最新 Commit，下载解压、保护 `data/` 目录不被改动、依赖变动自动 npm install、自适应对应平台（macOS launchd / Linux systemd / Windows 独立更新器）平滑重启服务并在就绪后无缝刷新页面 |
-| **工具装备一键安装（11-09）** | 「设置 → 系统信息 → 工具装备」：rtk / ripgrep / Git Bash（win）状态徽章 + 一键安装（钉版 SHA256 门禁、`WAO_DOWNLOAD_MIRROR` 镜像回退、装完一键「重启服务」刷新 PATH） | 把 11-09 PC1 上 40 分钟的人工装备（慢网截断/PATH/重启）变成三次点击；win 上 Git Bash 是 claude hook 的执行前提 |
+| **工具装备一键安装（11-09）** | 「设置 → 系统信息 → 工具装备」：rtk / ripgrep / Git Bash（win）/ uv 状态徽章 + 一键安装（钉版 SHA256 门禁、`WAO_DOWNLOAD_MIRROR` 镜像回退、装完一键「重启服务」刷新 PATH） | 把 11-09 PC1 上 40 分钟的人工装备（慢网截断/PATH/重启）变成三次点击；win 上 Git Bash 是 claude hook 的执行前提；uv 是 scope-recall 记忆工具的安装前提（绑定即自动 `uv tool install hermes-scope-recall`，自带托管 Python） |
 | **网络代理可配置（11-10）** | 「设置 → 系统信息 → 网络代理」：HTTP(S) 代理地址 + 一键测试连通；检查更新/在线升级/工具安装三条出网链路即时生效（undici ProxyAgent，无需重启） | 国内直连 GitHub 慢/被截断的根治（2026-11-09 PC1 实测 zip 静默截断后沉淀）；magpie/企微连接刻意不经代理 |
 | **会话 TTL + 记忆蒸馏（11-09）** | bot `providerConfig.sessionTtlMin`（默认 45min，0=永不）控制 `--resume` 会话退役；绑 memory 资产的 bot 自动获得 FAQ 沉淀：回复末尾标记被中间件剥离并写回记忆，容量 LRU 守恒 | 实测闲聊一条从 76k（62k 纯历史重放）降到 ~16k；「沉淀成 F&Q 文档」从人设空话变成闭环机制（详见 docs/DESIGN-TOKEN-OPT.md） |
 | **代码升级（macOS launchd 命令行手动）** | `launchctl kickstart -k gui/$(id -u)/com.wecom-agent-office` | in-process reload 刷不掉 ESM 模块缓存：plugin.js 内部静态 import 的子模块（runner.js 等）reload 后仍是旧代码——已验。kickstart 走完整四阶段停机（在跑任务补终帧、孤儿扫尾）+ KeepAlive 自愈，是唯一可信的换代码路径 |

@@ -66,6 +66,10 @@ export function seedBuiltinToolAssets(doc) {
   const defs = [
     { kind: 'rtk', name: 'rtk', description: 'Token 瘦身 hook：PreToolUse 拦截 Bash 命令输出过滤（实测单轮 -18%）——绑定即装备；要求 bot 配置专属 config 目录（claudeConfigDir 等）且机器上有 rtk 二进制' },
     { kind: 'ripgrep', name: 'ripgrep', description: '代码检索指引：一律用 rg 关键词定位，替代 grep/find/逐文件翻看' },
+    // scope-recall（B 产品化，2026-11-10）：检索式召回/原文溯源/规模——WAO L2
+    // 记忆是全量注入（≤50 条），条数逼近上限或 FAQ 检索需求出现时升级它；
+    // 不进向导默认装备包（tokenSaverIds 不含），按需手绑。
+    { kind: 'scope-recall', name: 'scope-recall', description: '检索式长期记忆（hermes-scope-recall）：hooks 自动召回相关旧会话+原文留存可溯源——L2 全量注入（≤50 条）不够时的规模升级项；v1 仅 claude 引擎+专属 claudeConfigDir，默认原文检索（不配模型路由）' },
   ];
   const seeded = [];
   const skipped = [];
@@ -89,6 +93,21 @@ export function loadAssets(file) {
   const doc = readJson(file);
   if (isObject(doc) && Array.isArray(doc.assets)) return { assets: doc.assets };
   return { assets: [] };
+}
+
+// 装备包推荐（B 产品化）：memory 资产条数逼近 LIMITS.notes（50 条封顶，LRU 丢
+// 最旧）时推荐升级 scope-recall（检索式召回/原文溯源，MEMORY-RESEARCH §3 的
+// L2→L3 分层）。返回提示文案或 null（未达阈值 / 已有 scope-recall 资产）。
+// 纯函数：api.js 的 GET /api/assets 回显，UI 只展示文案。
+export function memoryUpgradeHint(assets) {
+  const list = Array.isArray(assets) ? assets.filter(isObject) : [];
+  if (list.some((a) => a?.type === 'tool' && a?.content?.kind === 'scope-recall')) return null;
+  const heaviest = list
+    .filter((a) => a?.type === 'memory' && Array.isArray(a.content?.notes))
+    .sort((a, b) => b.content.notes.length - a.content.notes.length)[0];
+  const n = heaviest?.content?.notes?.length ?? 0;
+  if (n < 35) return null;
+  return `记忆资产「${heaviest.name}」已有 ${n}/${LIMITS.notes} 条——全量注入逼近上限（LRU 丢最旧且每轮占 token）。建议装备 scope-recall 工具资产（检索式召回：只注入相关项+原文可溯源，v1 仅 claude 引擎）。`;
 }
 
 export function saveAssets(file, doc) {
@@ -297,8 +316,8 @@ const validateContent = (type, content, errors) => {
       checkText(content.text, 'content.text', { required: true, max: LIMITS.text }, errors);
       break;
     case 'tool': {
-      if (content.kind !== 'rtk' && content.kind !== 'ripgrep') {
-        errors.push('content.kind 必须是 rtk 或 ripgrep（白名单外 kind 拒绝）');
+      if (content.kind !== 'rtk' && content.kind !== 'ripgrep' && content.kind !== 'scope-recall') {
+        errors.push('content.kind 必须是 rtk、ripgrep 或 scope-recall（白名单外 kind 拒绝）');
         break;
       }
       if (content.options !== undefined && !isObject(content.options)) {
@@ -307,6 +326,9 @@ const validateContent = (type, content, errors) => {
       }
       if (content.kind === 'rtk' && content.options !== undefined && Object.keys(content.options).length > 0) {
         errors.push('content.options：rtk v1 仅接受空 options 占位（edition 等后期扩展）');
+      }
+      if (content.kind === 'scope-recall' && content.options !== undefined && Object.keys(content.options).length > 0) {
+        errors.push('content.options：scope-recall v1 仅接受空 options 占位（模型路由等后期扩展，见 docs/MEMORY-RESEARCH.md §5）');
       }
       if (content.kind === 'ripgrep' && isObject(content.options)) {
         rejectUnknownKeys(content.options, 'content.options', ['extraHints'], 'ripgrep 仅接受 extraHints', errors);
@@ -565,6 +587,18 @@ export function noopMaterializer() {
       }
       if (provider === 'dsh' && asset?.type === 'tool' && asset?.content?.kind === 'rtk') {
         errors.push('dsh 引擎不支持 rtk 工具（rtk 支持列表不含 dsh）');
+      }
+      // scope-recall（B 产品化 v1）：装备面=claude-code 插件 bundle（hooks/MCP/
+      // skill 三面），实证仅经 CLAUDE_CONFIG_DIR 发现——只允许 provider=claude
+      // 且已配 claudeConfigDir 的 bot 绑定（codex/dsh/pi 的 host 面后续版本）。
+      if (asset?.type === 'tool' && asset?.content?.kind === 'scope-recall') {
+        if (provider === 'dsh') {
+          errors.push('dsh 引擎不支持 scope-recall 工具（v1 仅 claude 引擎，hooks 面走 claude-code 插件）');
+        } else if (provider !== 'claude') {
+          errors.push('scope-recall 工具 v1 仅支持 claude 引擎（codex/pi/dsh 的 host 面后续版本）');
+        } else if (typeof bot?.providerConfig?.claudeConfigDir !== 'string' || bot.providerConfig.claudeConfigDir === '') {
+          errors.push('scope-recall 工具要求 bot 配置专属目录（claudeConfigDir）——hooks/记忆面全落 bot 专属配置目录，共享用户主目录绝不动');
+        }
       }
       // §7.1 硬红线同真物化器：pi 的装备面含 WAO 默认目录（per-bot 命名空间）。
       if (asset?.type === 'tool' && asset?.content?.kind === 'rtk' && provider !== 'dsh' && provider !== 'pi' && dedicatedDirOf(bot) === undefined) {

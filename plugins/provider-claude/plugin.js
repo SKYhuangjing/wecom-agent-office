@@ -286,6 +286,15 @@ export default {
                 } else {
                   notes.push({ assetId: entry.assetId, detail: 'rtk 要求 claudeConfigDir（绑定面应已拒绝共享目录 bot）——本轮未装备' });
                 }
+              } else if (entry.content?.kind === 'scope-recall') {
+                // §7.4（B 产品化）：计划 scope-recall-init 写；执行同 rtk 收敛
+                // 在 core-engine 物化器（probe/uv 兜底→setup --home/--store→回读
+                // 断言）。绑定面已限 provider=claude 且 claudeConfigDir 在位。
+                if (redirected) {
+                  writes.push({ kind: 'scope-recall-init', target: dir, for: entry.assetId, owned: false });
+                } else {
+                  notes.push({ assetId: entry.assetId, detail: 'scope-recall 要求 claudeConfigDir（绑定面应已拒绝共享目录 bot）——本轮未装备' });
+                }
               }
               break;
             default:

@@ -9,7 +9,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { saveBots, validateBot } from './bots.js';
 import {
-  bindingSummary, bindAsset, buildPlan, maskAsset, newAssetId, rematerializeBots,
+  bindingSummary, bindAsset, buildPlan, maskAsset, memoryUpgradeHint, newAssetId, rematerializeBots,
   restoreMaskedContent, saveAssets, unbindAsset, validateAsset,
 } from './assets.js';
 import { DRAIN_REFUSAL_TEXT, createUsageAccumulator } from './engine.js';
@@ -822,7 +822,13 @@ async function sendHandler({ req, res, state }) {
 // noop → {writes:[], skipped:'not-equipped'}; T2: the real provider pipeline).
 
 function listAssetsOp(state) {
-  return { assets: state.assetsDoc.assets.filter(isObject).map((a) => publicAsset(state, a)) };
+  const assets = state.assetsDoc.assets.filter(isObject);
+  return {
+    assets: assets.map((a) => publicAsset(state, a)),
+    // 装备包推荐（B 产品化）：memory 条数逼近上限时提示升级 scope-recall——
+    // 纯文案，UI 只展示（判定源同源单点 assets.js）。
+    ...(memoryUpgradeHint(assets) != null ? { memoryUpgradeHint: memoryUpgradeHint(assets) } : {}),
+  };
 }
 
 function getAssetOp(state, id) {

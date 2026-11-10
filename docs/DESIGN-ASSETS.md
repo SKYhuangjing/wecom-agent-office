@@ -260,6 +260,7 @@ runner 引用不被夺走，旗标为旧版本），**下轮 run 起用新 runne
 | **mcp** | 每 server 一条 profile 行 `mcp-<serverId>`（`@deepseek-ai/dsh-mcp-client`；stdio=command/args/env，http=transport `streamable-http`+url/headers；形状对已装包 README+lib 实证，W3 T6 解除 F23 保守裁定）。行由 profiles.js 纯构建 `mcpClientRows` 生成、经 `buildBotPatch(…, assetsPlan)` 随**整文件重建**写入——materializeConfig 与 materializeAssets 都传生效计划，bot PATCH 重物化不掉 MCP 行（P0-4 同型防线）；env/headers 值**明文**落 patch（dsh 无引用语义；文件恒 0600）；serverId ≤32 字符（超出=绑定面拒绑，§2.3） | 物化 `data/assets/<botId>/claude-mcp.json`（WAO data 域，**0600**）+ runner 加 `--mcp-config <path>`（F12；**单文件整体 owned**，规避 F13 未记载的多文件合并语义；不加 `--strict-mcp-config`——不遮蔽用户自有 server）；server 名物化为 `wao-<serverId>`（**三家统一前缀**，rev.2；同名让位方向不再按未实证的 scope 优先级声明——V7 实证后写进文档） | `$CODEX_HOME/config.toml` 末尾追加标记节，server 物化为 `[mcp_servers.wao-<serverId>]`（F8 形状；**统一 `wao-` 前缀**防与用户自有条目同名造成 TOML 重复表解析错误；无 codexHome 时物化到 `<cwd>/.codex/config.toml`，F9 项目级面，T2-V4 验证非 trusted 目录可用性，不可用则要求 codexHome） | `<piAgentDir>/mcp.json`（F21 实证形状同 claude，**0600**）——默认 wao 命名目录内**整文件重写**，server 名 `wao-<serverId>`（三家统一前缀）；自定义 piAgentDir 遇外来文件拒写（F22 守卫同款）——外来判据：顶层 `x-wao-managed` 注记，**pi 对未知顶层键的容忍度未验证（V9）；不容忍则注记不落文件，判据改用物化清单 manifest（§3.8）** |
 | **tool: rtk** | 不支持（F27） | 见 §7.1 | 见 §7.1 | 见 §7.1 |
 | **tool: ripgrep** | 环境预检 + personaPrefix 指引节 | 预检 + `--append-system-prompt` 指引段 | 预检 + AGENTS.md 标记节内指引段 | 预检 + `--append-system-prompt` 指引段 |
+| **tool: scope-recall** | 不支持（v1） | 见 §7.4 | 不支持（v1） | 不支持（v1） |
 
 > dsh 的 `<cwd>/.wao/skills/` 是 WAO 命名空间目录——即使 bot cwd 是真实 repo，`.wao/` 也是明确的外来管理目录（类比 node_modules），卸载整目录删除；索引节随 personaPrefix 重建天然一致。
 >
@@ -467,6 +468,65 @@ doctor 漂移比对（§8.1）、pi 外来文件判据回退（V9 不容忍时�
 
 - 物化=环境预检（`rg --version` spawn 探测，超时 3s）+ 指引段注入（「代码检索一律用 `rg` 而非 grep/find，示例：`rg -t js 'pattern'`…」+ options.extraHints）。预检结论（available/unavailable+version）随 provider 计划**记入 manifest.tools**；预检失败→绑定仍成功但回执 notes + agents assetWarnings 标注「rg 未安装，指引已注入但无效」+ 指引段内含安装指引一句（**预检不失败**，装上即生效）。
 - 四家注入口同 prompt 类（§3.3 矩阵末行）。
+
+### 7.4 scope-recall（kind: 'scope-recall'，B 产品化 2026-11-10）
+
+**前置事实**（Phase 0 实证，全量底稿见 docs/MEMORY-RESEARCH.md §5）：PyPI 包
+`hermes-scope-recall` 4.0.3（MIT，`scope-recall` 名不在 PyPI）；CLI 双入口
+`scope-recall`；需 Python≥3.11——uv tool install 自动落托管 Python（免管理员）；
+`setup --host claude-code --home <dir> --store <dir> --yes` 把 **claude-code 插件
+bundle**（`.claude-plugin/plugin.json`+`hooks/hooks.json`+`.mcp.json`+记忆 SKILL.md）
+写进 `<dir>/skills/scope-recall/`——**不碰 settings.json**，hooks 事件=
+SessionStart/UserPromptSubmit/Stop/SessionEnd（与 rtk 的 PreToolUse 零冲突，
+`claude -p` print 模式实证全触发）；记忆库 SQLite 落 `--store` 指定目录（默认
+`~/.scope-recall/shared` 是全局共享域——**WAO 必须显式指 per-bot 目录**）；
+模型路由默认关闭（原文检索模式）；CLI 路径解析拒绝符号链接（macOS `/tmp`
+报 `symlink or reparse paths are not allowed`）。
+
+状态机（同 §7.1 三态口径，态存 `manifest.tools`）：
+
+```
+未安装(unavailable) —— scope-recall 与 uv 都不在：绑定保留、零产物，notes 指引
+                       （装 uv 后 rematerialize 会自动装备）
+已装备(armed)       —— probe（--help，真 CLI 无 --version 旗标；候选=PATH →
+                       ~/.local/bin/scope-recall，Win 补 %USERPROFILE%\.local\bin）
+                       → 缺 CLI 有 uv 则 uv tool install hermes-scope-recall==4.0.3
+                       （钉版，盲评 P1-2——tools-spec 的 pinned 红线对 uv 供给面
+                       同样成立；幂等；invalidateProbe 后重探）
+                       → setup --home <cfgDir> --store <cfgDir>/scope-recall-store --yes
+                       → 回读断言（.scope-recall-install-receipt.json +
+                       skills/scope-recall/hooks/hooks.json）→ version 取收据
+                       package_version
+失败(failed)        —— setup 非零/超时/回读断言失败：throw（stderr 摘要随 error，
+                       含其自带的 symlink 拒绝说明），manifest lastResult 记因
+```
+
+- **绑定面（v1）**：仅 provider=claude 且 claudeConfigDir 在位（装备面=
+  CLAUDE_CONFIG_DIR 插件发现）；codex/pi/dsh 拒绝（dsh 独立文案，F27 风格）；
+  options 仅空占位（模型路由后期扩展，双写口径见 MEMORY-RESEARCH §5）。
+- **与 WAO L2 记忆分层**：WAO memory 资产=全量注入（≤50 条，蒸馏闭环）；
+  scope-recall=检索式召回（0-6 条过门槛）+原文留存溯源+规模——条数逼近上限
+  （≥35/50）时 `memoryUpgradeHint`（assets.js 纯函数）在 `GET /api/assets`
+  回显推荐文案，UI 只展示；**不进向导默认装备包**（tokenSaverIds 不含）。
+- **卸载（收据属主判据，盲评 2026-11-10 后口径）**：清扫前过三重门，缺一不删——
+  ① 清单行 path 须非空绝对路径（''/相对路径会让 rmSync 以服务进程 CWD 为基准
+  越出一切 jail——拒绝并告警）；② `.scope-recall-install-receipt.json` 在位=
+  属主凭证（unavailable 态必然无收据；armed 行=绑定已认领该面——setup --yes
+  重跑即接管试点期手工预装；收据被手删则跳过告警，缺证不删）；③ 行态
+  unavailable 不扫（文档承诺零产物——按名盲删=删用户数据，含试点期迁移来的
+  同名 `skills/scope-recall/` 与记忆库）。过门后先 `apply-uninstall
+  --instance-root <cfgDir>`（删插件四件套，retain_memory），再清扫残片
+  （收据/`scope-recall-attachment.lock`/`scope-recall/` 目录/`skills/scope-recall/`/
+  per-bot `scope-recall-store/`），清扫目标自身再过 §8.3 jailCheck（bot 迁移
+  目录后旧路径越界=告警跳过请人工处置）。CLI 缺失时收据在位即纯 WAO 清扫兜底。
+  **失败路径也记行**：setup 失败的 catch 保留清单时补记 state:'failed' 的
+  scope-recall-init 行——首败的半装残片（收据在位时）在解绑/删 bot 时可回收
+  （无收据的漂移形状按 ② 跳过）。幂等：对已装备面重跑 setup=repair，无害。
+- **供给面**：uv 进 `/api/service/tools`（win zip 钉 SHA256 / mac·linux brew），
+  `wao doctor` 自动告警；scope-recall 本体由物化器首次装备时
+  `uv tool install` 装（不进供给面）。plugins.json 可注入 `scopeRecallBin`/
+  `uvBin`（或 `$WAO_SCOPE_RECALL_BIN`/`$WAO_UV_BIN`）钉绝对路径（测试指向
+  fake，rtkBin 同款 seam）。
 
 ### 7.3 memory 语义边界（与 claude auto-memory 划界）
 

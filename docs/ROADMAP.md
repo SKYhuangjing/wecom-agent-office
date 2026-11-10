@@ -41,7 +41,11 @@
 
 ## 设计备忘(记录在案,暂不排期)
 
-- **记忆层外部系统集成**(2026-11-10 调研,详见 [MEMORY-RESEARCH.md](MEMORY-RESEARCH.md)):首选 scope-recall(MIT,536★,原生尊重 CLAUDE_CONFIG_DIR→per-bot 隔离零改动);路径 A 试点(per-bot 直装)→B 产品化(工具资产 kind,rtk 状态机同款)→C 网关层(magpie 插件,bot 隔离粗,远期);mem0 过重/basic-memory AGPL 不推荐。触发条件:WAO memory 资产条数逼近 50 上限或 FAQ 检索需求出现。
+- **记忆层外部系统集成**——**B 产品化已落地(2026-11-10,详见 [MEMORY-RESEARCH.md](MEMORY-RESEARCH.md) §5/§5.1)**:
+  scope-recall 接成工具资产 kind(hermes-scope-recall 4.0.3,rtk 状态机同款;仅 claude+专属目录,
+  per-bot 记忆库,原文检索降级模式,uv 供给面就位)。余项:C 网关层(magpie 插件,bot 隔离粗,远期);
+  Win 真机验证;模型路由(向量召回)按需再启。mem0 过重/basic-memory AGPL 不推荐。
+  触发条件(记忆条数逼近 50 上限)已产品化:≥35 条时资产库自动推荐升级。
 
 
 - **provider 凭证/模型目录层**(2026-11-08 讨论记录;**owner 裁定短期不需要**——magpie 支持统一代理,

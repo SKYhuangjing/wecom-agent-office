@@ -4,6 +4,43 @@
 
 ## [Unreleased]
 
+### Added — 工具资产 kind `scope-recall`（B 产品化，2026-11-10）
+
+- 第三件内置工具资产（seed 按 kind 判重，**不进向导默认装备包**）：检索式长期记忆
+  （PyPI `hermes-scope-recall`）——hooks 自动召回+原文溯源，WAO L2 全量注入（≤50 条）
+  的规模升级项。绑定面 v1 仅 claude+claudeConfigDir（codex/pi/dsh 拒，F27 风格文案；
+  noop 与真物化器同步）；options 仅空占位（模型路由后期扩展）。
+- materializer `scope-recall-init` 状态机（§7.4，学 rtk 三态）：probe（`--help`——真 CLI
+  无 --version 旗标；候选=PATH→`~/.local/bin/scope-recall`，Win 补 `%USERPROFILE%\.local\bin`）
+  → 缺 CLI 有 uv 自动 `uv tool install hermes-scope-recall`（含托管 Python≥3.11）→
+  `setup --host claude-code --home <cfgDir> --store <cfgDir>/scope-recall-store --yes`
+  （store 显式 per-bot——默认 ~/.scope-recall/shared 是全局共享域）→ 回读断言
+  （安装收据+插件 hooks 文件）→ armed/version 记 manifest.tools。卸载=
+  `apply-uninstall` + WAO 清扫残片（含 per-bot 记忆库；CLI 缺失纯清扫兜底）。
+  Phase 0 实证（-p 触发/rtk 共存/卸载回读）见 docs/MEMORY-RESEARCH.md §5。
+- `memoryUpgradeHint`（assets.js 纯函数）：memory 资产 ≥35/50 条且无 scope-recall 时
+  `GET /api/assets` 回显推荐文案（UI 只展示）。plugins.js 可注入
+  `scopeRecallBin`/`uvBin`（或 `$WAO_SCOPE_RECALL_BIN`/`$WAO_UV_BIN`）。
+
+### Fixed
+
+- **盲评修复（2026-11-10，0 P0/2 P1/3 P2 全清）**——scope-recall 卸载面从「按名盲删」
+  改为**收据属主判据**：清扫前过三重门（清单行 path 须非空绝对路径——''/相对路径
+  会让 rmSync 以服务进程 CWD 为基准越出一切 jail；安装收据
+  `.scope-recall-install-receipt.json` 在位=属主凭证——unavailable 必然无收据、
+  收据被删=缺证不删；行态 unavailable 不扫——操作者试点期手工预装的同名
+  skills/scope-recall//记忆库绝不误删），清扫目标自身过 §8.3 jailCheck（越界=
+  告警跳过请人工处置）；`uv tool install` 钉版 `hermes-scope-recall==4.0.3`
+  （tools-spec 的 pinned 红线对 uv 供给面同样成立）；manifest 行如实记
+  state（unavailable 不再被恒标 mode:'scope-recall-setup'）；setup 失败的
+  catch 清单补记 state:'failed' 行——首败半装残片（收据在位时）解绑可回收；
+  toolWarnings 按 uv 在位分文案（CLI 缺但 uv 在→指 rematerialize 自动装，
+  不谎报无 uv）。负面回归 5 例锁定（预置内容不删/缺收据不删/非法 path 拒扫/
+  半装回收/文案分叉）。
+- §3.6 stale 覆盖判据从 path 改为 **(path, kind)**：rtk-init 与 scope-recall-init 同指
+  一个配置目录，只按 path 判覆盖时解绑 scope-recall 会被仍在绑的 rtk 行「覆盖」，其
+  卸载静默不跑（真机实测发现，回归用例锁定——同目录双工具只解绑其一，对方产物无损）。
+
 ### Added
 
 - onOutbound 最终回复中间件面（PLUGIN-DEV §5.5 落地，cost-tracker 首个消费方）：completed

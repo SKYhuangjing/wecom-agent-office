@@ -580,7 +580,7 @@ const SystemInfo = ({ WAO }) => {
               onClick: () => void restartService(),
             }, restarting ? '重启中…' : '重启服务使装备生效') : null,
             toolsMsg ? h('div', { className: 'wb-hint', style: { fontSize: 12, padding: '4px 0' } }, toolsMsg) : null),
-          'rtk/ripgrep/git-bash——省 token 与检索的装备前提；win 的 claude hook 依赖 bash'),
+          'rtk/ripgrep/git-bash/uv——省 token 与检索的装备前提（uv=scope-recall 记忆工具的安装前提）；win 的 claude hook 依赖 bash'),
         row('网络代理',
           netProxy == null ? h('span', { className: 'wb-hint' }, '读取中…')
           : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },

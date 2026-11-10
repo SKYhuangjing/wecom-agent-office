@@ -64,6 +64,24 @@ export const TOOL_SPECS = {
       },
     },
   },
+  // uv（B 产品化 2026-11-10）：scope-recall 工具资产的运行时供给——materializer
+  // 首次装备时 `uv tool install hermes-scope-recall`（自动落托管 Python≥3.11，
+  // 免管理员；scope-recall 本体不进本表）。sha256 按实下载文件算出钉死
+  // （2026-11-10，astral-sh/uv v0.6.8——与本机实测版本一致）。
+  uv: {
+    id: 'uv', label: 'uv', bin: 'uv', version: '0.6.8',
+    description: 'Python 工具链管理器：scope-recall 记忆工具的安装前提（uv tool install 自动落托管 Python，免管理员）',
+    platforms: ['win32', 'darwin', 'linux'],
+    install: {
+      win32: {
+        method: 'zip', dirName: 'uv', exe: 'uv.exe',
+        url: 'https://github.com/astral-sh/uv/releases/download/0.6.8/uv-x86_64-pc-windows-msvc.zip',
+        sha256: 'd31c3d01ca3e1a75e15ed9514c135239770b6b40a99cae716661e28e433aa495',
+      },
+      darwin: { method: 'brew', formula: 'uv' },
+      linux: { method: 'brew', formula: 'uv', hint: 'brew install uv（无 Homebrew 时从 github.com/astral-sh/uv/releases 手动安装）' },
+    },
+  },
 };
 
 // planInstall(id, platform, { mirror }) → { ok, reason?, plan? }

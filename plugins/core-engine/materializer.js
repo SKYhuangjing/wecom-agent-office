@@ -7,10 +7,11 @@
 //             | { kind: 'marker-section', target, format: 'markdown'|'toml', content, for? }
 //             | { kind: 'hook-entry',    target, pointer: '/hooks/PreToolUse', content, for? }
 //             | { kind: 'rtk-init',      target: <config dir>, flavor: 'claude'|'codex'|'pi', for?, owned: false } // §7.1 W3 T3
+//             | { kind: 'scope-recall-init', target: <config dir>, for?, owned: false } // §7.4 B 产品化
 //             | { kind: 'argv',          flags: [...], for? } ],   // audit-only receipt row
 //     notes: [{ assetId?, detail }],
 //     entries: [{ file, pointer, entry }],   // §3.8 manifest JSON 条目型全文
-//     tools: [{ assetId, kind: 'ripgrep'|'rtk', ...state }] } // §7.2 预检/装备态（ripgrep 由 provider 记，rtk 由本执行器记）
+//     tools: [{ assetId, kind: 'ripgrep'|'rtk'|'scope-recall', ...state }] } // §7.2/§7.4 预检/装备态（ripgrep 由 provider 记，rtk/scope-recall 由本执行器记）
 //
 // THIS file owns every disk mutation: §8.3 jail guard (writes only under the
 // bot's declared roots + data/), §3.4 marker-section surgery with orphan
@@ -27,7 +28,7 @@
 // codex env_vars forwards from its own environment; V9 pi tolerates (and its own
 // rewrites preserve) unknown top-level keys in mcp.json.
 import { chmodSync, existsSync, readdirSync, readFileSync, realpathSync, rmSync, rmdirSync, statSync, unlinkSync } from 'node:fs';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import process from 'node:process';
@@ -105,6 +106,101 @@ const rtkOwnRoots = () => [
 
 const tailOf = (s, n = 300) => String(s ?? '').trim().slice(-n);
 
+// —— §7.4 scope-recall 装备（B 产品化，2026-11-10）———————————————————————————
+// hermes-scope-recall 4.0.3 实证（本机 /private/tmp/wao-scope-recall-p0*，Phase 0）：
+//   PyPI 包名是 hermes-scope-recall（scope-recall 名不在 PyPI！），CLI 双入口
+//   scope-recall / hermes-scope-recall；需要 Python ≥3.11——uv tool install 会
+//   自动落托管 Python（免管理员，Win 面故事=uv 供给，真机未验证）。
+//   `setup --host claude-code --home <dir> --store <dir> --yes`（尊重 CLAUDE_CONFIG_DIR
+//   发现，--home 显式覆盖同效）写盘面全落 bot 域：
+//     <home>/skills/scope-recall/            claude-code 插件 bundle（.claude-plugin/
+//                                            plugin.json + hooks/hooks.json + .mcp.json +
+//                                            skills/scope-recall-memory/SKILL.md）——
+//                                            hooks 走插件面，不碰 settings.json（与 rtk
+//                                            的 PreToolUse 条目零冲突，实证共存 PASS）
+//     <home>/.scope-recall-install-receipt.json  安装收据（files+sha256+package_version）
+//     <home>/scope-recall/                    attachment/runtime/transcripts（记忆留存面）
+//     <home>/scope-recall-attachment.lock
+//     <store>/                               SQLite 记忆库（--store 指 per-bot 目录=隔离；
+//                                            默认 ~/.scope-recall/shared 是全局共享——WAO 必须显式指）
+//   模型路由默认关闭（原文检索降级模式）——与 WAO 蒸馏（L2）无双写口径问题。
+//   卸载：plan-uninstall/apply-uninstall --instance-root <home> 删插件四件套但保留
+//   记忆（retain_memory）——残片（收据/attachment/scope-recall/ 目录/store）由 WAO 清扫。
+//   注意：路径解析拒绝符号链接（"symlink or reparse paths are not allowed"）——
+//   macOS /tmp 等 symlink 路径会 setup 非零（stderr 自带说明，随 failed 态透出）。
+const SCOPE_RECALL_PKG = 'hermes-scope-recall';
+// P1-2（盲评 2026-11-10）：uv tool install 必须钉版本——本仓库 tools-spec 的
+// 红线（pinned versions + sha256）对经 uv 供给的 scope-recall 本体同样成立，
+// latest 浮动=今天验证过的形状明天悄悄变（4.0.3 为 Phase 0 全量实证版本）。
+const SCOPE_RECALL_INSTALL_SPEC = 'hermes-scope-recall==4.0.3';
+const SCOPE_RECALL_STORE_DIRNAME = 'scope-recall-store'; // per-bot 记忆库，落 bot 配置目录内
+const scopeRecallOwnPaths = (home) => [
+  join(home, '.scope-recall-install-receipt.json'),
+  join(home, 'scope-recall-attachment.lock'),
+  join(home, 'scope-recall'),
+  join(home, 'skills', 'scope-recall'),
+  join(home, SCOPE_RECALL_STORE_DIRNAME),
+];
+
+// 候选解析：注入的 bin（默认 PATH 上的 scope-recall）→ uv tool 的已知落位
+// （~/.local/bin/scope-recall，macOS/Linux/Win 同款——uv tool install 的 shim 位）。
+// Win 再补 %USERPROFILE%\.local\bin\scope-recall.exe（PATH 未刷新时的兜底）。
+const scopeRecallCandidates = (bin) => {
+  const out = [bin];
+  const local = join(homedir(), '.local', 'bin', process.platform === 'win32' ? 'scope-recall.exe' : 'scope-recall');
+  if (!out.includes(local)) out.push(local);
+  return out;
+};
+
+// 解析出一个可跑的 scope-recall：{ok, bin} —— 探测命令是 --help（无 --version 旗标）。
+const resolveScopeRecall = (bin) => {
+  for (const candidate of scopeRecallCandidates(bin)) {
+    const probe = probeBin(candidate, 3000, ['--help']);
+    if (probe.ok) return { ok: true, bin: candidate, error: null };
+  }
+  return { ok: false, bin: null, error: 'not-found' };
+};
+
+// 跑一条 scope-recall 命令（stdin 关闭=免交互），CLAUDE_CONFIG_DIR 注入同 rtk
+// flavor 的重定向口径（--home 已显式，env 是双保险——其子进程发现面同源）。
+const runScopeRecall = (bin, args, home, timeoutMs = 120_000) => new Promise((resolve) => {
+  const env = childEnv();
+  env.CLAUDE_CONFIG_DIR = home;
+  let child;
+  try {
+    child = spawn(bin, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (err) {
+    resolve({ status: -1, stdout: '', stderr: '', error: err?.message ?? String(err) });
+    return;
+  }
+  let stdout = '';
+  let stderr = '';
+  child.stdout?.setEncoding('utf8');
+  child.stderr?.setEncoding('utf8');
+  child.stdout?.on('data', (c) => { stdout += c; });
+  child.stderr?.on('data', (c) => { stderr += c; });
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
+  child.on('error', (err) => {
+    clearTimeout(timer);
+    resolve({ status: -1, stdout, stderr, error: err?.message ?? String(err) });
+  });
+  child.on('close', (code) => {
+    clearTimeout(timer);
+    resolve(timedOut
+      ? { status: -1, stdout, stderr, error: `scope-recall 超时（${timeoutMs}ms）` }
+      : { status: code, stdout, stderr, error: null });
+  });
+});
+
+// uv 候选（win PATH 未刷新时的 %USERPROFILE%\.local\bin\uv.exe 兜底同款）。
+const uvCandidates = (bin) => {
+  const out = [bin];
+  const local = join(homedir(), '.local', 'bin', process.platform === 'win32' ? 'uv.exe' : 'uv');
+  if (!out.includes(local)) out.push(local);
+  return out;
+};
+
 // probeBin result cache (R2 hardening): the agents roster probes rtk/rg per
 // request and the rtk executor probes per plan row — a fresh spawnSync each
 // time froze the event loop linearly with bot count. Results are keyed by
@@ -113,15 +209,17 @@ const tailOf = (s, n = 300) => String(s ?? '').trim().slice(-n);
 const PROBE_TTL_MS = 5 * 60_000;
 const probeCache = new Map(); // key → { at, result }
 
-// 同步探测一个 CLI（§7.2 3s 超时口径）：{ok, version, error}。
-export function probeBin(bin, timeoutMs = 3000) {
+// 同步探测一个 CLI（§7.2 3s 超时口径）：{ok, version, error}。args 可注入——
+// scope-recall 的 CLI 无 --version 旗标（argparse 报错非零），用 ['--help']
+// 探测存在性（实证 2026-11-10，~0.5s、exit 0）。
+export function probeBin(bin, timeoutMs = 3000, args = ['--version']) {
   let key = String(bin);
   try { key = `${bin}:${statSync(bin).mtimeMs}`; } catch { /* not stat-able (missing): keyed by name alone */ }
   const hit = probeCache.get(key);
   if (hit != null && Date.now() - hit.at < PROBE_TTL_MS) return hit.result;
   let result;
   try {
-    const r = spawnSync(bin, ['--version'], { timeout: timeoutMs, encoding: 'utf8' });
+    const r = spawnSync(bin, args, { timeout: timeoutMs, encoding: 'utf8' });
     if (r.error != null) result = { ok: false, version: null, error: r.error.code === 'ENOENT' ? 'not-found' : String(r.error.message ?? r.error.code) };
     else if (r.status !== 0) result = { ok: false, version: null, error: `exit ${r.status}` };
     else result = { ok: true, version: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim().split('\n')[0] || null, error: null };
@@ -130,6 +228,12 @@ export function probeBin(bin, timeoutMs = 3000) {
   }
   probeCache.set(key, { at: Date.now(), result });
   return result;
+};
+
+// Drop a bin's cached probe result (§7.4)：uv tool install 之后立即重探——缺失
+// 态是按「裸名」缓存的（文件不存在无 mtime 键），不失效就吃 5 分钟 TTL。
+export function invalidateProbe(bin) {
+  probeCache.delete(String(bin));
 }
 
 // 跑一条 rtk 命令（stdin 关闭=免交互，30s 上限），env 注入 flavor 重定向变量。
@@ -340,7 +444,7 @@ export function removeJsonEntry(doc, pointer, recordedEntry) {
 
 // —— the materializer (state.materializer seam, noopMaterializer contract) —
 
-export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
+export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk', scopeRecallBin = 'scope-recall', uvBin = 'uv' }) {
   const assetsDir = join(dataDir, 'assets');
   const logger = log ?? console;
   // Defensive second check (audit P0-1): botId is a path segment under
@@ -561,6 +665,127 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
     notes.push({ assetId, detail: `rtk 经回退路径装备（${probe.version}，flavor ${flavor}）：主路径不可用（${fallbackReason}），WAO 自写 ${hookFile} PreToolUse 条目（卸载=精确匹配删）` });
   };
 
+  // —— §7.4 scope-recall 执行器（providers 只计划 scope-recall-init 写）————————
+  // 状态机同 rtk 三态（§7.1 口径，态存 manifest.tools）：
+  //   unavailable —— CLI 与 uv 都不在：绑定保留、零产物，notes 给出安装出路；
+  //   armed       —— uv tool install 兜底（缺 CLI 有 uv 时自动装，幂等）→
+  //                  setup --yes → 回读断言（安装收据+插件 hooks 文件）；
+  //   failed      —— setup 非零/超时：throw（stderr 摘要随 error——含它自带的
+  //                  symlink 路径拒绝说明），manifest lastResult 记因。
+  // 记忆库 per-bot：<claudeConfigDir>/scope-recall-store（--store 显式指——默认
+  // ~/.scope-recall/shared 是全局共享域，违反 per-bot 隔离，绝不采用）。
+  // 卸载一条已装备的 scope-recall（stale 清理与 removeAssets 共用，best-effort
+  // 不抛）。返回 cleaned=true 表示确有 WAO 装备面被清（removeAssets 的 removed
+  // 口径）。P1-1/P2-3（盲评 2026-11-10）——清扫三重门，缺一不删：
+  //   ① 清单行 path 必须是非空绝对路径（''/相对路径会让 rmSync 以服务进程 CWD
+  //      为基准，越出一切 jail——拒绝并告警，绝不猜）；
+  //   ② 安装收据在位=属主凭证（.scope-recall-install-receipt.json 是 scope-recall
+  //      setup 落下的装备痕迹；unavailable 态必然无收据）。收据不在=跳过：
+  //      绝不按名盲删（删掉操作者自己预装的 skills/scope-recall/ 或记忆库=静默
+  //      数据丢失）；armed 态的行=绑定已认领该面（setup --yes 重跑即接管），卸载
+  //      随绑定走；
+  //   ③ 行态 unavailable 不扫（文档承诺零产物——扫它就是删用户数据）。
+  // 清扫目标本身还要过 §8.3 jailCheck（bot 迁移目录后旧绝对路径不再属于允许根
+  // 时，告警跳过请人工处置，不越界删）。
+  const scopeRecallUninstall = async (bot, w, notes) => {
+    if (typeof w.path !== 'string' || w.path === '' || !isAbsolute(w.path)) {
+      notes.push({ detail: `scope-recall 卸载跳过：清单行 path 非法（${JSON.stringify(w?.path)}，须非空绝对路径）——拒绝按名清扫，请人工核查该清单行` });
+      return false;
+    }
+    const home = w.path;
+    if (w.state === 'unavailable') {
+      notes.push({ detail: `scope-recall 卸载跳过（unavailable 态，WAO 零产物）：${home} 下同名内容非本绑定所写，不动` });
+      return false;
+    }
+    const receiptFile = join(home, '.scope-recall-install-receipt.json');
+    if (!existsSync(receiptFile)) {
+      notes.push({ detail: `scope-recall 卸载跳过：${receiptFile} 不在（无安装收据=非本次 WAO 装备，可能是 unavailable 后的操作者预装或收据被删）——绝不按名盲删` });
+      return false;
+    }
+    const sweep = scopeRecallOwnPaths(home);
+    try {
+      jailCheck(bot, sweep);
+    } catch (err) {
+      notes.push({ detail: `scope-recall 卸载跳过：清扫目标越界（${err?.message ?? err}）——请人工处置 ${home}` });
+      return false;
+    }
+    const cleanedAny = sweep.some((p) => existsSync(p));
+    const resolved = resolveScopeRecall(scopeRecallBin);
+    if (resolved.ok) {
+      const r = await runScopeRecall(resolved.bin, ['apply-uninstall', '--instance-root', home], home);
+      if (r.status === 0) {
+        notes.push({ detail: `scope-recall 卸载成功（${home}——插件面已删，记忆留存面由 WAO 清扫）` });
+      } else {
+        notes.push({ detail: `scope-recall apply-uninstall 非零（exit ${r.status}）：${tailOf(r.stderr || r.error)}——按安装收据确认属主后清扫兜底` });
+      }
+    } else {
+      notes.push({ detail: 'scope-recall CLI 缺失，无法跑 apply-uninstall——按安装收据确认属主后清扫兜底' });
+    }
+    // 清扫：apply-uninstall 只删插件四件套（retain_memory），收据/attachment/
+    // scope-recall/ 目录/per-bot store 是 WAO 装备写下的全部残片（卸载=记忆面
+    // 也随 bot 资产走——per-bot store 不共享，无全局域风险）。
+    for (const p of sweep) {
+      try {
+        rmSync(p, { recursive: true, force: true });
+        notes.push({ detail: `清扫 scope-recall 残片：${p}` });
+      } catch { /* best effort */ }
+    }
+    return cleanedAny;
+  };
+
+  const scopeRecallInit = async (bot, w, { receipt, notes, toolsOut }) => {
+    const target = resolve(String(w.target ?? ''));
+    const assetId = typeof w.for === 'string' ? w.for : undefined;
+    const state = { assetId, kind: 'scope-recall', target };
+    let resolved = resolveScopeRecall(scopeRecallBin);
+    // CLI 缺失但有 uv → 自动装备（幂等：已装时 uv tool install 秒回）。
+    if (!resolved.ok) {
+      let uvResolved = null;
+      for (const candidate of uvCandidates(uvBin)) {
+        if (probeBin(candidate).ok) { uvResolved = candidate; break; }
+      }
+      if (uvResolved == null) {
+        toolsOut.push({ ...state, state: 'unavailable' });
+        notes.push({ assetId, detail: 'scope-recall 未安装且无 uv（unavailable）：绑定保留但未装备——装 uv（brew install uv 或设置页工具装备/WIN 一键 zip）后 POST rematerialize-assets，会自动 uv tool install hermes-scope-recall 并装备' });
+        return;
+      }
+      notes.push({ assetId, detail: `scope-recall CLI 缺失，经 uv 装备（uv tool install ${SCOPE_RECALL_INSTALL_SPEC}，含托管 Python≥3.11，免管理员）…` });
+      const ins = await runScopeRecall(uvResolved, ['tool', 'install', SCOPE_RECALL_INSTALL_SPEC], target, 300_000);
+      if (ins.status !== 0) {
+        throw new Error(`uv tool install ${SCOPE_RECALL_INSTALL_SPEC} 失败（exit ${ins.status}）：${tailOf(ins.stderr || ins.error || ins.stdout)}`);
+      }
+      for (const candidate of scopeRecallCandidates(scopeRecallBin)) invalidateProbe(candidate);
+      resolved = resolveScopeRecall(scopeRecallBin);
+      if (!resolved.ok) {
+        toolsOut.push({ ...state, state: 'unavailable' });
+        notes.push({ assetId, detail: `uv tool install 成功但 scope-recall 探测仍失败（PATH 未刷新？${scopeRecallCandidates(scopeRecallBin).join('、')} 均不可跑）——重跑 rematerialize-assets 或重启服务刷新 PATH` });
+        return;
+      }
+    }
+    // setup：--home/--store 显式（不依赖发现），CLAUDE_CONFIG_DIR 双保险注入。
+    const storeDir = join(target, SCOPE_RECALL_STORE_DIRNAME);
+    const run = await runScopeRecall(resolved.bin,
+      ['setup', '--host', 'claude-code', '--home', target, '--store', storeDir, '--yes'], target);
+    if (run.status !== 0) {
+      // 态 failed：非零/超时，throw 带 stderr 摘要（per-bot 隔离 → failed[]）。
+      throw new Error(`scope-recall setup 失败（exit ${run.status}）：${tailOf(run.stderr || run.error || run.stdout)}`);
+    }
+    // 回读断言：安装收据（files+sha256+package_version）+ 插件 hooks 文件在位。
+    const receiptFile = join(target, '.scope-recall-install-receipt.json');
+    let receiptDoc = null;
+    try { receiptDoc = JSON.parse(readText(receiptFile) ?? 'null'); } catch { receiptDoc = null; }
+    const hooksFile = join(target, 'skills', 'scope-recall', 'hooks', 'hooks.json');
+    if (!isObject(receiptDoc) || !existsSync(hooksFile)) {
+      throw new Error(`scope-recall setup 报告成功但回读断言失败（${receiptFile} 或 ${hooksFile} 未出现——形状漂移？）`);
+    }
+    const version = typeof receiptDoc.package_version === 'string' ? receiptDoc.package_version : null;
+    // 产物不进 snap/applied（回滚账本是文件字节级，这里全是外部命令产物/目录；
+    // 清单记的是计划行的 scope-recall-init 行，卸载按 w.path 走 uninstall+清扫）。
+    receipt.push({ path: target, action: 'scope-recall-init' });
+    toolsOut.push({ ...state, state: 'armed', mode: 'scope-recall-setup', ...(version != null ? { version } : {}) });
+    notes.push({ assetId, detail: `scope-recall 已配置（${version ?? '未知版本'}，claude-code 插件面：hooks 自动召回+MCP 工具+记忆 skill；记忆库 ${storeDir}，原文检索模式——未配模型路由）——卸载走 apply-uninstall + WAO 清扫` });
+  };
+
   return {
     assetsDir,
 
@@ -597,6 +822,18 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
       }
       if (provider === 'dsh' && asset?.type === 'tool' && asset?.content?.kind === 'rtk') {
         errors.push('dsh 岗位不支持 rtk 工具资产（rtk 支持列表不含 dsh）');
+      }
+      // §7.4 scope-recall v1 支持面（同 noop 的判定源，文案对齐 F27 风格）：
+      // 仅 provider=claude 且 claudeConfigDir 在位——装备面是 CLAUDE_CONFIG_DIR
+      // 下的 claude-code 插件 bundle（Phase 0 实证），其余引擎/dsh 一律拒绝。
+      if (asset?.type === 'tool' && asset?.content?.kind === 'scope-recall') {
+        if (provider === 'dsh') {
+          errors.push('dsh 岗位不支持 scope-recall 工具资产（v1 仅 claude 引擎，hooks 面走 claude-code 插件）');
+        } else if (provider !== 'claude') {
+          errors.push('scope-recall 工具资产 v1 仅支持 claude 引擎（codex/pi/dsh 的 host 面后续版本）');
+        } else if (typeof bot?.providerConfig?.claudeConfigDir !== 'string' || bot.providerConfig.claudeConfigDir === '') {
+          errors.push('scope-recall 工具资产要求 bot 配置专属目录（claudeConfigDir）——hooks/记忆面全落 bot 专属配置目录，共享用户主目录绝不动');
+        }
       }
       // §7.1 硬红线：共享用户主目录绝不动。pi 是例外形状——无 piAgentDir 时
       // 其装备面是 WAO 命名空间的默认目录 ~/.pi/agent-wao-<botId>（per-bot，
@@ -691,6 +928,14 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
       if (toolEntries.some((e) => e?.content?.kind === 'ripgrep') && !probeBin('rg').ok) {
         out.push('rg 未安装：ripgrep 指引已注入但本机无效（brew install ripgrep）');
       }
+      if (toolEntries.some((e) => e?.content?.kind === 'scope-recall') && !resolveScopeRecall(scopeRecallBin).ok) {
+        // P2-1（盲评 2026-11-10）：文案与装备机同源——CLI 缺但 uv 在位时重物化
+        // 就能自动装（让用户去装已装的东西=谎报指引），真无 uv 才指路装 uv。
+        const uvPresent = uvCandidates(uvBin).some((c) => probeBin(c).ok);
+        out.push(uvPresent
+          ? 'scope-recall CLI 未就绪但 uv 在位：POST rematerialize-assets 会自动 uv tool install hermes-scope-recall 并装备'
+          : 'scope-recall 未安装且无 uv：工具资产未装备（unavailable）——装 uv（brew install uv / 设置页工具装备）后 POST rematerialize-assets，会自动 uv tool install hermes-scope-recall 并装备');
+      }
       return out;
     },
 
@@ -720,21 +965,26 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
       for (const w of oldManifest?.writes ?? []) {
         if (typeof w?.path === 'string') oldOwned.set(resolve(w.path), w.owned !== false);
       }
-      const newTargets = new Set(diskWrites.map((w) => resolve(w.target)));
-      // §3.6 stale cleanup: paths the last-good manifest owns that the new
-      // plan no longer covers (unbind / renamed asset → precise cleanup).
-      // owned:false file rows are HOST files — never file-deleted; their
-      // marker-section rows still get STRIPPED below (剥节保留其余内容).
-      // hook-entry rows NEVER file-delete here — their host file survives and
-      // the entry leaves by precise-match delete (below, step 1b). rtk-init
-      // rows (owned:false, the bot's whole config dir) unload through rtk
-      // uninstall (§7.1), never a file delete.
+      // §3.6 stale cleanup: rows the last-good manifest owns that the new plan
+      // no longer covers (unbind / renamed asset → precise cleanup). Coverage
+      // is keyed (path, kind)——rtk-init 与 scope-recall-init 同指一个配置目录
+      // （B 产品化实证 2026-11-10：只按 path 判覆盖，解绑 scope-recall 时 rtk
+      // 仍在绑就会把同目录行误判为「已覆盖」，其卸载静默不跑）。owned:false
+      // file rows are HOST files — never file-deleted; their marker-section
+      // rows still get STRIPPED below (剥节保留其余内容). hook-entry rows NEVER
+      // file-delete here — their host file survives and the entry leaves by
+      // precise-match delete (below, step 1b). rtk-init rows (owned:false, the
+      // bot's whole config dir) unload through rtk uninstall (§7.1), never a
+      // file delete.
       const activeRtkDirs = new Set(diskWrites
         .filter((x) => x?.kind === 'rtk-init' && typeof x?.target === 'string')
         .map((x) => resolve(x.target)));
+      const newCoverage = new Set(diskWrites
+        .filter((x) => typeof x?.target === 'string')
+        .map((x) => `${resolve(x.target)}\u0000${x.kind}`));
       const stale = (oldManifest?.writes ?? []).filter((w) => w?.kind !== 'hook-entry'
-        && typeof w?.path === 'string' && !newTargets.has(resolve(w.path))
-        && (w?.owned !== false || w?.kind === 'marker-section' || w?.kind === 'rtk-init'));
+        && typeof w?.path === 'string' && !newCoverage.has(`${resolve(w.path)}\u0000${w.kind}`)
+        && (w?.owned !== false || w?.kind === 'marker-section' || w?.kind === 'rtk-init' || w?.kind === 'scope-recall-init'));
       const newEntryTexts = new Set(entries.map((e) => stableStringify(e?.entry)));
       // An rtk-written hook entry (via:'rtk', recorded by the install-time
       // readback) is NOT planner-visible — while the rtk asset stays bound the
@@ -760,13 +1010,18 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
         // 1. stale deletions (orphan/precise cleanup first). marker-section
         // rows are STRIPPED (§3.6 剥节保留其余内容), never file-deleted; the
         // file only goes when the stripped remainder is empty AND WAO-owned.
-        // rtk-init rows unload FIRST (rtk uninstall 先于条目精确删——成功即自清)。
+        // rtk-init/scope-recall-init rows unload FIRST (their uninstall 先于
+        // 条目精确删——成功即自清)。
         for (const w of stale) {
           if (w.kind === 'rtk-init') {
             if (await rtkUninstall(bot, w, notes)) {
               const hookFile = RTK_FLAVORS[w.flavor]?.hookFile;
               if (hookFile != null) rtkHandledFiles.add(resolve(join(w.path, hookFile)));
             }
+            continue;
+          }
+          if (w.kind === 'scope-recall-init') {
+            await scopeRecallUninstall(bot, w, notes);
             continue;
           }
           snap(w.path);
@@ -849,6 +1104,12 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
         for (const w of diskWrites.filter((x) => x.kind === 'rtk-init')) {
           await rtkInit(bot, w, { snap, applied, receipt, notes, entriesOut: entries, toolsOut: tools });
         }
+        // 3.6 scope-recall 装备（§7.4）：外部命令面同 rtk 收敛于此——setup 后
+        //     写的是 claude-code 插件 bundle（skills/scope-recall/，不碰
+        //     settings.json），与 rtk 的 settings hook 面无交叉。
+        for (const w of diskWrites.filter((x) => x.kind === 'scope-recall-init')) {
+          await scopeRecallInit(bot, w, { receipt, notes, toolsOut: tools });
+        }
         // 4. marker sections last
         for (const w of diskWrites.filter((x) => x.kind === 'marker-section')) {
           snap(w.target);
@@ -874,8 +1135,21 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
           }
         }
         try {
+          // P2-3（盲评 2026-11-10）：失败保留旧清单时，本轮「已尝试」的
+          // scope-recall-init 行也要留下（首败时旧清单无行→解绑的 stale 扫描
+          // 看不见→setup 半装残片永无人清）。行记 state:'failed'——卸载面按
+          // 收据属主判据决定真清不清（见 scopeRecallUninstall ②）。
+          const failedBase = oldManifest ?? { botId: bot.id, writes: [], entries: [] };
+          const srAttempted = diskWrites
+            .filter((x) => x?.kind === 'scope-recall-init' && typeof x?.target === 'string')
+            .map((x) => ({ path: x.target, action: 'write', owned: false, kind: x.kind, state: 'failed', ...(x.for !== undefined ? { for: x.for } : {}) }));
+          const haveSr = new Set((failedBase.writes ?? [])
+            .filter((rw) => rw?.kind === 'scope-recall-init' && typeof rw?.path === 'string')
+            .map((rw) => resolve(rw.path)));
           saveManifest(bot.id, {
-            ...(oldManifest ?? { botId: bot.id, writes: [], entries: [] }),
+            ...failedBase,
+            writes: [...(failedBase.writes ?? []), ...srAttempted.filter((rw) => !haveSr.has(resolve(rw.path)))],
+            entries: failedBase.entries ?? [],
             lastMaterializedAt: Date.now(),
             lastResult: `failed:${err?.message ?? err}${restoreFailed ? '（回滚未完成：资产物化不一致，建议重试绑定/rematerialize）' : ''}`,
           });
@@ -901,6 +1175,13 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
           ...(w.appliesTo !== undefined ? { appliesTo: w.appliesTo } : {}),
           // §7.1 rtk rows carry their equipment face (uninstall reads these).
           ...(w.kind === 'rtk-init' ? { flavor: w.flavor, mode: tools.find((t) => t?.kind === 'rtk' && resolve(t?.target ?? '') === resolve(w.target))?.mode ?? 'rtk-init' } : {}),
+          // §7.4 scope-recall rows：state 如实记（P2-2 盲评 2026-11-10——
+          // unavailable 态曾被恒落 mode:'scope-recall-setup'，既误导排障又堵死
+          // 卸载面「按态跳清扫」；uninstall 读 state 决定跳过，mode 仅 armed 有）。
+          ...(w.kind === 'scope-recall-init' ? (() => {
+            const t = tools.find((x) => x?.kind === 'scope-recall' && resolve(x?.target ?? '') === resolve(w.target));
+            return { state: t?.state ?? 'armed', ...(t?.mode != null ? { mode: t.mode } : {}) };
+          })() : {}),
         })),
         entries,
         // §7.1/§7.2 工具资产装备状态（三态状态机 + ripgrep 预检结论）。
@@ -912,7 +1193,7 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
       // The climb stops at any allowed root — never past the bot's own cwd.
       const stopRoots = allowedRootsOf(bot);
       for (const w of stale) {
-        if (w.kind !== 'rtk-init') cleanupEmptyParents(w.path, stopRoots);
+        if (w.kind !== 'rtk-init' && w.kind !== 'scope-recall-init') cleanupEmptyParents(w.path, stopRoots);
       }
       return { writes: receipt, notes };
     },
@@ -940,6 +1221,16 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
         }
       }
       for (const n of rtkNotes) lg.info?.(`materializer: removeAssets rtk bot ${bot.id}: ${n.detail}`);
+      // §7.4 scope-recall pre-pass（best-effort）：apply-uninstall 删插件面 +
+      // WAO 清扫残片（含 per-bot 记忆库——bot DELETE 即记忆随行走）。三重门
+      // （绝对路径/收据属主/unavailable 态）+ jailCheck 都在卸载器内——非法行
+      // 告警跳过，绝不按名盲删（P1-1 盲评 2026-11-10）。
+      const scopeNotes = [];
+      for (const w of manifest.writes ?? []) {
+        if (w?.kind !== 'scope-recall-init') continue;
+        if (await scopeRecallUninstall(bot, w, scopeNotes)) removedAny = true;
+      }
+      for (const n of scopeNotes) lg.info?.(`materializer: removeAssets scope-recall bot ${bot.id}: ${n.detail}`);
       // JSON 条目型 next (settings.json must survive as a file)
       for (const e of manifest.entries ?? []) {
         if (e.via === 'rtk' && rtkHandledFiles.has(resolve(e.file))) continue;
@@ -957,6 +1248,7 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
         if (w.kind === 'hook-entry') continue; // entries loop above owns these (precise delete, never file-delete)
         if (w.kind === 'argv') continue;
         if (w.kind === 'rtk-init') continue; // rtk pre-pass above owns these
+        if (w.kind === 'scope-recall-init') continue; // scope-recall pre-pass above owns these
         // owned:false = 宿主文件（写入时已存在，owned 真值）——卸载不整删；
         // marker-section 走下方剥节路径（owned 只决定剥空后是否删文件）。
         if (w.owned === false && w.kind !== 'marker-section') {
@@ -999,10 +1291,10 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk' }) {
       const drift = [];
       const orphans = [];
       for (const w of result.writes ?? []) {
-        // rtk-init: the products belong to the rtk binary (no deterministic
-        // rebuild to diff against) — verify skips it, §7.1 state rides
-        // manifest.tools instead.
-        if (w?.kind === 'argv' || w?.kind === 'rtk-init' || typeof w?.target !== 'string') continue;
+        // rtk-init/scope-recall-init: the products belong to the external
+        // binary (no deterministic rebuild to diff against) — verify skips
+        // them, §7.1/§7.4 state rides manifest.tools instead.
+        if (w?.kind === 'argv' || w?.kind === 'rtk-init' || w?.kind === 'scope-recall-init' || typeof w?.target !== 'string') continue;
         const actual = readText(w.target);
         let expected;
         if (w.kind === 'file-create') expected = String(w.content ?? '');

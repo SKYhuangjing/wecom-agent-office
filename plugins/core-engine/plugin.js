@@ -101,12 +101,15 @@ export default {
     // established; the noop survives only in unit tests as the seam contract.
     // rtkBin (§7.1 W3 T3): the rtk CLI the executor drives — plugin config
     // `rtkBin` / $WAO_RTK_BIN overrides the PATH default (tests point it at
-    // fakes; ops can pin an absolute binary).
+    // fakes; ops can pin an absolute binary). scopeRecallBin/uvBin (§7.4)
+    // same seam for the scope-recall executor (CLI candidate + uv fallback).
     const materializer = createMaterializer({
       ports,
       dataDir,
       log,
       rtkBin: ctx.config?.rtkBin || process.env.WAO_RTK_BIN || 'rtk',
+      scopeRecallBin: ctx.config?.scopeRecallBin || process.env.WAO_SCOPE_RECALL_BIN || 'scope-recall',
+      uvBin: ctx.config?.uvBin || process.env.WAO_UV_BIN || 'uv',
     });
 
     const ledgerFor = (botId) => {

@@ -210,13 +210,17 @@ test('prompt schema: text required, ≤8KB', () => {
   assert.ok(validateAsset({ type: 'prompt', name: 'style', content: { text: 'x'.repeat(8 * 1024 + 1) } }).some((e) => /8KB/));
 });
 
-test('tool schema: kind whitelist rtk|ripgrep; rtk options empty; ripgrep extraHints ≤1KB', () => {
+test('tool schema: kind whitelist rtk|ripgrep|scope-recall; rtk/scope-recall options empty; ripgrep extraHints ≤1KB', () => {
   assert.deepEqual(validateAsset({ type: 'tool', name: 'rtk-1', content: { kind: 'rtk' } }), []);
   assert.deepEqual(validateAsset({ type: 'tool', name: 'rtk-2', content: { kind: 'rtk', options: {} } }), []);
   assert.deepEqual(validateAsset({ type: 'tool', name: 'rg', content: { kind: 'ripgrep', options: { extraHints: 'x' } } }), []);
+  // scope-recall（B 产品化）：空 options 占位合法，带键拒绝（模型路由后期扩展）
+  assert.deepEqual(validateAsset({ type: 'tool', name: 'sr', content: { kind: 'scope-recall' } }), []);
+  assert.deepEqual(validateAsset({ type: 'tool', name: 'sr', content: { kind: 'scope-recall', options: {} } }), []);
   assert.ok(validateAsset({ type: 'tool', name: 'x', content: { kind: 'grep' } }).some((e) => /kind/));
   assert.ok(validateAsset({ type: 'tool', name: 'x', content: {} }).some((e) => /kind/));
   assert.ok(validateAsset({ type: 'tool', name: 'x', content: { kind: 'rtk', options: { edition: 'e' } } }).some((e) => /options/));
+  assert.ok(validateAsset({ type: 'tool', name: 'x', content: { kind: 'scope-recall', options: { models: true } } }).some((e) => /scope-recall v1 仅接受空 options 占位/));
   assert.ok(validateAsset({ type: 'tool', name: 'x', content: { kind: 'ripgrep', options: { extraHints: 'x'.repeat(1025) } } }).some((e) => /extraHints/));
 });
 

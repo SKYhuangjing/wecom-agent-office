@@ -166,9 +166,9 @@ test('GET /api/service/tools: platform-filtered rows with probe state; POST refu
     assert.equal(list.platform, process.platform);
     const ids = list.tools.map((t) => t.id);
     if (process.platform === 'win32') {
-      assert.deepEqual(ids.sort(), ['git-bash', 'ripgrep', 'rtk']);
+      assert.deepEqual(ids.sort(), ['git-bash', 'ripgrep', 'rtk', 'uv']);
     } else {
-      assert.deepEqual(ids.sort(), ['ripgrep', 'rtk'], 'git-bash never shows off win32');
+      assert.deepEqual(ids.sort(), ['ripgrep', 'rtk', 'uv'], 'git-bash never shows off win32; uv rides all platforms (scope-recall 供给)');
     }
     const rtkRow = list.tools.find((t) => t.id === 'rtk');
     assert.equal(rtkRow.state, 'installing', 'registry installing state wins over probe');

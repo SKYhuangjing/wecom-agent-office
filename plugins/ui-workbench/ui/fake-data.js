@@ -106,6 +106,13 @@ export const FAKE_ASSETS = [
     content: { kind: 'ripgrep' },
     origin: 'operator', version: 1, createdAt: minAgo(5000), updatedAt: minAgo(4800), bindings: 1,
   },
+  {
+    // scope-recall（B 产品化）：资产库第三件工具资产基线——检索式长期记忆
+    // （不进向导默认装备包，记忆条数逼近上限时推荐升级）。
+    id: 'ast-sr005', type: 'tool', name: 'scope-recall', description: '检索式长期记忆（hermes-scope-recall）：hooks 自动召回+原文溯源——记忆规模升级项，v1 仅 claude 引擎',
+    content: { kind: 'scope-recall' },
+    origin: 'plugin', version: 1, createdAt: minAgo(2400), updatedAt: minAgo(2400), bindings: 0,
+  },
 ];
 
 export const FAKE = {
@@ -288,7 +295,14 @@ export const FAKE_API = {
   // 视为 POST/PATCH。处理器直接改 FAKE_ASSETS / FAKE.bots，让 harness 里的
   // 建资产→配发→卸下→重物化操作流真的走通（回执形状照抄 §3.2）。
   '/api/assets': (body) => {
-    if (body === undefined) return { assets: FAKE_ASSETS };
+    if (body === undefined) {
+      return {
+        assets: FAKE_ASSETS,
+        // 装备包推荐（B 产品化）：ast-mem003 刻意只有 3 条（远低于 35 阈值）→
+        // 基线返回 null（不展示）；harness 里手工塞 memoryUpgradeHint 可看样式。
+        memoryUpgradeHint: null,
+      };
+    }
     const created = {
       id: `ast-${Math.random().toString(36).slice(2, 8)}`,
       type: body.type, name: body.name,
@@ -386,6 +400,7 @@ export const FAKE_API = {
         tools: [
             { id: 'rtk', label: 'rtk', bin: 'rtk', version: '1.2.0', state: 'available', path: '/Users/demo/.local/bin/rtk', detectedVersion: 'rtk 1.1.0', description: 'Token 瘦身 hook：PreToolUse 拦截 Bash 命令输出过滤（实测单轮 -18%）', install: null },
             { id: 'ripgrep', label: 'ripgrep', bin: 'rg', version: '15.2.0', state: 'missing', path: null, detectedVersion: null, description: '代码检索：rg 关键词定位（Bash/Grep 工具的底层引擎）', install: null },
+            { id: 'uv', label: 'uv', bin: 'uv', version: '0.6.8', state: 'available', path: '/Users/demo/.local/bin/uv', detectedVersion: 'uv 0.6.8 (c1ef48276 2025-03-18)', description: 'Python 工具链管理器：scope-recall 记忆工具的安装前提（uv tool install 自动落托管 Python，免管理员）', install: null },
           ],
         } : { ok: true, id: body?.id ?? 'ripgrep', state: 'installing', restartRequired: true, message: '后台安装中（下载→校验→解压→PATH）' }),
         '/api/service/network': (body) => (body === undefined ? {
