@@ -1,4 +1,4 @@
-# WAO Windows installer — no admin, no git, no MSI (battle-tested 2026-11-09
+﻿# WAO Windows installer - no admin, no git, no MSI (battle-tested 2026-11-09
 # on two clean Win11 boxes; pitfalls documented in docs/INSTALL-WINDOWS.md).
 # Node comes from the official zip into %USERPROFILE%\tools, WAO from the
 # GitHub codeload zip, deps via npm.cmd (PS execution policy blocks npm.ps1).
@@ -17,7 +17,7 @@
 #                                  (fallback when GitHub/nodejs.org are slow/blocked;
 #                                   serves node-v<NODE_VERSION>-win-x64.zip and magpie.exe)
 #   -Magpie       switch           also install the magpie DESKTOP APP (Windows
-#                                  installer magpie-windows-amd64.exe, silent /S) —
+#                                  installer magpie-windows-amd64.exe, silent /S) -
 #                                  NOT the CLI/TUI build; the desktop app serves
 #                                  the 127.0.0.1:3425 gateway and self-updates
 #   -Lan          switch           bind 0.0.0.0 and admit private LAN IPs / hostname
@@ -56,18 +56,18 @@ Write-Output '=== [2/5] WAO source ==='
 if (-not (Test-Path "$InstallRoot\package.json")) {
   Get-File $RepoZip "$H\wao.zip" $null
   Expand-Archive "$H\wao.zip" -DestinationPath "$H\wao-ext" -Force
-  # codeload zip wraps everything in <repo>-<branch>/ — unwrap to InstallRoot
+  # codeload zip wraps everything in <repo>-<branch>/ - unwrap to InstallRoot
   $src = (Get-ChildItem "$H\wao-ext" | Select-Object -First 1).FullName
   Move-Item $src $InstallRoot
 }
 Push-Location $InstallRoot
 
-Write-Output '=== [3/5] production deps (npm.cmd — execution policy safe) ==='
+Write-Output '=== [3/5] production deps (npm.cmd - execution policy safe) ==='
 npm.cmd install --omit=dev --no-audit --no-fund
 
 Write-Output '=== [4/5] persist user PATH (node) ==='
 $u = [Environment]::GetEnvironmentVariable('Path', 'User')
-# 桌面版 magpie 自管目录与自更新，不进 PATH（2026-11-10：弃 CLI/TUI 形态）
+# desktop magpie owns its dir + self-updates; NOT added to PATH (2026-11-10: CLI/TUI form dropped)
 $want = @("$NodeDir")
 $missing = @($want | Where-Object { $u -notlike "*$_*" })
 if ($missing.Count -gt 0) {
@@ -85,9 +85,6 @@ Write-Output "HEALTHZ=$hz"
 
 if ($Magpie) {
   Write-Output '=== [+magpie] desktop app via Windows installer (silent /S, per-user, self-updating) ==='
-  # 2026-11-10 用户裁定：用 Windows 安装包（magpie-windows-amd64.exe，桌面应用，
-  # 自带 127.0.0.1:3425 网关与订阅管理界面），不用 magpie-cli-*-amd64.exe 的
-  # TUI/无头形态。Tauri NSIS 安装器 /S 静默、per-user 免管理员。
   $magpieInstaller = "$env:TEMP\magpie-windows-setup.exe"
   if (-not (Test-Path "$env:LOCALAPPDATA\Programs\magpie\magpie.exe")) {
     Get-File 'https://github.com/yetone/magpie-releases/releases/latest/download/magpie-windows-amd64.exe' $magpieInstaller 'magpie-windows-amd64.exe'
@@ -95,15 +92,17 @@ if ($Magpie) {
   }
   $magpieExe = @("$env:LOCALAPPDATA\Programs\magpie\magpie.exe", "$env:ProgramFiles\magpie\magpie.exe") |
     Where-Object { Test-Path $_ } | Select-Object -First 1
-  if (-not $magpieExe) { Write-Output 'MAGPIE-EXE-NOT-FOUND — installer layout changed? check %LOCALAPPDATA%\Programs\magpie' }
+  # 2026-11-10 owner ruling: use the Windows INSTALLER (desktop app; serves the
+  # 127.0.0.1:3425 gateway + subscription UI, self-updates), NOT the CLI/TUI form.
+  if (-not $magpieExe) { Write-Output 'MAGPIE-EXE-NOT-FOUND - installer layout changed? check %LOCALAPPDATA%\Programs\magpie' }
   else {
     Write-Output "MAGPIE=$magpieExe"
     Start-Process $magpieExe
     Start-Sleep -Seconds 10
     if (netstat -ano | Select-String ':3425 .*LISTENING') { Write-Output 'MAGPIE-GATEWAY-LISTENING-3425' }
-    else { Write-Output 'MAGPIE-PORT-NOT-LISTENING — desktop app may need first-run interaction; open it from Start Menu' }
+    else { Write-Output 'MAGPIE-PORT-NOT-LISTENING - desktop app may need first-run interaction; open it from Start Menu' }
   }
 }
 Pop-Location
 Write-Output 'DONE'
-Write-Output '开机自启动：Web 设置页开关，或 POST /api/service/autostart {"enabled":true}（注册表 Run 键，详见 docs/INSTALL-WINDOWS.md）'
+Write-Output 'Autostart: toggle in Web settings, or POST /api/service/autostart {"enabled":true} (registry Run key; see docs/INSTALL-WINDOWS.md)'
