@@ -984,6 +984,33 @@ const portOf = (flags, fallback) => {
 // dataDir 契约=绝对路径（start 传 kernel.status().dataDir，与启用路径同源），
 // 路径拼接用 Windows 分隔符显式拼接（本函数可能在非 win32 上被单测调用，
 // path.join 在那里会产出正斜杠）。
+// win32 PATH 自愈（PC2 2026-11-10 实测缺陷）：工具安装把新目录写进用户注册表
+// PATH，但 REST 重启链（updater 继承旧进程 env）拿不到——注册表只在登录会话
+// 建立时快照。启动时把注册表 User PATH 中缺失的目录补进本进程 PATH：所有
+// 启动路径（登录/更新器/手工）统一自愈，装备即时生效。
+function healProcessPathFromRegistry({ platform = process.platform, regQuery, env = process.env } = {}) {
+  if (platform !== 'win32') return false;
+  const query = (regQuery ?? (() => {
+    try {
+      return execFileSync('reg', ['query', 'HKCU\\Environment', '/v', 'Path'],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000 });
+    } catch { return ''; }
+  }))();
+  const m = /(?:REG_(?:EXPAND_)?SZ)\s+(.*)/i.exec(query || '');
+  if (m == null) return false;
+  let changed = false;
+  for (const dir of m[1].split(';').map((d) => d.trim()).filter((d) => d !== '')) {
+    const norm = (x) => String(x).replace(/\\/g, '/').replace(/\/$/, '').toLowerCase();
+    const have = (env.PATH ?? env.Path ?? '').split(';').map(norm);
+    if (!have.includes(norm(dir))) {
+      env.PATH = `${dir};${env.PATH ?? env.Path ?? ''}`;
+      changed = true;
+    }
+  }
+  return changed;
+}
+export const _healProcessPathFromRegistry = healProcessPathFromRegistry;
+
 export function planAutostartRefresh({ platform, enabled, dataDir, lan }) {
   if (platform !== 'win32' || !enabled || !dataDir) return { write: false };
   return {
@@ -994,6 +1021,8 @@ export function planAutostartRefresh({ platform, enabled, dataDir, lan }) {
 }
 
 const cmdStart = async (flags) => {
+  // 工具装备 PATH 自愈（见 healProcessPathFromRegistry 注释）——必须先于一切探测
+  try { healProcessPathFromRegistry(); } catch { /* best effort */ }
   const isLan = flags.lan === true || flags.host === '0.0.0.0' || process.env.WAO_LAN === '1';
   const defaultHost = isLan ? '0.0.0.0' : (process.env.WAO_HOST || '127.0.0.1');
   const host = flags.host ?? defaultHost;
