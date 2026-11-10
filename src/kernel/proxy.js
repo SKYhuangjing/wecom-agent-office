@@ -75,10 +75,17 @@ export function resetProxyDispatcherCache() { cache = new Map(); }
 // —— the drop-in fetch ——————————————————————————————————————————————————————
 // proxyFetch(url, opts, {proxy}) — proxied calls ride the MATCHED undici
 // fetch+ProxyAgent pair; otherwise byte-identical to the global fetch.
-export async function proxyFetch(url, opts = {}, { proxy, importUndici } = {}) {
+export async function proxyFetch(url, opts = {}, { proxy, importUndici, onFallback } = {}) {
   if (proxy?.enabled === true && typeof proxy.proxyUrl === 'string' && proxy.proxyUrl !== '') {
-    const { fetch: undiciFetch, agent } = await getProxyDispatcher(proxy.proxyUrl, { importUndici });
-    return undiciFetch(url, { ...opts, dispatcher: agent });
+    try {
+      const { fetch: undiciFetch, agent } = await getProxyDispatcher(proxy.proxyUrl, { importUndici });
+      return undiciFetch(url, { ...opts, dispatcher: agent });
+    } catch (err) {
+      // undici 缺席/损坏（如更新器 npm install 失败的窗口期）：优雅降级直连
+      // 并留痕——代理配置保住了，装好依赖后自动恢复，绝不打挂检查更新主链路。
+      onFallback?.(`undici unavailable (${err?.message ?? err}) — direct connection this once`);
+      return fetch(url, opts);
+    }
   }
   return fetch(url, opts);
 }

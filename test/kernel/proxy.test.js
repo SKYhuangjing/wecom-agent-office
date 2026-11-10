@@ -162,3 +162,16 @@ test('GET/POST /api/service/network: shape, validation refusals, persist + immed
     rmSync(fakes, { recursive: true, force: true });
   }
 });
+
+
+test('proxyFetch: undici ABSENT degrades to direct with a trace, never kills the call (PC1 2026-11-10 lesson)', async () => {
+  const notes = [];
+  const out = await proxyFetch('https://api.github.com/rate_limit', {}, {
+    proxy: { enabled: true, proxyUrl: 'http://127.0.0.1:7890' },
+    importUndici: async () => { throw new Error("Cannot find package 'undici'"); },
+    onFallback: (m) => notes.push(m),
+  });
+  assert.equal(out.ok, true, 'the call itself survives on the direct path');
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], /undici unavailable/);
+});

@@ -259,9 +259,15 @@ export async function runUpdater(argv = process.argv.slice(2)) {
       log('package.json dependencies changed; running npm install --omit=dev...');
       const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
       try {
+        // win32 红线（2026-11-10 PC1 实测）：npm 是 .cmd shim，execFileSync
+        // 直接 spawn 会 EINVAL（CVE-2024-27980 后 Node 强制 shell）——args
+        // 全为固定字面量，shell:true 无注入面。服务侧同款问题的正解是
+        // kernel/spawn.js 的 spawnCli，更新器零依赖故就地 shell:true。
+        const shellNeeded = process.platform === 'win32' && npmBin.toLowerCase().endsWith('.cmd');
         execFileSync(npmBin, ['install', '--omit=dev', '--no-audit', '--no-fund'], {
           cwd: targetDir,
           stdio: 'ignore',
+          ...(shellNeeded ? { shell: true, windowsHide: true } : {}),
         });
         log('npm install complete');
       } catch (err) {
