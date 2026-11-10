@@ -753,14 +753,39 @@ async function testBotOp(state, id, reqBody) {
   // usage 累计（P2-B）：与引擎轮同一方言归一器——岗前测试直接回 Token 读数，
   // token 优化的前后对比不再等生产流量。
   const usageAcc = createUsageAccumulator();
-  const result = await runner.run({
-    prompt: effectivePrompt,
-    sessionId,
-    attachments: imageAttachments,
-    signal: new AbortController().signal,
-    timeoutMs: TEST_TIMEOUT_MS,
-    onEvent: (ev) => { events++; usageAcc.observe(ev); },
+  // settle 看门狗（2026-11-10 PC1 真机 P1）：探针 claude 被 120s 超时 SIGKILL 后，
+  // 若子进程 pipe 被孤儿孙进程（探针里 & 出的后台进程）持有，child 'close' 永不
+  // 触发 → runner promise 挂死 → 路由永不应答（实测两次 HTTP 悬挂）。与引擎
+  // abortGuard 同款：超时+30s 余量强制兜底结算，路由必答。
+  const probeAc = new AbortController();
+  const guardTimer = setTimeout(() => probeAc.abort(), TEST_TIMEOUT_MS);
+  let guardBail = null; // 兜底定时器句柄：正常结算后必须清，否则每探针漏一个 30s 句柄
+  const probeGuard = new Promise((resolve) => {
+    guardBail = setTimeout(() => {
+      state.log?.warn?.('core-engine: testBot probe settle-watchdog fired — force-settling');
+      resolve({
+        ok: false, code: 'timeout', finalText: '', aborted: true,
+        sessionId: sessionId ?? null, reason: 'settle-watchdog', detail: { exitCode: null, stderrTail: '' },
+      });
+    }, TEST_TIMEOUT_MS + 30_000);
   });
+  let result;
+  try {
+    result = await Promise.race([
+      runner.run({
+        prompt: effectivePrompt,
+        sessionId,
+        attachments: imageAttachments,
+        signal: probeAc.signal,
+        timeoutMs: TEST_TIMEOUT_MS,
+        onEvent: (ev) => { events++; usageAcc.observe(ev); },
+      }),
+      probeGuard,
+    ]);
+  } finally {
+    clearTimeout(guardTimer);
+    clearTimeout(guardBail);
+  }
   usageAcc.observeResult(result);
   const body = {
     code: result?.code ?? 'error',
