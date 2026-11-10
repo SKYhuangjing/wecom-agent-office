@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### Fixed — run-settle 看门狗 + adapter 换代终帧兜底（2026-11-10 PC1 真机 P0）
+
+- abort 后 runner 挂死（熔断/抢占/drain/硬超时）→ bookkeep 永不跑、inFlight
+  永远 working：abortGuard 在 abort 后 `runnerSettleGuardMs`（默认 15s，limits
+  可覆写）强制 synth aborted 兜底结算；三处 runner.run race 全覆盖。
+- 终帧投递段（含无超时 onOutbound 中间件）套 `deliveryGuardMs`（默认 60s，
+  limits 可覆写）绝对上限；超时置 deliveryExpired，此后 sendVia 全弃。
+- deliverFinal 检测 adapter 换代（drain 后 getAdapter 返回新实例）→ 改走当前
+  adapter push；currentAdapter try/catch 回落旧引用（生产 getAdapter 缺失时
+  throw，`??` 接不住）。completed 分支统一走 deliverFinal（后台 push 全文/
+  流式保尾截断语义不变）。
+
 ### Fixed — rtk 探测超时 3s→15s（2026-11-10 PC1 升级后误判未安装）
 
 - `probeBin(rtkBin)` 三处统一用 `RTK_PROBE_TIMEOUT_MS=15000`：Windows 升级后 rtk

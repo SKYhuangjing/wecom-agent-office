@@ -216,6 +216,10 @@ export function createRunner({ bot, providerConfig, assets, log, escalationMs = 
       };
 
       child.stdout.on('data', (chunk) => {
+        // abort 自愈（2026-11-10 PC1 真机 P0，与 claude/codex/pi/dsh 同款）：
+        // aborted 却没杀=一次性监听器漏触发，任何后续 stdout 数据补触发 kill
+        //（startKill 幂等）。cursor 暂缓登录（ROADMAP），转岗前此防线已在位。
+        if (signal?.aborted && !abortedBySignal) onAbort();
         stdoutBuf += chunk.toString();
         let idx;
         while ((idx = stdoutBuf.indexOf('\n')) !== -1) {

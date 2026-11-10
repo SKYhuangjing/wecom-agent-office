@@ -99,6 +99,7 @@ function scriptedRunner(steps) {
       const step = steps[Math.min(idx++, steps.length - 1)];
       if (step.emit) for (const ev of step.emit) args.onEvent?.(ev);
       if (step.emitOver) for (const ev of step.emitOver) { args.onEvent?.(ev); if (ev.gapMs) await sleep(ev.gapMs); }
+      if (step.never) return new Promise(() => {}); // 永不结算（settle-watchdog 用例）
       if (step.delayMs) await sleep(step.delayMs);
       if (step.hangMs !== undefined) {
         await new Promise((resolve) => {
@@ -1119,6 +1120,53 @@ test('tool-loop breaker: under cap completes normally, no stopCause', async () =
   const row = h.ledger.turns({ chatKey: K })[0];
   assert.equal(row.reason, 'completed');
   assert.equal(row.stopCause, undefined);
+});
+
+// —— 2026-11-10 PC1 真机 P0 回归：run-settle 看门狗 + adapter 换代终帧 ——————————
+// 真机：abort（熔断/drain）后 runner promise 挂死 → bookkeep 永不跑、inFlight
+// 永远 working、只能重启服务；且 drain 换 adapter 后终帧发向死连接全丢。
+test('settle-watchdog: hard-timeout aborts a never-settling runner → forced settle, timeout row lands, chain unwedged', async () => {
+  const h = makeHarness({
+    steps: [{ never: true }], // runner 永不结算（真机挂死形状）
+    limits: { hardTimeoutMs: 80, runnerSettleGuardMs: 60 },
+  });
+  await h.send('问题');
+  const row = h.ledger.turns({ chatKey: K })[0];
+  assert.equal(row.reason, 'timeout', 'hardTimedOut reclassifies the watchdog synth (aborted) to timeout');
+  assert.ok(h.log.lines.warn.some((m) => /settle-watchdog fired/.test(m)), 'watchdog trip is logged');
+});
+
+test('settle-watchdog: breaker abort + hung runner → interrupted row with stopCause=tool-loop (never wedged)', async () => {
+  const h = makeHarness({
+    bot: mkBot({ providerConfig: { toolLoopMaxCalls: 2 } }),
+    // 3 个 tool 事件触发熔断 abort；runner 却永不结算——看门狗强制结算。
+    steps: [{ emit: [{ type: 'tool', brief: 'a' }, { type: 'tool', brief: 'b' }, { type: 'tool', brief: 'c' }], never: true }],
+    limits: { hardTimeoutMs: 60_000, runnerSettleGuardMs: 60 },
+  });
+  await h.send('考古');
+  const row = h.ledger.turns({ chatKey: K })[0];
+  assert.equal(row.reason, 'interrupted');
+  assert.equal(row.stopCause, 'tool-loop', 'the breaker cause survives the watchdog settle');
+});
+
+test('adapter swapped mid-run (drain shape): final delivered via the CURRENT adapter push, not lost to the dead one', async () => {
+  const adapterB = fakeAdapter();
+  // 换代时机=终帧投递前（真实 drain 形状）：turn 用 A 起跑，onOutbound（终帧
+  // 前最后一跳）里把 engine.getAdapter 换成 B——deliverFinal 必须改走 B 的 push。
+  let h;
+  h = makeHarness({
+    steps: [COMPLETE({ finalText: '最终答案全文' })],
+    middleware: {
+      maskOutbound: (t) => t,
+      onOutbound: async (t) => { h.engine.getAdapter = () => adapterB; return t; },
+    },
+  });
+  await h.send('问题');
+  const pushes = adapterB.frames.filter((f) => f.method === 'push');
+  assert.ok(pushes.some((f) => String(f.text || '').includes('最终答案全文')),
+    `final reached the CURRENT adapter via push: ${JSON.stringify(adapterB.frames)}`);
+  assert.ok(!h.adapter.frames.some((f) => f.finish === true), 'the stale adapter receives no final');
+  assert.ok(h.log.lines.warn.some((m) => /adapter swapped mid-run/.test(m)), 'the swap fallback is logged');
 });
 
 test('SessionCache: upsert stamps lastAt; expire removes the entry and clears current', () => {

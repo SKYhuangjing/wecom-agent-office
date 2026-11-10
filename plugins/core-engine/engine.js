@@ -71,6 +71,14 @@ const OUTBOUND_WINDOW_MS = 60_000; // §6.4: the outbound budget is per minute
 // warn and the turn moves on. The losing promise stays observed (Promise.race
 // attaches handlers to it), so a much-later rejection cannot become an
 // unhandledRejection.
+
+// run-settle 看门狗（2026-11-10 PC1 真机 P0）：abort 已发生（熔断/抢占/drain/
+// 硬超时）但 runner promise 挂着不结算——bookkeep 永不跑、inFlight 永远
+// working、只能重启服务清。abort 后给 runnerSettleGuardMs（覆盖 SIGTERM→
+// SIGKILL 升级 + close 延迟）仍无结果 → 强制 synth aborted 兜底结算。
+// 终帧投递整段（中间件 onOutbound 无超时面）另套 deliveryGuardMs 绝对上限。
+const RUNNER_SETTLE_GUARD_MS = 15_000;
+const DELIVERY_GUARD_MS = 60_000;
 const sendWithTimeout = (p, ms) => {
   let timer = null;
   const bail = new Promise((_, reject) => {
@@ -457,7 +465,11 @@ export async function defaultRunTurn(bot, msg, ac) {
   // sendWithTimeout race bounds every call; a timeout logs and the turn
   // proceeds, or the chain for this chatKey would stay wedged forever).
   const outboundTimeoutMs = caps.outboundTimeoutMs ?? L.outboundTimeoutMs;
+  // 投递段看门狗触发后置位：此后所有发送直接静默（迟到终帧不再发向旧
+  // req_id——「dropping remaining frames」名副其实，盲评 P2-5）。
+  let deliveryExpired = false;
   const sendVia = (what, call) => {
+    if (deliveryExpired) return Promise.resolve(); // 已过期：本轮已结算，迟到帧全弃
     try {
       return sendWithTimeout(call(), outboundTimeoutMs).catch((e) => {
         engine.log.warn?.(`engine: ${what} send failed: ${e?.message ?? e}`);
@@ -477,9 +489,28 @@ export async function defaultRunTurn(bot, msg, ac) {
     return sendVia('reply', () => adapter.reply(msg.reqId, text));
   };
   const sendPush = (text) => sendVia('push', () => adapter.push(chatRef, text)); // push quota is adapter-side (§4)
+  // drain 换代自愈（2026-11-10 PC1 真机 P0）：PATCH/drain 会 detach 旧 adapter 再
+  // attach 新的，运行中的轮仍攥着旧引用——流/reply 的 req_id 属于旧连接，在新
+  // 连接上必然拒发，最终回复全部「send failed: websocket not open」丢失。检测到
+  // 换代后改走「当前」adapter 的 push（chatRef 与连接无关，与断线补发同语义）。
+  // 生产 getAdapter 对缺失 adapter 是 throw（plugin.js no-adapter）而非 null——
+  // try/catch 回落旧引用（盲评 P2-1：`??` 接不住 throw，DELETE/停用/关机路径
+  // 会把维护终帧的发送直接炸成 turn error）。
+  const currentAdapter = () => {
+    try {
+      return (typeof engine.getAdapter === 'function' ? engine.getAdapter(bot) : null) ?? adapter;
+    } catch {
+      return adapter;
+    }
+  };
   // Final delivery routes by mode: in background the stream was closed by the
   // warn frame, so the result must not re-appear as a stream frame.
   const deliverFinal = (text) => {
+    const cur = currentAdapter();
+    if (cur !== adapter) {
+      engine.log.warn?.(`engine: adapter swapped mid-run for ${chatKey} — delivering final via the CURRENT adapter's push`);
+      return sendVia('final-push', () => cur.push(chatRef, text));
+    }
     if (backgroundMode) return pushable ? sendPush(text) : sendReply(text);
     return streaming ? sendProgress(text, true) : sendReply(text);
   };
@@ -786,10 +817,53 @@ export async function defaultRunTurn(bot, msg, ac) {
     ok: false, code: 'error', finalText: '', aborted: false,
     sessionId: sessionId ?? null, reason: 'exception', detail: { error: String(e?.message ?? e) },
   });
+  // —— run-settle 看门狗（2026-11-10 PC1 真机 P0）——————————————————————————
+  // abort 发生后 runnerSettleGuardMs 内 runner 仍不结算 → synth aborted 兜底，
+  // 保证 bookkeep/台账/inFlight 一定走完（正常路径 disarm，零开销）。absolute
+  // 版不依赖 abort：投递段（含无超时的 onOutbound 中间件）超过 deliveryGuardMs
+  // 直接放弃剩余投递进 finally。
+  const runnerSettleGuardMs = L.runnerSettleGuardMs ?? RUNNER_SETTLE_GUARD_MS;
+  const deliveryGuardMs = L.deliveryGuardMs ?? DELIVERY_GUARD_MS;
+  const synthWatchdog = () => ({
+    ok: false, code: 'aborted', finalText: '', aborted: true, sessionId: null,
+    reason: 'settle-watchdog', detail: { exitCode: null, stderrTail: '' },
+  });
+  const abortGuard = (what) => {
+    let timer = null;
+    const onArm = () => {
+      if (timer != null) return;
+      timer = setTimeout(() => {
+        engine.log.warn?.(`engine: ${what} settle-watchdog fired for ${chatKey} (no settle ${runnerSettleGuardMs}ms after abort) — force-settling`);
+        resolveGuard(synthWatchdog());
+      }, runnerSettleGuardMs);
+    };
+    let resolveGuard = () => {};
+    const p = new Promise((resolve) => { resolveGuard = resolve; });
+    if (ac.signal.aborted) onArm();
+    else ac.signal.addEventListener('abort', onArm, { once: true });
+    return {
+      p,
+      disarm: () => {
+        if (timer != null) clearTimeout(timer);
+        ac.signal.removeEventListener('abort', onArm);
+      },
+    };
+  };
+  const deliveryGuard = (what) => {
+    let resolveGuard = () => {};
+    const p = new Promise((resolve) => { resolveGuard = resolve; });
+    const timer = setTimeout(() => {
+      deliveryExpired = true; // 迟到的任何发送自此全弃（盲评 P2-5）
+      engine.log.warn?.(`engine: ${what} delivery-watchdog fired for ${chatKey} (over ${deliveryGuardMs}ms) — dropping remaining frames, settling`);
+      resolveGuard(undefined);
+    }, deliveryGuardMs);
+    return { p, disarm: () => clearTimeout(timer) };
+  };
+  const runnerGuard = abortGuard('runner');
   let result;
   try {
     try {
-      result = await runner.run(runArgs());
+      result = await Promise.race([runner.run(runArgs()), runnerGuard.p]);
     } catch (e) {
       // §5 says run() never rejects; a violating runner still gets a row.
       engine.log.error?.(`engine: runner threw for ${chatKey}: ${e?.stack ?? e}`);
@@ -798,7 +872,7 @@ export async function defaultRunTurn(bot, msg, ac) {
     if (result?.code === 'lock-conflict') {
       engine.log.warn?.(`engine: ${chatKey} write-lock conflict — retrying once`);
       try {
-        result = await runner.run(runArgs()); // same prompt + same sessionId
+        result = await Promise.race([runner.run(runArgs()), runnerGuard.p]); // same prompt + same sessionId
       } catch (e) {
         engine.log.error?.(`engine: lock retry threw for ${chatKey}: ${e?.stack ?? e}`);
         result = synthError(e);
@@ -818,17 +892,25 @@ export async function defaultRunTurn(bot, msg, ac) {
       sessionId = null;
       sessionIdWasNull = true; // 重跑即新会话：abort 时同样不该缓存半装 session
       try {
-        result = await runner.run({ ...runArgs(), prompt: retryPrompt, sessionId: null });
+        result = await Promise.race([runner.run({ ...runArgs(), prompt: retryPrompt, sessionId: null }), runnerGuard.p]);
       } catch (e) {
         engine.log.error?.(`engine: fresh retry threw for ${chatKey}: ${e?.stack ?? e}`);
         result = synthError(e);
       }
     }
+    runnerGuard.disarm(); // 结果已定（或看门狗已兜底）：撤看门狗，正常路径零残留
     if (result == null) result = synthError(new Error('runner resolved without a result'));
     usageAcc.observeResult(result); // last usage source (codex reason.usage & co)
     runSettled = true; // runner promise settled: the warn/hard windows are closed from here on
     const effCode = result.code === 'aborted' && hardTimedOut ? 'timeout' : result.code;
-    switch (effCode) {
+    // 投递段看门狗（deliveryGuard）：终帧投递里的 onOutbound 中间件没有超时面，
+    // 一个挂死的中间件/发送路径会把整轮卡在 switch 里（bookkeep 永不跑）。整段
+    // 套绝对上限，超时放弃剩余投递直接进 finally 结算。
+    const dg = deliveryGuard('final');
+    try {
+      await Promise.race([
+        (async () => {
+          switch (effCode) {
       case 'completed': {
         // Push carries the FULL text (the adapter chunks it, §6.7); a stream
         // final is capped at maxContentChars with the 会话页 pointer.
@@ -847,10 +929,12 @@ export async function defaultRunTurn(bot, msg, ac) {
         const finalize = async (text) => maskFn(await runOnOutbound(text, outCtx));
         // 中间件契约（盲评 P1-2 及其回归修复）：中间件吃「全文」（蒸馏标记在
         // 尾部，先截断=沉淀静默丢失）；随后 FINAL 帧用「保尾截断」——中间件的
-        // 尾部追加物（cost-tracker 的 📊 行）也要在通道帧里活着。
-        if (backgroundMode && pushable) await sendPush(await finalize(base));
-        else if (streaming) await sendProgress(truncateFinalKeepingTail(await finalize(base)), true);
-        else await sendReply(truncateFinalKeepingTail(await finalize(base)));
+        // 尾部追加物（📊 footer）也要在通道帧里活着。统一走 deliverFinal（含
+        // drain 换代 push 兜底）：后台 push 吃全文、流式帧吃截断文，语义不变。
+        const finalText = backgroundMode && pushable
+          ? await finalize(base)
+          : truncateFinalKeepingTail(await finalize(base));
+        await deliverFinal(finalText);
         break;
       }
       case 'aborted': {
@@ -884,9 +968,16 @@ export async function defaultRunTurn(bot, msg, ac) {
         if (result.finalText) await deliverFinal(`${outboundText(result.finalText)}\n\n${ERROR_BANNER}`);
         else await sendReply(outboundText(`❌ 任务未能完成：${describeError(result)}`));
       }
+          }
+        })(),
+        dg.p,
+      ]);
+    } finally {
+      dg.disarm();
     }
   } finally {
     stopTimers();
+    runnerGuard.disarm(); // 防御性双保险（正常路径已在 try 内撤）
     try {
       bookkeep(result);
     } catch (e) {

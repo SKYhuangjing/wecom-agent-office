@@ -309,6 +309,9 @@ export function createRunner({ bot, providerConfig, assets, log, escalationMs = 
       };
 
       child.stdout.on('data', (chunk) => {
+        // abort 自愈（2026-11-10 PC1 真机 P0）：aborted 却没杀=一次性监听器漏触发，
+        // 任何后续 stdout 数据补触发 kill（startKill 幂等，不依赖监听器单点）。
+        if (signal?.aborted && !abortedBySignal) onAbort();
         stdoutBuf += chunk.toString();
         let idx;
         while ((idx = stdoutBuf.indexOf('\n')) !== -1) {

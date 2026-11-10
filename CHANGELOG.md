@@ -5,6 +5,29 @@
 
 ## [Unreleased]
 
+### Fixed — run-settle 看门狗 + adapter 换代终帧兜底 + runner abort 自愈（2026-11-10 PC1 真机 P0×2）
+
+真机症状：①熔断 abort（61>60）触发后 claude 又跑 13 分钟自然完成（无 SIGTERM
+日志=一次性 abort 监听器未触发）；②该轮 bookkeep 永不跑（inFlight 永远
+working，只能重启服务）；③PATCH drain 换 adapter 后运行中轮攥旧引用，最终
+回复全发向死连接丢失（send failed: websocket not open 连刷 20 分钟）。
+- **runner abort 自愈**（claude/codex/pi/dsh/cursor 五家）：stdout(/stderr) data
+  处理器自检 `signal?.aborted && !abortedBySignal` → 补触发 kill（startKill
+  幂等）——只要进程还在输出，下一个数据包就补杀，不依赖监听器单点。
+- **run-settle 看门狗**（engine）：abort 后 `runnerSettleGuardMs`（默认 15s，
+  limits 可覆写）runner 仍不结算 → 强制 synth aborted 兜底，bookkeep/台账/
+  inFlight 保证走完；三处 runner.run（主/lock 重试/session 自愈重试）全覆盖。
+  终帧投递整段（含无超时的 onOutbound 中间件）套 `deliveryGuardMs`（默认 60s）
+  绝对上限，超时置 deliveryExpired——此后所有发送静默弃（迟到帧不进旧 req_id）。
+- **adapter 换代终帧兜底**：deliverFinal 检测 getAdapter 换代 → 改走当前
+  adapter 的 push（chatRef 连接无关）；currentAdapter try/catch 回落旧引用
+  （生产 getAdapter 缺失时是 throw，`??` 接不住）。completed 分支原直调
+  sendProgress 绕过 deliverFinal 的老缺口一并修掉（后台 push 全文/流式保尾
+  截断语义不变，回归钉死）。
+- 测试：settle-watchdog 两腿（timeout 行落地/熔断 stopCause 保留）+ 换代
+  push 兜底 + 五家自检存在性契约（行为级无法进程内模拟监听器漏触发，注释
+  说明）。全量 823/823。
+
 ### Fixed — 工具徽章两处真机困惑（2026-11-10 PC1 用户问「rtk 未安装/cost-tracker 未物化什么意思」）
 
 - **rtk 升级后误判「未安装」**：二进制明明在（/api/service/tools available），但

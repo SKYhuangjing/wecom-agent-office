@@ -293,6 +293,10 @@ export function createRunner({ bot, providerConfig, assets, log, escalationMs = 
       };
 
       child.stdout.on('data', (chunk) => {
+        // abort 自愈（同 stderr 侧注释）：事件还在流=进程还活着，aborted 却没杀
+        // 就是监听器漏了——补杀。真机 2026-11-10：熔断 abort 后 claude 又跑了
+        // 13 分钟（无 SIGTERM 日志=监听器未触发），事件照流。
+        if (signal?.aborted && !abortedBySignal) onAbort();
         stdoutBuf += chunk.toString();
         let idx;
         while ((idx = stdoutBuf.indexOf('\n')) !== -1) {
@@ -303,6 +307,10 @@ export function createRunner({ bot, providerConfig, assets, log, escalationMs = 
       });
 
       child.stderr.on('data', (chunk) => {
+        // abort 自愈（2026-11-10 PC1 真机 P0）：熔断/drain 的 abort 若因时序问题
+        // 没触发一次性监听器（进程照跑、事件照流），任何后续 stderr 数据在此补
+        // 触发 kill——kill 不依赖监听器单点（startKill 幂等）。
+        if (signal?.aborted && !abortedBySignal) onAbort();
         const s = chunk.toString();
         state.stderrTail = (state.stderrTail + s).slice(-STDERR_TAIL_CHARS);
         for (const l of s.split(/\r?\n/)) if (l.trim()) logger.debug?.('claude stderr:', l.trim());
