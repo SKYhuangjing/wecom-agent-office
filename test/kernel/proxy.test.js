@@ -226,3 +226,28 @@ test('P1-3: proxy credentials are masked in logs', () => {
   assert.equal(maskUrlCreds('http://10.0.0.2:7890'), 'http://10.0.0.2:7890/');
   assert.equal(maskUrlCreds('garbage'), 'garbage');
 });
+
+
+test('R-1: a DEAD proxy propagates the network error — /test can never fake-positive', async () => {
+  // 注入的 undici 配套对在 fetch 阶段抛 ECONNREFUSED：proxyFetch 必须上抛
+  // （调用方据此出「代理拒连」诊断），而不是静默直连重试。
+  const refusal = new Error('fetch failed');
+  refusal.cause = { code: 'ECONNREFUSED' };
+  await assert.rejects(
+    () => proxyFetch('https://api.github.com/x', {}, {
+      proxy: { enabled: true, proxyUrl: 'http://dead:1' },
+      importUndici: async () => ({
+        ProxyAgent: class {},
+        fetch: async () => { throw refusal; },
+      }),
+    }),
+    (err) => err === refusal,
+    'the proxied fetch failure surfaces verbatim — no silent direct retry',
+  );
+});
+
+test('P1-1 remainder: BOTH updater spawns ride the effective network (env-proxy upgrades too)', () => {
+  const src = readFileSync(join(repoRoot, 'src', 'index.js'), 'utf8');
+  assert.equal(src.match(/updaterEnv\(effectiveNetwork\(serviceConfig\.network\)\)/g)?.length, 2,
+    'update + restart spawn sites both use the effective (config>env) network');
+});

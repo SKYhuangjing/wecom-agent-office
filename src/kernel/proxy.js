@@ -77,15 +77,18 @@ export function resetProxyDispatcherCache() { cache = new Map(); }
 // fetch+ProxyAgent pair; otherwise byte-identical to the global fetch.
 export async function proxyFetch(url, opts = {}, { proxy, importUndici, onFallback } = {}) {
   if (proxy?.enabled === true && typeof proxy.proxyUrl === 'string' && proxy.proxyUrl !== '') {
+    // try 的边界=「拿到配套 {fetch, agent}」：undici 缺席/损坏（如更新器 npm
+    // install 失败的窗口期）降级直连并留痕（回评 R-1：fetch 调用必须在 try 外
+    // ——代理拒连/超时是网络事实，上抛给调用方诊断，绝不静默直连重试制造
+    // /test 假阳性）。
+    let pair;
     try {
-      const { fetch: undiciFetch, agent } = await getProxyDispatcher(proxy.proxyUrl, { importUndici });
-      return undiciFetch(url, { ...opts, dispatcher: agent });
+      pair = await getProxyDispatcher(proxy.proxyUrl, { importUndici });
     } catch (err) {
-      // undici 缺席/损坏（如更新器 npm install 失败的窗口期）：优雅降级直连
-      // 并留痕——代理配置保住了，装好依赖后自动恢复，绝不打挂检查更新主链路。
       onFallback?.(`undici unavailable (${err?.message ?? err}) — direct connection this once`);
       return fetch(url, opts);
     }
+    return pair.fetch(url, { ...opts, dispatcher: pair.agent });
   }
   return fetch(url, opts);
 }

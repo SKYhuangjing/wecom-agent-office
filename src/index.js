@@ -629,7 +629,7 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
           detached: true,
           stdio: 'ignore',
           cwd: repoRoot,
-          env: updaterEnv(serviceConfig.network),
+          env: updaterEnv(effectiveNetwork(serviceConfig.network)),
         });
         child.unref();
 
@@ -791,7 +791,7 @@ export async function createKernel({ port = 8792, host = '127.0.0.1', dataDir, p
           '--restart-mode', restartMode,
         ];
         if (isLanMode) updaterArgs.push('--lan');
-        const child = spawn(process.execPath, updaterArgs, { detached: true, stdio: 'ignore', cwd: repoRoot, env: updaterEnv(serviceConfig.network) });
+        const child = spawn(process.execPath, updaterArgs, { detached: true, stdio: 'ignore', cwd: repoRoot, env: updaterEnv(effectiveNetwork(serviceConfig.network)) });
         child.unref();
         logger.info(`wao: restart delegated to detached updater (mode=${restartMode}), pid=${child.pid}`);
         return json(res, 200, { ok: true, message: '服务重启中（十几秒），页面就绪后自动刷新', restartMode });
