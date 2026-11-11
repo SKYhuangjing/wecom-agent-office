@@ -299,9 +299,16 @@ export function knowledgeBundleOp(state, botId) {
     });
   }
 
+  const lastCur = lastCurationAt(state, botId);
+  const autoCfg = autoCurateConfig(bot);
   return {
     botId, botName: typeof bot.name === 'string' && bot.name !== '' ? bot.name : botId,
     provider: bot.provider,
+    autoCurate: {
+      config: autoCfg,
+      lastCurationAt: lastCur > 0 ? lastCur : null,
+      nextScheduledAt: autoCfg.enabled === true ? nextScheduledAt(autoCfg, Date.now(), lastCur) : null,
+    },
     delivery: face.delivery ?? '',
     prompt: { sections },
     memories,
@@ -696,6 +703,120 @@ export async function curateBotOp(state, botId, body = {}) {
   appendCurationRecord(state, botId, record);
   state.log?.info?.(`knowledge: curation ${botId} → ${record.ok ? 'ok' : `failed(${record.reason ?? '?'})`} ${record.summary}`);
   return record;
+}
+
+// —— 自动整理（DESIGN-KNOWLEDGE v1.1：定时 + 阈值 + 外部调度三层）————————————
+// 三种触发共存：①定时（autoCurate.at 每日到点，60s tick 兜查，错过时段顺延次日
+// ——不做「补跑」，无人值守不追账）；②阈值（蒸馏写回后记忆条数 ≥ thresholdNotes
+// 且间隔允许 → 防抖 2 分钟触发一次，避免连续对话轮重复起跑）；③外部调度（REST
+// POST /api/bots/:id/curate 与 MCP curate_bot 本就可用，文档面披露即可）。
+// 全部走同一个 curateBotOp：默认引导、提案校验、版本基线漂移守卫、整理史、
+// curationLocks 互斥一个不缺——自动轮与手动轮行为完全同源。
+export const AUTO_CURATE_DEFAULTS = { at: '03:00', thresholdNotes: 40, minIntervalHours: 12 };
+export const AUTO_CURATE_GUIDANCE = '自动整理：合并重复记忆、剔除已过时内容，优先保留「操作路径」类知识（用什么工具/命令/参数做成某事）；把高频出现的操作模式升级或修订为技能文档。没有改进空间就原样保留。';
+
+// providerConfig.autoCurate 防御式解析（同 toolLoopMaxCalls 先例：引擎级旋钮
+// 寄居 providerConfig，未配置/坏值全部回落默认，绝不抛）。
+export function autoCurateConfig(bot) {
+  const raw = bot?.providerConfig?.autoCurate;
+  const cfg = { enabled: false, ...AUTO_CURATE_DEFAULTS };
+  if (!isObject(raw)) return cfg;
+  cfg.enabled = raw.enabled === true;
+  const at = typeof raw.at === 'string' ? raw.at.trim() : '';
+  if (/^([01]\d|2[0-3]):[0-5]\d$/.test(at)) cfg.at = at;
+  const th = Number(raw.thresholdNotes);
+  if (Number.isFinite(th) && th >= 0 && th <= 50) cfg.thresholdNotes = Math.floor(th);
+  const ih = Number(raw.minIntervalHours);
+  if (Number.isFinite(ih) && ih >= 0 && ih <= 720) cfg.minIntervalHours = Math.floor(ih);
+  return cfg;
+}
+
+// 上次整理时刻：整理史头部（含失败轮——失败也算一次尝试，天然防打摆）。
+export function lastCurationAt(state, botId) {
+  const [head] = readCurationHistory(state, botId, 1);
+  return Number.isFinite(head?.at) ? head.at : 0;
+}
+
+// 纯函数：下一次定时整理时刻（ms）。规则：今日 at 未到 → 今日；已过或今天已
+// 整理过 → 明日；再不满足 minIntervalHours 继续顺延。enabled=false → null。
+export function nextScheduledAt(cfg, now, lastAt) {
+  if (cfg?.enabled !== true) return null;
+  const m = /^(\d{2}):(\d{2})$/.exec(String(cfg.at ?? ''));
+  if (m == null) return null;
+  const d = new Date(now);
+  let t = new Date(d.getFullYear(), d.getMonth(), d.getDate(), Number(m[1]), Number(m[2]), 0, 0).getTime();
+  // 5 分钟宽限窗：60s tick 落在时点后几十秒属正常到点，不算「错过」；真错过
+  //（服务停机/超窗）顺延次日，不补跑。
+  if (now >= t + 5 * 60_000 || lastAt >= t) t += 86_400_000;
+  const gap = (cfg.minIntervalHours ?? 0) * 3_600_000;
+  while (lastAt > 0 && t - lastAt < gap) t += 86_400_000;
+  return t;
+}
+
+// 阈值触发判定（纯）：条数达标 + 间隔允许。防抖与互斥在外层。
+export function thresholdDue(cfg, noteCount, now, lastAt) {
+  if (cfg?.enabled !== true || !(cfg.thresholdNotes > 0)) return false;
+  if (noteCount < cfg.thresholdNotes) return false;
+  if (lastAt > 0 && now - lastAt < cfg.minIntervalHours * 3_600_000) return false;
+  return true;
+}
+
+const thresholdPending = new Map(); // botId → debounce timer
+const AUTO_TICK_MS = 60_000;
+const THRESHOLD_DEBOUNCE_MS = 120_000;
+let autoTimer = null;
+
+export function maybeQueueThresholdCurate(state, bot, debounceMs = THRESHOLD_DEBOUNCE_MS) {
+  const cfg = autoCurateConfig(bot);
+  const target = memoryTargetOf(state, bot);
+  if (target == null) return false;
+  if (!thresholdDue(cfg, target.notes.length, Date.now(), lastCurationAt(state, bot.id))) return false;
+  if (thresholdPending.has(bot.id) || curationLocks.has(bot.id)) return false;
+  const notes = target.notes.length;
+  const timer = setTimeout(() => {
+    thresholdPending.delete(bot.id);
+    void (async () => {
+      try {
+        state.log?.info?.(`knowledge: auto-curate (threshold ${cfg.thresholdNotes}/50, now ${notes}) firing for ${bot.id}`);
+        await curateBotOp(state, bot.id, { guidance: `${AUTO_CURATE_GUIDANCE}（阈值触发：记忆 ${notes}/50 条）` });
+      } catch (err) {
+        state.log?.warn?.(`knowledge: auto-curate (threshold) failed for ${bot.id}: ${err?.message ?? err}`);
+      }
+    })();
+  }, debounceMs);
+  timer.unref?.();
+  thresholdPending.set(bot.id, timer);
+  return true;
+}
+
+// 60s tick：到点即跑（curateBotOp 内部锁/校验/落史全兜）。now 注入供测试。
+export async function autoCurateTick(state, now = Date.now()) {
+  for (const bot of state.doc.bots) {
+    if (!isObject(bot) || bot.enabled === false) continue;
+    const cfg = autoCurateConfig(bot);
+    if (cfg.enabled !== true || curationLocks.has(bot.id)) continue;
+    const due = nextScheduledAt(cfg, now, lastCurationAt(state, bot.id));
+    if (due == null || due > now) continue;
+    try {
+      state.log?.info?.(`knowledge: auto-curate (scheduled ${cfg.at}) firing for ${bot.id}`);
+      await curateBotOp(state, bot.id, { guidance: AUTO_CURATE_GUIDANCE });
+    } catch (err) {
+      state.log?.warn?.(`knowledge: auto-curate (scheduled) failed for ${bot.id}: ${err?.message ?? err}`);
+    }
+  }
+}
+
+export function startAutoCurateScheduler(state) {
+  stopAutoCurateScheduler();
+  autoTimer = setInterval(() => { void autoCurateTick(state); }, AUTO_TICK_MS);
+  autoTimer.unref?.();
+  state.log?.info?.('knowledge: auto-curate scheduler started (60s tick)');
+}
+
+export function stopAutoCurateScheduler() {
+  if (autoTimer != null) { clearInterval(autoTimer); autoTimer = null; }
+  for (const t of thresholdPending.values()) clearTimeout(t);
+  thresholdPending.clear();
 }
 
 // —— 版本回滚（POST /api/assets/:id/rollback）——————————————————————————

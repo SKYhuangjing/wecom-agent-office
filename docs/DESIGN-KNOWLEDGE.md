@@ -213,6 +213,15 @@ provider 最清楚自己的送达面，core-engine 不重复实现组装逻辑�
   BOT_ID_RE 守卫（对齐 ledgerFor 先例）；⑨cwd 缺失显式 400（防 join 抛
   TypeError→500）。①②③⑤⑥⑦ 均有回归测试钉死（knowledge.test.js 34 用例）。
 
+## 8.6 自动整理（v1.1，2026-11-11 用户裁定「三种都做」）
+
+三层触发共存，全部收敛到同一个 curateBotOp（默认引导/提案校验/版本基线漂移
+守卫/整理史/curationLocks 互斥——自动轮与手动轮行为完全同源）：
+- **定时**：`providerConfig.autoCurate {enabled=false, at="03:00", thresholdNotes=40, minIntervalHours=12}`（防御式解析）；60s tick；5 分钟宽限窗（tick 晚几十秒不算错过）；错过顺延次日不补跑；失败轮也写整理史（失败=尝试过，天然防重试打摆）。
+- **阈值**：蒸馏写回成功且条数 ≥ thresholdNotes（0=关）且距上次整理 ≥ minIntervalHours → 防抖 2 分钟触发；curation 自身写回不经触发路径（无自激循环）。
+- **外部调度**：`POST /api/bots/:id/curate` / MCP `curate_bot` 本就可用，知识 tab 卡片 hint 披露。
+UI：知识 tab「AI 整理」组内「自动整理」卡片——上次/下次状态行 + 开关/时间/阈值/间隔编辑保存（PATCH providerConfig 为整块替换语义，卡片先 GET 合并再提交）；fake-data 状态化同步。
+
 ## 9. 非目标（v2 候选）
 
 - 整理前后跨轮效果报表（数据已留 curation.jsonl + ledger，报表后做）。

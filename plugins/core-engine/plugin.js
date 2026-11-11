@@ -21,7 +21,7 @@ import { maskOutbound } from './middleware.js';
 import { loadBots, revalidateAll, validateBot, BOT_ID_RE } from './bots.js';
 import { loadAssets, buildPlan, saveAssets, seedBuiltinToolAssets } from './assets.js';
 import { createDistillMiddleware } from './distill.js';
-import { applyMemoryNotes, memoryTargetOf } from './knowledge.js';
+import { applyMemoryNotes, memoryTargetOf, maybeQueueThresholdCurate, startAutoCurateScheduler, stopAutoCurateScheduler } from './knowledge.js';
 import { createMaterializer } from './materializer.js';
 import { companyOps, createApi, rosterSummary, updateAssetOp } from './api.js';
 
@@ -346,6 +346,7 @@ export default {
     // reverse attach order, then neutralize the engine service — the services
     // container has no unregister, so an inert stub marks the slot dead.
     ctx.effect(async () => {
+      stopAutoCurateScheduler();
       try {
         await engine.drain(5000);
         await engine.sendDrainRefusals();
@@ -392,9 +393,19 @@ export default {
         if (target == null) return null;
         return { assetId: target.assetId, mode: target.mode, notes: target.notes };
       },
-      writeNotes: (bot, assetId, notes) => applyMemoryNotes(state, bot, notes, 'distill'),
+      writeNotes: async (bot, assetId, notes) => {
+        const r = await applyMemoryNotes(state, bot, notes, 'distill');
+        // 自动整理·阈值触发（DESIGN-KNOWLEDGE v1.1）：蒸馏写回成功且条数达标 →
+        // 防抖排队一轮整理（curation 自身写回不经此路径，无自激循环）。
+        if (r.ok === true) maybeQueueThresholdCurate(state, bot);
+        return r;
+      },
       log,
     }));
+
+    // 自动整理·定时层（DESIGN-KNOWLEDGE v1.1）：60s tick；bot.enabled/
+    // autoCurate.enabled/间隔在 tick 内逐项判定，配置变更无需重启调度器。
+    startAutoCurateScheduler(state);
 
     ctx.http.register({ prefix: '/api', handler: createApi({ getState: () => state }) });
     // Company operations for the mcp-gateway plugin (W1 T2): the same api.js

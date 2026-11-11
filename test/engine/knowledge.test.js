@@ -14,6 +14,8 @@ import {
   memoryTargetOf, applyMemoryNotes, knowledgeBundleOp, curateBotOp, rollbackAssetOp,
   parseCurationProposal, validateCurationProposal, buildCurationPrompt,
   appendCurationRecord, readCurationHistory, SNAPSHOT_HISTORY_CAP,
+  autoCurateConfig, nextScheduledAt, thresholdDue, autoCurateTick, maybeQueueThresholdCurate,
+  AUTO_CURATE_DEFAULTS,
 } from '../../plugins/core-engine/knowledge.js';
 import { pushAssetHistory, ASSET_HISTORY_CAP } from '../../plugins/core-engine/assets.js';
 import { updateAssetOp, createAssetOp } from '../../plugins/core-engine/api.js';
@@ -633,6 +635,117 @@ test('createAssetOp: origin curation 由服务端盖章，body 带_origin 拒绝
   assert.equal(asset.origin, 'curation');
   await assert.rejects(() => createAssetOp(state, { type: 'skill', name: 'k2', origin: 'operator', content: { name: 'k2', body: '# b' } }),
     (err) => err.status === 400 && /set by the server/.test(err.message));
+});
+
+// —— 自动整理（DESIGN-KNOWLEDGE v1.1：定时 + 阈值 + 外部调度）—————————————
+
+test('autoCurateConfig: 防御式解析矩阵（未配置/坏值全回落默认，绝不抛）', () => {
+  assert.deepEqual(autoCurateConfig(null), { enabled: false, ...AUTO_CURATE_DEFAULTS });
+  assert.equal(autoCurateConfig({ providerConfig: {} }).enabled, false);
+  const good = autoCurateConfig({ providerConfig: { autoCurate: { enabled: true, at: '23:45', thresholdNotes: 30, minIntervalHours: 6 } } });
+  assert.deepEqual(good, { enabled: true, at: '23:45', thresholdNotes: 30, minIntervalHours: 6 });
+  const bad = autoCurateConfig({ providerConfig: { autoCurate: { enabled: 'yes', at: '25:99', thresholdNotes: 999, minIntervalHours: -3 } } });
+  assert.equal(bad.enabled, false, '非 true 视为关');
+  assert.equal(bad.at, AUTO_CURATE_DEFAULTS.at);
+  assert.equal(bad.thresholdNotes, AUTO_CURATE_DEFAULTS.thresholdNotes);
+  assert.equal(bad.minIntervalHours, AUTO_CURATE_DEFAULTS.minIntervalHours);
+});
+
+test('nextScheduledAt: 今日未到→今日；已过/已跑→明日；minInterval 继续顺延；关→null', () => {
+  const cfg = { enabled: true, at: '03:00', minIntervalHours: 12, thresholdNotes: 0 };
+  const day = (h) => new Date(2026, 10, 11, h, 0, 0, 0).getTime(); // 2026-11-11
+  const at03 = new Date(2026, 10, 11, 3, 0, 0, 0).getTime();
+  assert.equal(nextScheduledAt(cfg, day(1), 0), at03, '凌晨 1 点 → 今天 03:00');
+  assert.equal(nextScheduledAt(cfg, day(10), 0), at03 + 86_400_000, '上午 10 点（已过点）→ 明天');
+  assert.equal(nextScheduledAt(cfg, day(1), at03), at03 + 86_400_000, '今天已跑过 → 明天');
+  assert.equal(nextScheduledAt({ ...cfg, minIntervalHours: 36 }, day(1), at03 - 12 * 3_600_000), at03 + 86_400_000, '间隔 36h：明日恰满 36h → 明日');
+  assert.equal(nextScheduledAt({ ...cfg, minIntervalHours: 48 }, day(1), at03 - 12 * 3_600_000), at03 + 2 * 86_400_000, '间隔 48h 顶到后天');
+  assert.equal(nextScheduledAt(cfg, new Date(2026, 10, 11, 3, 30, 0, 0).getTime(), 0), at03 + 86_400_000, '超 5 分钟宽限窗=错过 → 明日不补跑');
+  assert.equal(nextScheduledAt({ ...cfg, enabled: false }, day(1), 0), null);
+});
+
+test('thresholdDue: 条数达标 + 间隔允许才触发', () => {
+  const cfg = { enabled: true, at: '03:00', thresholdNotes: 40, minIntervalHours: 12 };
+  const now = Date.now();
+  assert.equal(thresholdDue(cfg, 39, now, 0), false);
+  assert.equal(thresholdDue(cfg, 40, now, 0), true);
+  assert.equal(thresholdDue(cfg, 45, now, now - 6 * 3_600_000), false, '间隔不足');
+  assert.equal(thresholdDue(cfg, 45, now, now - 13 * 3_600_000), true);
+  assert.equal(thresholdDue({ ...cfg, enabled: false }, 50, now, 0), false);
+  assert.equal(thresholdDue({ ...cfg, thresholdNotes: 0 }, 50, now, 0), false, '阈值 0=关');
+});
+
+test('autoCurateTick: 到点触发一轮（默认引导/整理史落盘/记忆被提案替换）；未到点/停用/禁用不触发', async () => {
+  const mkStateAuto = (autoCurate, assets0, notes) => {
+    const mem = mkMemoryAsset(assets0 ? { content: { notes } } : {});
+    const st = mkState({
+      bots: [mkBot({ assets: [{ assetId: 'ast-mem1', mode: 'shared' }] })],
+      assets: [mem],
+      port: mkPort({ proposal: { memory: { notes: ['自动整理后的记忆'] } } }),
+    });
+    if (autoCurate) st.doc.bots[0].providerConfig.autoCurate = autoCurate;
+    return st;
+  };
+  const at03 = new Date(); at03.setHours(3, 0, 0, 0);
+  // 到点：now = 03:00:30，从未整理
+  const due = mkStateAuto({ enabled: true, at: '03:00', thresholdNotes: 0, minIntervalHours: 12 }, true, ['旧记忆']);
+  await autoCurateTick(due, at03.getTime() + 30_000);
+  const hist1 = readCurationHistory(due, 'b1');
+  assert.equal(hist1.length, 1, '自动轮落整理史');
+  assert.match(hist1[0].guidance, /自动整理/);
+  assert.deepEqual(due.assetsDoc.assets[0].content.notes, ['自动整理后的记忆'], '记忆被替换');
+  // 再 tick 一次：今天已跑 → 不再触发（lastAt ≥ 今日时点）
+  await autoCurateTick(due, at03.getTime() + 60_000);
+  assert.equal(readCurationHistory(due, 'b1').length, 1, '同日不重复');
+  // 未到点
+  const early = mkStateAuto({ enabled: true, at: '03:00', thresholdNotes: 0, minIntervalHours: 12 }, true, ['旧记忆']);
+  await autoCurateTick(early, at03.getTime() - 3_600_000);
+  assert.equal(readCurationHistory(early, 'b1').length, 0);
+  // 未开启
+  const off = mkStateAuto({ enabled: false, at: '03:00', thresholdNotes: 0, minIntervalHours: 12 }, true, ['旧记忆']);
+  await autoCurateTick(off, at03.getTime() + 30_000);
+  assert.equal(readCurationHistory(off, 'b1').length, 0);
+  // bot 禁用
+  const dis = mkStateAuto({ enabled: true, at: '03:00', thresholdNotes: 0, minIntervalHours: 12 }, true, ['旧记忆']);
+  dis.doc.bots[0].enabled = false;
+  await autoCurateTick(dis, at03.getTime() + 30_000);
+  assert.equal(readCurationHistory(dis, 'b1').length, 0);
+});
+
+test('maybeQueueThresholdCurate: 防抖后触发且不与手动轮重叠；间隔不足不排', async () => {
+  const notes = Array.from({ length: 42 }, (_, i) => `n${i}`);
+  const state = mkState({
+    bots: [mkBot({ assets: [{ assetId: 'ast-mem1', mode: 'shared' }] })],
+    assets: [mkMemoryAsset({ content: { notes } })],
+    port: mkPort({ proposal: { memory: { notes: ['阈值整理后的记忆'] } } }),
+  });
+  state.doc.bots[0].providerConfig.autoCurate = { enabled: true, at: '03:00', thresholdNotes: 40, minIntervalHours: 12 };
+  const queued = maybeQueueThresholdCurate(state, state.doc.bots[0], 30);
+  assert.equal(queued, true, '达标即排队');
+  assert.equal(maybeQueueThresholdCurate(state, state.doc.bots[0], 30), false, '防抖期内不重复排队');
+  await new Promise((r) => setTimeout(r, 400));
+  const hist = readCurationHistory(state, 'b1');
+  assert.equal(hist.length, 1);
+  assert.match(hist[0].guidance, /阈值触发：记忆 42\/50/);
+  // 间隔不足（刚整理过）不再排
+  assert.equal(maybeQueueThresholdCurate(state, state.doc.bots[0], 30), false);
+});
+
+test('knowledgeBundleOp: autoCurate 信息块（config/上次/下次）', () => {
+  const state = mkState({
+    bots: [mkBot({ assets: [{ assetId: 'ast-mem1', mode: 'shared' }] })],
+    assets: [mkMemoryAsset()],
+    port: null,
+  });
+  const b0 = knowledgeBundleOp(state, 'b1');
+  assert.equal(b0.autoCurate.config.enabled, false);
+  assert.equal(b0.autoCurate.nextScheduledAt, null);
+  state.doc.bots[0].providerConfig.autoCurate = { enabled: true, at: '23:30', thresholdNotes: 20, minIntervalHours: 1 };
+  appendCurationRecord(state, 'b1', { at: Date.now() - 3_600_000, ok: true, summary: 's' });
+  const b1 = knowledgeBundleOp(state, 'b1');
+  assert.equal(b1.autoCurate.config.at, '23:30');
+  assert.ok(Number.isFinite(b1.autoCurate.lastCurationAt));
+  assert.ok(b1.autoCurate.nextScheduledAt > Date.now(), '下次在未来');
 });
 
 test('existsSync sanity: proposal file channel is deterministic in e2e above', () => {

@@ -319,6 +319,15 @@ export const FAKE_API = {
   // knowledge 只给 main-bot 造全量基线（dsh 送达面：profile 段最直观）；bot-2
   // 给精简（claude argv+盘面）；curate/rollback 各一条成功回执（harness 里点
   // 完即可看回执渲染，不真改 fake 状态）。
+  '/api/bots/main-bot': (body) => {
+    // PATCH：知识 tab 自动整理卡片保存（providerConfig 整块替换语义与真服务
+    // 同口径：合并进 FAKE 记录并回显）
+    const bot = FAKE.bots.find((b) => b.id === 'main-bot');
+    if (body?.providerConfig != null && bot != null) {
+      bot.providerConfig = { ...bot.providerConfig, ...body.providerConfig };
+    }
+    return { bot: { ...bot, account: { botId: '1000002' } } };
+  },
   '/api/bots/main-bot/knowledge': () => {
     // 活推导：memories/versions 由 FAKE_ASSETS + FAKE.bots 当前状态算出（curate/
     // rollback 状态化后刷新可见）；prompt 面静态基线（预览内容不随轮变）。
@@ -351,6 +360,11 @@ export const FAKE_API = {
       .filter(Boolean);
     return {
       botId: 'main-bot', botName: '主号机器人', provider: 'dsh',
+      autoCurate: {
+        config: { enabled: true, at: '03:00', thresholdNotes: 40, minIntervalHours: 12 },
+        lastCurationAt: minAgo(600),
+        nextScheduledAt: minAgo(600) + 16 * 3600_000,
+      },
       delivery: 'dsh：人设+记忆+提示词约束+技能索引全部拼进 profile 的 system-prompt personaPrefix（单一组合器）；技能正文落 .wao/skills/；MCP 走 mcp-<serverId> profile 行。',
       prompt: { sections: [
         { kind: 'profile', title: 'dsh profile system-prompt · personaPrefix（完整系统提示词）',
@@ -380,6 +394,7 @@ export const FAKE_API = {
   },
   '/api/bots/bot-2/knowledge': () => ({
     botId: 'bot-2', botName: '二号机器人', provider: 'claude',
+    autoCurate: { config: { enabled: false, at: '03:00', thresholdNotes: 40, minIntervalHours: 12 }, lastCurationAt: null, nextScheduledAt: null },
     delivery: 'claude：人设与 prompt/ripgrep 资产合并进 --append-system-prompt（每轮 argv）；skill/记忆物化为配置目录盘面文件；MCP 走 --mcp-config 单文件。',
     prompt: { sections: [
       { kind: 'argv', title: '--append-system-prompt · 每轮追加的系统提示词', text: '代码检索一律使用 rg（ripgrep）而非 grep/find。示例：rg -t js \'pattern\'。' },
@@ -397,7 +412,7 @@ export const FAKE_API = {
     ],
     curation: [],
   }),
-  '/api/bots/bot-3/knowledge': () => ({ botId: 'bot-3', provider: 'codex', delivery: '', prompt: { sections: [] }, memories: [], skills: [], versions: [], curation: [] }),
+  '/api/bots/bot-3/knowledge': () => ({ botId: 'bot-3', botName: '归档机器人', autoCurate: { config: { enabled: false, at: '03:00', thresholdNotes: 40, minIntervalHours: 12 }, lastCurationAt: null, nextScheduledAt: null }, provider: 'codex', delivery: '', prompt: { sections: [] }, memories: [], skills: [], versions: [], curation: [] }),
   '/api/bots/main-bot/curate': (body) => {
     // 状态化（盲测 T4/T6）：假整理真改 fake 状态——回执之后回知识 tab 能看到
     // 「自动生效」（记忆条数变化、新技能出现、整理史多一行、版本历史推进）。

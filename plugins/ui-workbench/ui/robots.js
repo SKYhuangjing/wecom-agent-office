@@ -428,6 +428,10 @@ const DetailKnowledge = ({ WAO, botId }) => {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState(null);
   const [rollbackNote, setRollbackNote] = useState(null);
+  // 自动整理草稿（DESIGN-KNOWLEDGE v1.1：定时 + 阈值；bundle 加载后同步服务端现值）
+  const [autoDraft, setAutoDraft] = useState(null);
+  const [autoSaving, setAutoSaving] = useState(false);
+  const [autoNote, setAutoNote] = useState(null);
   const [groups, setGroups] = useState({ prompt: true, memory: true, skills: false, curate: true, versions: false });
   const toggle = (k) => setGroups((g) => ({ ...g, [k]: !(g[k] === true) }));
 
@@ -435,6 +439,7 @@ const DetailKnowledge = ({ WAO, botId }) => {
     try {
       const data = await api(`/api/bots/${encodeURIComponent(botId)}/knowledge`);
       setBundle(data);
+      setAutoDraft(data?.autoCurate?.config != null ? { ...data.autoCurate.config } : null);
       setLoadError(null);
     } catch (err) {
       setBundle(null);
@@ -493,6 +498,30 @@ const DetailKnowledge = ({ WAO, botId }) => {
       setRollbackFor(null);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const saveAuto = async () => {
+    if (autoDraft == null) return;
+    setAutoSaving(true);
+    setAutoNote(null);
+    try {
+      const all = await api('/api/bots');
+      const bot = (all?.bots ?? []).find((b) => b.id === botId);
+      if (bot == null) throw new Error('机器人不存在');
+      // PATCH 的 providerConfig 是整块替换（write-only 密钥除外）——必须带上
+      // 回显的全部键一起提交（__MASKED__ 值按「保持原值」语义安全回传）。
+      await api(`/api/bots/${encodeURIComponent(botId)}`, {
+        providerConfig: { ...bot.providerConfig, autoCurate: { ...autoDraft } },
+      });
+      setAutoNote(autoDraft.enabled === true
+        ? `已开启自动整理：每天 ${autoDraft.at}（间隔 ≥${autoDraft.minIntervalHours}h）${autoDraft.thresholdNotes > 0 ? `，记忆 ≥${autoDraft.thresholdNotes}/50 条时加触发一轮` : ''}`
+        : '已关闭自动整理');
+      await reload();
+    } catch (err) {
+      setAutoNote(`保存失败：${err?.message ?? err}`);
+    } finally {
+      setAutoSaving(false);
     }
   };
 
@@ -638,6 +667,47 @@ const DetailKnowledge = ({ WAO, botId }) => {
       result != null && !curating
         ? h('button', { className: 'wb-btn', onClick: () => setResult(null) }, '收起回执')
         : null),
+    autoDraft != null ? h('div', {
+      style: { marginTop: 14, padding: '10px 12px', border: '1px solid rgba(127,127,127,.25)', borderRadius: 8 },
+    },
+      h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 } },
+        h('span', { style: { fontSize: 13 } }, '自动整理'),
+        h('span', { className: 'wb-hint' },
+          `上次：${bundle.autoCurate?.lastCurationAt != null ? fmtAt(bundle.autoCurate.lastCurationAt) : '从未'}`,
+          ' · ',
+          bundle.autoCurate?.nextScheduledAt != null
+            ? `下次定时：${fmtAt(bundle.autoCurate.nextScheduledAt)}`
+            : '定时未开启')),
+      h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+        h('label', { style: { display: 'flex', gap: 4, alignItems: 'center', fontSize: 12 } },
+          h('input', {
+            type: 'checkbox', checked: autoDraft.enabled === true,
+            onChange: (e) => setAutoDraft({ ...autoDraft, enabled: e.target.checked }),
+          }), '每天'),
+        h('input', {
+          type: 'time', value: autoDraft.at, disabled: autoDraft.enabled !== true,
+          onChange: (e) => setAutoDraft({ ...autoDraft, at: e.target.value }),
+        }),
+        h('label', { style: { display: 'flex', gap: 4, alignItems: 'center', fontSize: 12 } },
+          '记忆达到',
+          h('input', {
+            type: 'number', min: 0, max: 50, value: autoDraft.thresholdNotes,
+            style: { width: 54 }, disabled: autoDraft.enabled !== true,
+            onChange: (e) => setAutoDraft({ ...autoDraft, thresholdNotes: Number(e.target.value) }),
+          }), '条加跑一轮'),
+        h('label', { style: { display: 'flex', gap: 4, alignItems: 'center', fontSize: 12 } },
+          '最小间隔',
+          h('input', {
+            type: 'number', min: 0, max: 720, value: autoDraft.minIntervalHours,
+            style: { width: 60 }, disabled: autoDraft.enabled !== true,
+            onChange: (e) => setAutoDraft({ ...autoDraft, minIntervalHours: Number(e.target.value) }),
+          }), '小时'),
+        h('button', { className: 'wb-btn', disabled: autoSaving, onClick: () => void saveAuto() },
+          autoSaving ? '保存中…' : '保存')),
+      autoNote != null ? h('div', { className: 'wb-kv', style: { marginTop: 6 } }, autoNote) : null,
+      h('div', { className: 'wb-hint', style: { marginTop: 6 } },
+        '自动轮与手动轮同源（校验/版本/回滚/整理史一致）；凌晨定时 + 阈值兜底，错过时段顺延次日不补跑；每轮约 1-3 万 token。外部调度：POST /api/bots/', botId, '/curate 或 MCP curate_bot。'),
+    ) : null,
     resultCard,
     curationRows.length > 0 ? h('div', { style: { marginTop: 12 } },
       h('div', { style: { fontSize: 12, color: 'var(--muted)', marginBottom: 4 } }, '整理史（最近 10 次）'),

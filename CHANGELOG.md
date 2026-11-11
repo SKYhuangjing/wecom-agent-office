@@ -45,7 +45,8 @@ bot 的记忆/文档/提示词从黑盒变成平台一等公民资产——**看
   +重物化本 bot）；②cost-tracker tool kind 进白名单（经 PATCH /api/assets 改它
   不再 400）；③整理提示词的示例不再用 ```json 围栏 + 围栏解析器跳过占位痕迹
   （防模型回显示例被误当提案）。
-- 测试 +42（825→867）：knowledge 单测（目标解析/写回两路/历史环/提案解析校验
+- **自动整理三层（v1.1）**：①定时——`providerConfig.autoCurate = {enabled, at:"HH:MM", thresholdNotes, minIntervalHours}`（防御式解析，默认关/03:00/40 条/12h），60s tick 到点跑（5 分钟宽限窗；错过顺延次日不补跑；失败轮也落整理史天然防打摆）；②阈值——蒸馏写回后条数 ≥thresholdNotes 且间隔允许 → 防抖 2 分钟加跑一轮（curation 写回不触发，无自激循环）；③外部调度——REST/MCP 原生可用（卡片 hint 披露）。自动轮与手动轮完全同源（默认引导/校验/版本漂移守卫/回滚/整理史/curationLocks 互斥）；知识 tab 新增「自动整理」卡片（上次/下次/阈值/间隔编辑保存，providerConfig 整块合并提交）。
+- 测试 +55（825→880）：knowledge 单测（目标解析/写回两路/历史环/提案解析校验
   矩阵/整理轮 e2e 含失败与 409 锁/回滚双作用域/聚合面）、HTTP 契约、五家
   knowledgeFace 契约、MCP 四工具（含危险门禁）。UI 基线 34→38（知识 tab +
   知识总览 × 浅深）；浏览器用户路径实测（引导→整理→回执→回滚全链）PASS。
