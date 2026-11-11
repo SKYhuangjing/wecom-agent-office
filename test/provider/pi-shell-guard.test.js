@@ -23,7 +23,8 @@ const noopLog = { debug() {}, info() {}, warn() {}, error() {} };
 
 // --- 1: models unit ——————————————————————————————————————————————————————
 
-test('shellGuardSeconds: override wins, garbage/default fall back to 90', () => {
+test('shellGuardSeconds: override wins (number OR numeric string), garbage/default fall back to 90', () => {
+  assert.equal(shellGuardSeconds({ bashTimeoutSec: '30' }), 30, 'schema string type coerces');
   assert.equal(shellGuardSeconds({ bashTimeoutSec: 30 }), 30);
   assert.equal(shellGuardSeconds({ bashTimeoutSec: 30.9 }), 30, 'floored');
   assert.equal(shellGuardSeconds({}), SHELL_GUARD_DEFAULT_SEC);

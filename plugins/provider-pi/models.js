@@ -105,8 +105,10 @@ export const SHELL_GUARD_DEFAULT_SEC = 90;
 export const SHELL_GUARD_FILENAME = 'wao-shell-guard.js';
 
 export function shellGuardSeconds(pc) {
-  const v = pc?.bashTimeoutSec;
-  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : SHELL_GUARD_DEFAULT_SEC;
+  // schema declares the field string-type (UI convention like contextWindow),
+  // so accept numeric strings AND numbers — Number() coercion, not typeof.
+  const v = Number(pc?.bashTimeoutSec);
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : SHELL_GUARD_DEFAULT_SEC;
 }
 
 export function shellGuardPathFor({ botId, piAgentDir } = {}) {
