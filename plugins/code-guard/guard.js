@@ -30,6 +30,25 @@ const CODE_SIGNAL_RE = /^[ \t]*(?:def\s|class\s|from\s+\S+\s+import\s|import\s+[
 
 export const STRIP_NOTE = '（代码内容已略去——写代码类需求请找技术同事处理）';
 
+// Exact-term masking (maskTerms knob): internal platform names the prompt
+// layer keeps echoing despite the rules (2026-11-11 bot2 blind round:
+// changelog's 管理端/规则平台/SkillHub section shipped verbatim twice).
+// Deterministic, case-insensitive, whole-term only — generic words stay
+// usable unless an operator explicitly lists them.
+export const MASK = '▇▇';
+
+export function maskTermsIn(text, terms) {
+  if (typeof text !== 'string' || !Array.isArray(terms)) return text;
+  const list = terms.filter((t) => typeof t === 'string' && t.trim().length >= 2);
+  if (list.length === 0 || text.length === 0) return text;
+  let out = text;
+  for (const term of list) {
+    const esc = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    out = out.replace(new RegExp(esc, 'gi'), () => MASK); // whole-term swap
+  }
+  return out;
+}
+
 // Fences: an opener ```[tag], body, then a closing ``` — or end-of-text for
 // the truncated-tail case (an aborted run may leave the fence unclosed; the
 // partial code inside must still not ship).
@@ -53,16 +72,22 @@ export function stripCodeFences(text) {
   return { text: out, stripped };
 }
 
-// createGuard({ isOn, log }) → { onOutbound(text, ctx) }. `isOn` defaults to
-// off — a bare guard never rewrites text (tests embed explicit stubs).
-export function createGuard({ isOn = () => false, log = null } = {}) {
+// createGuard({ isStripOn, maskTermsOf, log }) → { onOutbound(text, ctx) }.
+// `isStripOn` defaults to off — a bare guard never rewrites text (tests
+// embed explicit stubs). `maskTermsOf(bot)` yields the per-bot exact-term
+// list (default: none) and enables masking independently of the code strip.
+export function createGuard({ isStripOn = () => false, maskTermsOf = () => [], log = null } = {}) {
   return {
     onOutbound(text, ctx) {
-      if (!isOn(ctx?.bot)) return text; // bot-level toggle: off → unchanged
+      const terms = maskTermsOf(ctx?.bot);
+      if (!isStripOn(ctx?.bot) && !(Array.isArray(terms) && terms.length > 0)) return text;
       try {
-        const { text: out, stripped } = stripCodeFences(text);
-        if (stripped > 0) {
-          log?.info?.(`code-guard: stripped ${stripped} code block(s) from ${ctx?.bot?.id ?? 'bot'} reply`);
+        const { text: stripped, stripped: n } = isStripOn(ctx?.bot)
+          ? stripCodeFences(text)
+          : { text, stripped: 0 };
+        const out = maskTermsIn(stripped, terms);
+        if (n > 0) {
+          log?.info?.(`code-guard: stripped ${n} code block(s) from ${ctx?.bot?.id ?? 'bot'} reply`);
         }
         return out;
       } catch {

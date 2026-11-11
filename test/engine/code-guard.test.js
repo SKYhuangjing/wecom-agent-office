@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createKernel } from '../../src/index.js';
-import { createGuard, stripCodeFences, STRIP_NOTE } from '../../plugins/code-guard/guard.js';
+import { createGuard, stripCodeFences, maskTermsIn, STRIP_NOTE, MASK } from '../../plugins/code-guard/guard.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -56,13 +56,32 @@ test('guard: no fences → identical string, stripped 0', () => {
 test('guard: off by default; codeGuard bot stripped; non-string passes through', () => {
   const g = createGuard({});
   assert.equal(g.onOutbound('```python\nx=1\n```', { bot: {} }), '```python\nx=1\n```');
-  const on = createGuard({ isOn: (b) => b?.providerConfig?.codeGuard === true });
+  const on = createGuard({ isStripOn: (b) => b?.providerConfig?.codeGuard === true });
   const out = on.onOutbound('```python\nx=1\n```', {
     bot: { providerConfig: { codeGuard: true } },
   });
   assert.ok(out.includes(STRIP_NOTE));
   assert.ok(!out.includes('x=1'));
   assert.equal(on.onOutbound(null, { bot: { providerConfig: { codeGuard: true } } }), null);
+});
+
+// --- 1b: exact-term masking ————————————————————————————————————————————
+
+test('mask: listed terms replaced case-insensitively; short/junk entries ignored', () => {
+  const out = maskTermsIn('管理端（规则平台 / SkillHub）更新了 skillhub 的安装', ['SkillHub', '规则平台', 'x', 7, null]);
+  assert.ok(!/SkillHub|skillhub|规则平台/.test(out));
+  assert.ok(out.includes(MASK));
+});
+
+test('guard: maskTerms works WITHOUT codeGuard; text without terms unchanged', () => {
+  const g = createGuard({ maskTermsOf: (b) => b?.providerConfig?.maskTerms ?? [] });
+  const bot = { providerConfig: { maskTerms: ['SkillHub'] } };
+  assert.equal(
+    g.onOutbound('运营平台 SkillHub 有新功能', { bot }),
+    `运营平台 ${MASK} 有新功能`,
+  );
+  assert.equal(g.onOutbound('普通业务文本', { bot }), '普通业务文本');
+  assert.equal(g.onOutbound('带代码也要剥吗?不,未开 codeGuard', { bot }), '带代码也要剥吗?不,未开 codeGuard');
 });
 
 // --- 2: full-kernel integration ——————————————————————————————————————————

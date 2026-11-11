@@ -13,7 +13,10 @@
 ## 开关
 
 ```json
-{ "providerConfig": { "codeGuard": true } }
+{ "providerConfig": { "codeGuard": true, "maskTerms": ["SkillHub", "规则平台"] } }
 ```
+
+- `codeGuard: true` — 剥代码围栏(见上);
+- `maskTerms: [词]` — 出站前把列出的**精确词**(大小写不敏感,整词替换为 `▇▇`)掩码——内部平台名这类提示词层焊不住的词,结构性兜底;与 codeGuard 相互独立,可单开。
 
 防御式读取(同 toolLoopMaxCalls 先例),未知引擎键自由通过;普通 bot PATCH 即翻转,四家引擎通用。
