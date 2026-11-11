@@ -24,6 +24,8 @@
 //                 plausible and the runner's lock regex carries a generic
 //                 fallback (see runner.js LOCK_CONFLICT_RE).
 //   credential    stderr ANTHROPIC_API_KEY hint + result error, exit 1
+//   gateway       API Error connection-refused as assistant text + SUCCESS
+//                 result, exit 0 (real 2026-11-11 PC1 shape — fake completed)
 //   hang-sigterm  init + partial text, then SIGTERM is ignored — dies only on
 //                 SIGKILL (kill-escalation contract)
 //   hang-timeout  init, then hangs — SIGTERM default-kills it
@@ -70,6 +72,10 @@ const sessionIdFromArgv = () => {
 // Shared stream-json pieces. `extraBlocks` are appended to the assistant
 // turn before the text block; the final result carries `resultText`.
 async function happyStream(resultText, extraBlocks = []) {
+  // FAKE_ANSWER overrides the canned reply (suite use: answers that QUOTE
+  // error-like strings, e.g. "Connection refused" inside a legit answer —
+  // the runner's gateway detection must not fire on them).
+  if (process.env.FAKE_ANSWER != null && process.env.FAKE_ANSWER !== '') resultText = process.env.FAKE_ANSWER;
   const sid = (MODE === 'resume-echo' && sessionIdFromArgv()) || freshSid();
   emit({ type: 'system', subtype: 'init', cwd: process.cwd(), session_id: sid, tools: ['Bash', 'Read', 'Edit'], model: 'fake-model', permissionMode: 'default' });
   await sleep(50);
@@ -183,6 +189,20 @@ async function main() {
       process.stderr.write(`${msg}\n`);
       emit({ type: 'result', subtype: 'error_during_execution', is_error: true, result: msg, num_turns: 0 });
       process.exitCode = 1;
+      return;
+    }
+    case 'gateway': {
+      // 2026-11-11 PC1 真机原话（模型网关未自启，CLI 内部重试 ~3 分钟后放弃）：
+      // API 错误以 assistant 文本 + success result 的形态吐回（exit 0，无 init
+      // ——连接失败在会话建立之前）。runner 必须识破这个「假 completed」，
+      // 映射 code='gateway-unreachable'，不能让裸错误当回复直达用户。
+      const msg = 'API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)';
+      emit({
+        type: 'assistant', session_id: null, timestamp: now(),
+        message: { id: 'msg_fake_gw', type: 'message', role: 'assistant', model: 'fake-model', content: [{ type: 'text', text: msg }], stop_reason: 'end_turn', stop_sequence: null, usage: {} },
+      });
+      emit({ type: 'result', subtype: 'success', is_error: false, result: msg, num_turns: 0 });
+      process.exitCode = 0;
       return;
     }
     case 'hang-sigterm': {

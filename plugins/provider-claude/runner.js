@@ -54,6 +54,18 @@ const MISSING_CREDENTIAL_RE = /ANTHROPIC_API_KEY|invalid api key|authentication|
 // error_during_execution——用户只看到「任务未能完成」，且该会话永久坏掉）。
 // 单独成码让引擎退役缓存 + fresh 重跑（自愈），而不是当普通错误吞掉。
 const SESSION_MISSING_RE = /No conversation found with session ID|session .* not found|unknown session/i;
+// 模型网关连不上（2026-11-11 PC1 真机：magpie 未自启，claude CLI 内部重试
+// ~3 分钟后放弃，把「API Error: Connection refused — …(ECONNREFUSED)」当
+// assistant 文本 + success result 吐回——exit 0，runner 按 completed 放行，
+// 裸错误直达企微用户）。单独成码让引擎换友好文案。识别收紧到「行首 API
+// Error 前缀 + 网络类标记」：客服 bot 的正常回答完全可能引用
+// "Connection refused"（SLS 日志问答），contains 化会误杀；stderr 侧只认
+// Node fetch 的 connect E* 原生形态。
+const GATEWAY_NET_MARKERS = 'Connection refused|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|fetch failed|socket hang up';
+const GATEWAY_APIERR_RE = new RegExp(`^API Error[^\\n]{0,300}(?:${GATEWAY_NET_MARKERS})`, 'i');
+const GATEWAY_STDERR_RE = /connect ECONNREFUSED|connect ECONNRESET|connect ENOTFOUND/i;
+const gatewayApiErrorLine = (s) => typeof s === 'string' && s !== ''
+  && s.split(/\r?\n/).some((l) => GATEWAY_APIERR_RE.test(l.trim()));
 const DEFAULT_ESCALATION_MS = 3000;
 const STDERR_TAIL_CHARS = 4000;
 
@@ -362,11 +374,18 @@ export function createRunner({ bot, providerConfig, assets, log, escalationMs = 
 
       const buildResult = (exitCode) => {
         const aborted = abortedBySignal === true;
-        const ok = exitCode === 0 && state.reason?.kind === 'completed' && !aborted && !timedOut;
+        // 网关拒连检测先于 ok 判定：CLI 会把 API 连接失败包装成
+        // success-shaped 流（文本=API Error，exit 0），必须识破这个
+        // 「假 completed」。中途网关挂掉（stderr 残留 connect E*）同理。
+        const gatewayDown = !aborted && !timedOut
+          && (gatewayApiErrorLine(state.error) || gatewayApiErrorLine(state.finalText)
+            || GATEWAY_STDERR_RE.test(state.stderrTail));
+        const ok = exitCode === 0 && state.reason?.kind === 'completed' && !aborted && !timedOut && !gatewayDown;
         const errText = [state.error, state.stderrTail].filter(Boolean).join('\n');
         let code;
         if (aborted) code = 'aborted';
         else if (timedOut) code = 'timeout';
+        else if (gatewayDown) code = 'gateway-unreachable';
         else if (ok) code = 'completed';
         else if (LOCK_CONFLICT_RE.test(errText)) code = 'lock-conflict';
         else if (MISSING_CREDENTIAL_RE.test(errText)) code = 'missing-credential';

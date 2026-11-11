@@ -5,6 +5,23 @@
 
 ## [Unreleased]
 
+### Fixed — 网关拒连不再裸奔到用户（2026-11-11 PC1 真机）
+
+- **背景**：PC1 上模型网关（magpie）未随机器自启，claude CLI 内部重试 ~3 分钟后放弃，
+  把「API Error: Connection refused — a firewall or proxy may be blocking it
+  (ECONNREFUSED)」当 assistant 文本 + success result 吐回（exit 0）——引擎按
+  completed 投递，裸 API 错误直达企微用户，且「防火墙/代理」字样只会更困惑。
+- **provider-claude runner**：识别该「假 completed」，映射专属 `code='gateway-unreachable'`
+  （识别收紧到行首 `API Error` 前缀 + 网络类标记，或 stderr 的 `connect E*` 原生形态——
+  客服 bot 正常回答引用 "Connection refused" 不误杀，有测试钉住）。
+- **core-engine engine**：专属分支换友好文案（`GATEWAY_DOWN_TEXT`：⚠️ 服务暂时不可用…请
+  稍后重试），原始错误只落台账行供运维排查；不叠加重试（CLI 已重试数分钟，再等一轮更糟）。
+- **岗前测试探针（api.js）与诊断面（provider-claude describeError）**：中止话术按 code 分流，
+  网关拒连不再误报成「超时」，误导排查方向。
+- **测试**：fake-claude 新增 `gateway` 模式（复刻真机形态）+ FAKE_ANSWER 覆写；runner
+  识破/不误杀、引擎投递、探针分流共 4 个新用例；全量 `npm test` 886/886 绿；Mac 本地
+  服务 E2E 实测（fake CLI 走 test API）：code/话术/probeTail 三面符合预期。
+
 ### Added — 资产默认配置给新 Bot 支持（除 scope-recall 外全选默认，2026-11-11）
 
 - **资产模型与校验**：资产支持可选属性 `defaultForNewBots?: boolean`（在 `validateAsset`、

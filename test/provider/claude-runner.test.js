@@ -320,6 +320,42 @@ test('runner: credential error — code=missing-credential', async () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('runner: gateway refused — fake completed unmasked, code=gateway-unreachable', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wao-cl-gw-'));
+  try {
+    // 2026-11-11 PC1 真机形状：CLI 把 API 连接失败包成 assistant 文本 +
+    // success result + exit 0 —— runner 必须识破，不能按 completed 放行。
+    const runner = makeRunner(dir, { claudeBin: makeWrapper(dir, 'gateway') });
+    const res = await runOnce(runner);
+    assert.equal(res.ok, false, 'success-shaped stream carrying an API Error is NOT ok');
+    assert.equal(res.code, 'gateway-unreachable');
+    assert.equal(res.sessionId, null, 'connection died before any session existed');
+    assert.match(res.finalText, /Connection refused/, 'raw API error text kept for the ledger row');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('runner: legit answer QUOTING "Connection refused" stays completed (no false positive)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wao-cl-gwfp-'));
+  try {
+    // 客服 bot 回答 SLS 日志问题时完全可能引用 "Connection refused"——
+    // 识别锚定行首 API Error 前缀，contains 化会误杀正常回答。
+    const fakeHome = join(dir, 'fake-home');
+    mkdirSync(join(dir, 'bin'), { recursive: true });
+    const bin = join(dir, 'bin', 'claude-quote.sh');
+    writeFileSync(bin, '#!/bin/sh\n'
+      + 'export FAKE_MODE="ok"\n'
+      + 'export FAKE_ANSWER="日志显示该任务失败原因是下游端口 Connection refused，建议核对服务地址。"\n'
+      + `export FAKE_HOME="${fakeHome}"\n`
+      + `exec "${FAKE_CLAUDE}" "$@"\n`);
+    chmodSync(bin, 0o755);
+    const runner = makeRunner(dir, { claudeBin: bin });
+    const res = await runOnce(runner);
+    assert.equal(res.code, 'completed');
+    assert.equal(res.ok, true);
+    assert.match(res.finalText, /Connection refused/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('runner: result error subtype (no lock/credential text) — code=error', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'wao-cl-err-'));
   try {

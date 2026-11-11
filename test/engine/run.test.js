@@ -484,6 +484,25 @@ test('missing-credential: describeError reply verbatim, error row', async () => 
   assert.equal(h.cache.get(K), undefined);
 });
 
+// 2026-11-11 PC1 真机回归：模型网关未自启，claude CLI 把「API Error:
+// Connection refused」当 success-shaped 流吐回，裸错误直达企微用户。runner
+// 映射 code='gateway-unreachable'；引擎必须换友好文案，原话只落台账。
+test('gateway-unreachable: friendly copy on the wire, raw API error only in the ledger', async () => {
+  const rawApiError = 'API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)';
+  const h = makeHarness({ steps: [{ code: 'gateway-unreachable', finalText: rawApiError }] });
+  await h.send('最近的提交是啥');
+  const GATEWAY_DOWN_TEXT = '⚠️ 服务暂时不可用（模型连接失败），请稍后重试；若持续出现请联系管理员。';
+  const replies = h.adapter.frames.filter((f) => f.method === 'reply');
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0].text, GATEWAY_DOWN_TEXT);
+  assert.ok(!h.adapter.frames.some((f) => /ECONNREFUSED|API Error/.test(f.text ?? '')), 'raw API error never reaches the wire');
+  const row = h.ledger.turns({ chatKey: K })[0];
+  assert.equal(row.reason, 'error');
+  assert.equal(row.ok, false);
+  assert.equal(row.assistant, rawApiError, 'ledger keeps the raw API error for forensics');
+  assert.equal(h.cache.get(K), undefined, 'no session cached for a gateway-dead turn');
+});
+
 test('error with partial text keeps the partial plus a warning banner', async () => {
   const h = makeHarness({ steps: [{ code: 'error', finalText: '半成品' }] });
   await h.send('出错');

@@ -391,6 +391,10 @@ export default {
             return '该会话正被另一个 claude 进程使用（会话锁定），机器人暂时无法回复。请稍后重试。';
           case 'missing-credential':
             return '模型凭证缺失（ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 未配置）。请在服务环境或 bot 的 providerConfig.env / model 中配置后重试。';
+          case 'gateway-unreachable':
+            // 2026-11-11：CLI 把连接失败包成 success-shaped 流（reason=completed
+            // 是伪装），诊断面必须按真实 code 说话，别回「运行结束原因=completed」。
+            return '模型网关连接失败（连接被拒/超时）——网关服务未启动或正在重启，恢复后重试即可。';
           case 'timeout':
             return '任务超时。';
           case 'aborted':

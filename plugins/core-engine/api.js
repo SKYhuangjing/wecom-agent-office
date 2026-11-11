@@ -797,12 +797,17 @@ async function testBotOp(state, id, reqBody) {
   usageAcc.observeResult(result);
   // 中止/超时的探针不得把引擎中间文本当最终回复外发（盲评 P1：aborted 时
   // finalText 可能是半截推理语，直接返回会误导"这就是 bot 会给用户的话"）。
-  // 非 completed 一律换成固定话术；原始文本降级进 detail.probeTail 供运维排查。
+  // 非 completed 一律换话术，但按 code 分流：网关拒连≠超时，话术错了会误导
+  // 排查方向（2026-11-11 PC1：magpie 未自启被报成「超时」）；原始文本降级进
+  // detail.probeTail 供运维排查。
   const probeDone = result?.code === 'completed';
   const rawProbeTail = result?.finalText ?? '';
+  const probeAbortCopy = result?.code === 'gateway-unreachable'
+    ? '模型网关连接失败（连接被拒/超时），请先检查网关服务是否在运行，再重试。'
+    : '本轮处理超时被中止，未能生成完整回复。可携带原问题重试，或用 sessionId 续跑。';
   const body = {
     code: result?.code ?? 'error',
-    finalText: probeDone ? rawProbeTail : '本轮处理超时被中止，未能生成完整回复。可携带原问题重试，或用 sessionId 续跑。',
+    finalText: probeDone ? rawProbeTail : probeAbortCopy,
     sessionId: result?.sessionId ?? null,
     events,
     usage: usageAcc.summary(),

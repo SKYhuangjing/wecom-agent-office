@@ -17,13 +17,14 @@ const PNG_BYTES = Buffer.from(
   'base64',
 );
 
-function makeState(dir) {
+function makeState(dir, { resultOverride } = {}) {
   const runs = [];
   const port = {
     createRunner: () => ({
       describeError: () => 'DE',
       async run(args) {
         runs.push({ prompt: args.prompt, sessionId: args.sessionId, attachments: args.attachments ?? [] });
+        if (resultOverride) return { ...resultOverride };
         return { ok: true, code: 'completed', finalText: '答案文本', aborted: false, sessionId: args.sessionId ?? 's1', reason: 'completed' };
       },
     }),
@@ -81,6 +82,25 @@ test('testBot attachments: file kind rides the PROMPT (engine-parity 分级), ne
     assert.ok(call.prompt.includes('plain text upload'), 'file content inlined into the probe prompt');
     assert.ok(call.prompt.includes('evil  name.txt'), 'sanitized display name in the section header');
     assert.equal(call.attachments.length, 0, 'file kind never rides runner attachments');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// 2026-11-11 PC1 真机：网关拒连被探针话术误报成「超时」会误导排查方向——
+// 非 completed 的探针话术必须按 code 分流（gateway-unreachable ≠ timeout）。
+test('testBot probe: gateway-unreachable gets the gateway copy, not the timeout copy', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wao-tb-gw-'));
+  try {
+    const state = makeState(dir, {
+      resultOverride: {
+        ok: false, code: 'gateway-unreachable', aborted: false, sessionId: null,
+        finalText: 'API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)',
+        reason: 'gateway-unreachable', detail: { exitCode: 0, stderrTail: '' },
+      },
+    });
+    const body = await companyOps(state).testBot('b1', { prompt: '最近的提交是啥' });
+    assert.equal(body.code, 'gateway-unreachable');
+    assert.equal(body.finalText, '模型网关连接失败（连接被拒/超时），请先检查网关服务是否在运行，再重试。');
+    assert.match(body.detail?.probeTail ?? '', /Connection refused/, 'raw error demoted to probeTail for operators');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

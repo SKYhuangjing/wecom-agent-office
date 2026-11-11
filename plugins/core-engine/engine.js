@@ -100,6 +100,10 @@ const DRAIN_INFLIGHT_TEXT = '⚠️ 服务维护，任务已中断，请重发';
 // 工具循环熔断（2026-11-10 token 利用率治理）：单轮工具调用超上限自动中止，
 // 防「翻历史考古/找脚本」式空转（PC1 曾单轮烧 21.5 万 token / 11 分钟）。
 const TOOL_LOOP_TEXT = '⚠️ 本轮工具调用过多，已自动中止以避免空转。请把问题缩小、或分步提问后重发。';
+// 网关拒连（2026-11-11 PC1 真机：模型网关未随机器自启，CLI 内部已重试数分钟
+// 才放弃——引擎不再叠加重试，用户已等太久）：裸「API Error: Connection
+// refused…」绝不能当回复直达用户，换成可行动的文案；原始错误留在台账行。
+const GATEWAY_DOWN_TEXT = '⚠️ 服务暂时不可用（模型连接失败），请稍后重试；若持续出现请联系管理员。';
 // Exported: api.js answers PER-BOT drain refusals with the same copy the
 // global sendDrainRefusals uses (one source for the user-facing line).
 export const DRAIN_REFUSAL_TEXT = '⚠️ 服务维护，未处理，请重发';
@@ -962,6 +966,12 @@ export async function defaultRunTurn(bot, msg, ac) {
       }
       case 'missing-credential': {
         await sendReply(outboundText(describeError(result)));
+        break;
+      }
+      case 'gateway-unreachable': {
+        // 裸 API 连接错误不外发（用户拿到「防火墙/代理」字样只会更困惑）；
+        // finalText 里的原话已由 bookkeep 落进台账供运维排查。
+        await sendReply(outboundText(GATEWAY_DOWN_TEXT));
         break;
       }
       default: {
