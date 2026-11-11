@@ -52,17 +52,36 @@ const packMeta = (type) => EQUIP_PACKS.find((p) => p.type === type)
 
 const errorLines = (message) => String(message ?? '').split('; ').filter((s) => s.trim() !== '');
 
-// P1-B 省 token 装备包（11-09 owner 裁定：默认勾选）：资产面就绪后自动勾上
-// rtk + ripgrep 两件工具资产（11-09 生产实测：会话重放 62k/轮 + 盲扫 280k 的
-// 对症装备）。dsh 引擎不支持 rtk（绑定面拒绝），只预选 ripgrep。用户可手动
-// 取消——默认≠强制。
+// isAssetDefaultForBot(a, providerId) — 判断某个资产对于指定 provider 是否应
+// 默认配置（预选）给新 Bot：
+// 1. 若资产显式指定了 defaultForNewBots（boolean），以显式设置为准；
+// 2. 否则默认策略（用户裁定 2026-11-11）：除了 scope-recall 外，其余资产默认全为 true；
+// 3. 约束保护：rtk 要求引擎专属目录（claude / pi 支持，dsh/codex 默认不预选避免创建后绑定必败）。
+export const isAssetDefaultForBot = (a, providerId) => {
+  if (!a || typeof a !== 'object') return false;
+  if (typeof a.defaultForNewBots === 'boolean') {
+    if (!a.defaultForNewBots) return false;
+  } else {
+    const isScopeRecall = a.type === 'tool'
+      && (a?.content?.kind === 'scope-recall' || a?.name === 'scope-recall');
+    if (isScopeRecall) return false;
+  }
+  if (a.type === 'tool' && a?.content?.kind === 'rtk') {
+    if (providerId !== 'claude' && providerId !== 'pi') return false;
+  }
+  return true;
+};
+
+// 新建 Bot 默认预选资产清单：遵循用户裁定（除 scope-recall 外全默认，支持 defaultForNewBots 显式覆盖）
+export const defaultAssetIdsForBot = (assetsList, providerId) => (assetsList ?? [])
+  .filter((a) => isAssetDefaultForBot(a, providerId))
+  .map((a) => a.id);
+
+// P1-B 省 token 装备包（11-09 owner 裁定：保留一键勾选组件按钮）：
+// rtk + ripgrep 两件工具资产。保留导出以保持历史用例兼容。
 export const tokenSaverIds = (assetsList, providerId) => (assetsList ?? [])
   .filter((a) => a?.type === 'tool'
     && (a?.content?.kind === 'ripgrep'
-      // rtk 预选只在「专属目录无忧」的引擎：claude（createBot 自动配
-      // claudeConfigDir）、pi（WAO 命名空间默认目录）。dsh 不支持 rtk；
-      // codex 无 codexHome 默认值，预选=创建页必现一条绑定失败（盲评 P1-4）
-      // ——codex 用户可手动勾选并自行配置 codexHome。
       || (a?.content?.kind === 'rtk' && (providerId === 'claude' || providerId === 'pi'))))
   .map((a) => a.id);
 
@@ -98,12 +117,12 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
       equipMode: 'shared', // 默认配发（跟源更新）——与装备台口径一致（盲评 P2-4）
     };
   });
-  // 资产清单一到就按当前引擎预选省 token 装备包（assets 为 null 时等下一拍）。
+  // 资产清单一到就按当前引擎预选默认资产（除 scope-recall 外默认全选，支持 defaultForNewBots 覆盖；assets 为 null 时等下一拍）。
   useEffect(() => {
     if (assets == null) return;
     setDraft((d) => {
       if (ports?.providers?.find((p) => p.id === d.provider)?.assets === false) return d;
-      const want = tokenSaverIds(assets, d.provider).filter((id) => !d.equip.includes(id));
+      const want = defaultAssetIdsForBot(assets, d.provider).filter((id) => !d.equip.includes(id));
       return want.length > 0 ? { ...d, equip: [...d.equip, ...want] } : d;
     });
   }, [assets]);
@@ -128,8 +147,8 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
       // 换到不支持工具的引擎（provider 无 materializeAssets，/api/ports
       // assets:false）：清掉已勾选——留着只会在创建后逐件绑定失败。
       ...(ports?.providers?.find((p) => p.id === id)?.assets === false ? { equip: [] } : {
-        // 换入支持工具的引擎：补预选省 token 装备包（去重追加，不动其他勾选）。
-        equip: [...d.equip, ...tokenSaverIds(assets, id).filter((x) => !d.equip.includes(x))],
+        // 换入支持工具的引擎：补预选默认资产包（去重追加，不动其他勾选）。
+        equip: [...d.equip, ...defaultAssetIdsForBot(assets, id).filter((x) => !d.equip.includes(x))],
       }),
     }));
   };
@@ -326,18 +345,31 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
               providerSupportsAssets ? h('div', { className: 'wb-field' },
                 h('label', null, '推荐工具包', h('span', { className: 'wb-hint', style: { marginLeft: 8 } }, '按类型一键整包勾选 / 收起')),
                 h('div', { className: 'wb-toolbar', style: { flexWrap: 'wrap' } },
+                  (() => { // 默认装备包（用户裁定 2026-11-11：除 scope-recall 外全选，支持 defaultForNewBots 覆盖）
+                    const defIds = defaultAssetIdsForBot(assets, draft.provider);
+                    if (defIds.length === 0) return null;
+                    const allDefOn = defIds.every((id) => draft.equip.includes(id));
+                    return h('button', {
+                      className: 'wb-btn' + (allDefOn ? ' wb-btn-primary' : ''),
+                      onClick: () => setDraft((d) => ({
+                        ...d,
+                        equip: allDefOn ? d.equip.filter((id) => !defIds.includes(id)) : [...new Set([...d.equip, ...defIds])],
+                      })),
+                      title: allDefOn ? '取消默认预选配置' : '一键恢复默认配置（除 scope-recall 外全默认）',
+                    }, allDefOn ? '默认配置 · 已选' : '恢复默认配置');
+                  })(),
                   (() => { // 省 token 装备包：跨类型小组件（rtk+ripgrep），一键整组
                     const ids = tokenSaverIds(assets, draft.provider);
                     if (ids.length === 0) return null;
                     const allOn = ids.every((id) => draft.equip.includes(id));
                     return h('button', {
-                      className: 'wb-btn' + (allOn ? ' wb-btn-primary' : ''),
+                      className: 'wb-btn',
                       onClick: () => setDraft((d) => ({
                         ...d,
                         equip: allOn ? d.equip.filter((id) => !ids.includes(id)) : [...new Set([...d.equip, ...ids])],
                       })),
                       title: allOn ? '取消省 token 装备包' : '一键勾选 rtk + ripgrep（实测单轮 -18% + 检索定位）',
-                    }, allOn ? '省 token 包 · 已选' : '省 token 装备包（推荐）');
+                    }, allOn ? '省 token 包 · 已选' : '省 token 装备包');
                   })(),
                   packGroups.map((g) => {
                     const allOn = g.list.every((a) => draft.equip.includes(a.id));
@@ -353,6 +385,7 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
                 h('div', { className: 'wb-group-body' },
                   assets.map((a) => {
                     const disabled = !providerSupportsAssets;
+                    const isDef = isAssetDefaultForBot(a, draft.provider);
                     return h('label', {
                       key: a.id, className: 'wb-check', style: { alignItems: 'flex-start', ...(disabled ? { opacity: 0.55 } : {}) },
                       title: disabled ? '该引擎暂不支持工具配置'
@@ -365,6 +398,7 @@ export const Wizard = ({ WAO, ports, existingIds, onDone, onOpenFile, onCreated,
                       h('span', null,
                         h('span', { className: `badge wb-atype-${a.type}` }, TYPE_LABEL[a.type] ?? a.type), ' ',
                         h('span', { className: 'wb-mono' }, a.name),
+                        isDef ? h('span', { className: 'badge', style: { marginLeft: 6, fontSize: 11, opacity: 0.85 } }, '默认') : null,
                         disabled ? h('span', { className: 'wb-hint' }, '（该引擎暂不支持工具配置）')
                           : mcpOnly(a) ? h('span', { className: 'wb-hint' }, '（Agent 自建·仅可独立）') : null,
                         a.description ? h('div', { className: 'wb-hint' }, a.description) : null));

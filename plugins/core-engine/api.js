@@ -965,6 +965,7 @@ export async function createAssetOp(state, body, { origin = 'operator' } = {}) {
     type: body.type,
     name: body.name,
     ...(body.description !== undefined ? { description: body.description } : {}),
+    ...(body.defaultForNewBots !== undefined ? { defaultForNewBots: Boolean(body.defaultForNewBots) } : {}),
     content: body.content,
     origin,
     version: 1,
@@ -1019,6 +1020,7 @@ export async function updateAssetOp(state, id, patchBody, { mcpFace = false, via
     ...asset,
     ...(patchBody.name !== undefined ? { name: patchBody.name } : {}),
     ...(patchBody.description !== undefined ? { description: patchBody.description } : {}),
+    ...(patchBody.defaultForNewBots !== undefined ? { defaultForNewBots: Boolean(patchBody.defaultForNewBots) } : {}),
     ...(patchBody.content !== undefined
       ? { content: restoreMaskedContent(patchBody.content, asset.content, asset.type) }
       : {}),

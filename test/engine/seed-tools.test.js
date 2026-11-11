@@ -1,9 +1,10 @@
 // P1-B 纯函数面：seedBuiltinToolAssets 判重语义 + wizard 的 tokenSaverIds
+// + defaultAssetIdsForBot / isAssetDefaultForBot（默认配置资产给新 Bot，2026-11-11）
 // + memoryUpgradeHint（B 产品化装备包推荐，2026-11-10）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { seedBuiltinToolAssets, memoryUpgradeHint } from '../../plugins/core-engine/assets.js';
-import { tokenSaverIds } from '../../plugins/ui-workbench/ui/wizard.js';
+import { seedBuiltinToolAssets, memoryUpgradeHint, isAssetDefaultForBot, validateAsset } from '../../plugins/core-engine/assets.js';
+import { tokenSaverIds, defaultAssetIdsForBot } from '../../plugins/ui-workbench/ui/wizard.js';
 
 test('seedBuiltinToolAssets: empty registry seeds all three tool assets (scope-recall NOT in tokenSaverIds)', () => {
   const doc = { assets: [] };
@@ -87,4 +88,60 @@ test('memoryUpgradeHint (B 产品化): fires at ≥35 notes, names the heaviest 
   assert.equal(memoryUpgradeHint(null), null);
   assert.equal(memoryUpgradeHint([]), null);
   assert.equal(memoryUpgradeHint([{ type: 'memory', name: 'm', content: {} }]), null);
+});
+
+test('defaultAssetIdsForBot & isAssetDefaultForBot: 除了 scope-recall 应该都是默认的（用户裁定 2026-11-11）', () => {
+  const assets = [
+    { id: 'a-rtk', type: 'tool', name: 'rtk', content: { kind: 'rtk' } },
+    { id: 'a-rg', type: 'tool', name: 'ripgrep', content: { kind: 'ripgrep' } },
+    { id: 'a-sr', type: 'tool', name: 'scope-recall', content: { kind: 'scope-recall' } },
+    { id: 'a-cost', type: 'tool', name: 'cost-tracker', content: { kind: 'cost-tracker' } },
+    { id: 'a-mcp', type: 'mcp', name: 'oneaix-sls', content: { servers: {} } },
+    { id: 'a-skill', type: 'skill', name: 'sls-usage', content: { name: 'sls-usage', body: '# doc' } },
+    { id: 'a-mem', type: 'memory', name: 'biz-memory', content: { notes: ['note'] } },
+    // 显式配置覆盖
+    { id: 'a-sr-forced', type: 'tool', name: 'scope-recall-custom', content: { kind: 'scope-recall' }, defaultForNewBots: true },
+    { id: 'a-rg-disabled', type: 'tool', name: 'ripgrep-optout', content: { kind: 'ripgrep' }, defaultForNewBots: false },
+  ];
+
+  // claude 引擎下：
+  // 1. scope-recall 缺省时必须为 false（排除）
+  // 2. 其余普通资产缺省时全部为 true（包含 rtk, ripgrep, cost-tracker, mcp, skill, memory）
+  // 3. 显式覆盖：a-sr-forced 强制为 true；a-rg-disabled 强制为 false
+  const claudeDefs = defaultAssetIdsForBot(assets, 'claude');
+  assert.ok(claudeDefs.includes('a-rtk'), 'rtk is default for claude');
+  assert.ok(claudeDefs.includes('a-rg'), 'ripgrep is default');
+  assert.ok(!claudeDefs.includes('a-sr'), 'scope-recall is NOT default by default');
+  assert.ok(claudeDefs.includes('a-cost'), 'cost-tracker is default');
+  assert.ok(claudeDefs.includes('a-mcp'), 'mcp is default');
+  assert.ok(claudeDefs.includes('a-skill'), 'skill is default');
+  assert.ok(claudeDefs.includes('a-mem'), 'memory is default');
+  assert.ok(claudeDefs.includes('a-sr-forced'), 'scope-recall with defaultForNewBots=true is included');
+  assert.ok(!claudeDefs.includes('a-rg-disabled'), 'asset with defaultForNewBots=false is excluded');
+
+  // 引擎兼容性硬边界保护：
+  // dsh 和 codex 不支持 rtk 自动预选（避免向导后绑定报错）
+  const dshDefs = defaultAssetIdsForBot(assets, 'dsh');
+  assert.ok(!dshDefs.includes('a-rtk'), 'rtk unsupported on dsh');
+  assert.ok(dshDefs.includes('a-rg'), 'ripgrep supported on dsh');
+  assert.ok(dshDefs.includes('a-mcp'), 'mcp supported on dsh');
+
+  const codexDefs = defaultAssetIdsForBot(assets, 'codex');
+  assert.ok(!codexDefs.includes('a-rtk'), 'rtk unsupported for default on codex');
+  assert.ok(codexDefs.includes('a-rg'), 'ripgrep supported on codex');
+
+  // 空值/脏值防护
+  assert.deepEqual(defaultAssetIdsForBot(null, 'claude'), []);
+  assert.deepEqual(defaultAssetIdsForBot([], 'claude'), []);
+  assert.equal(isAssetDefaultForBot(null, 'claude'), false);
+  assert.equal(isAssetDefaultForBot({}, 'claude'), true);
+});
+
+test('validateAsset: defaultForNewBots must be boolean if present', () => {
+  const valid = { type: 'skill', name: 'test-skill', content: { name: 'test-skill', body: '# test' }, defaultForNewBots: true };
+  assert.deepEqual(validateAsset(valid), []);
+
+  const invalid = { type: 'skill', name: 'test-skill', content: { name: 'test-skill', body: '# test' }, defaultForNewBots: 'yes' };
+  const errs = validateAsset(invalid);
+  assert.ok(errs.some((e) => e.includes('defaultForNewBots must be a boolean')));
 });

@@ -373,6 +373,9 @@ export function validateAsset(asset, { others = [] } = {}) {
   if (!ASSET_TYPES.includes(asset.type)) errors.push(`type must be one of ${ASSET_TYPES.join(', ')}`);
   checkSlug(asset.name, 'name', errors);
   checkText(asset.description, 'description', { max: LIMITS.description }, errors);
+  if (asset.defaultForNewBots !== undefined && typeof asset.defaultForNewBots !== 'boolean') {
+    errors.push('defaultForNewBots must be a boolean');
+  }
   validateContent(asset.type, asset.content, errors);
   if (errors.length === 0) {
     for (const other of others) {
@@ -383,6 +386,29 @@ export function validateAsset(asset, { others = [] } = {}) {
     }
   }
   return errors;
+}
+
+// isAssetDefaultForBot(asset, providerId) — 判断某个资产对于指定 provider 是否应
+// 默认配置（预选）给新 Bot：
+// 1. 若资产显式指定了 defaultForNewBots（boolean），以显式设置为准；
+// 2. 否则默认策略（用户裁定 2026-11-11）：除了 scope-recall 外，其余资产默认全为 true；
+// 3. 约束保护：rtk 要求引擎专属目录（claude / pi 支持，dsh/codex 默认不预选避免创建后绑定必败）。
+export function isAssetDefaultForBot(asset, providerId) {
+  if (!asset || typeof asset !== 'object') return false;
+  // 显式配置优先
+  if (typeof asset.defaultForNewBots === 'boolean') {
+    if (!asset.defaultForNewBots) return false;
+  } else {
+    // 缺省时：除了 scope-recall，其余都默认
+    const isScopeRecall = asset.type === 'tool'
+      && (asset.content?.kind === 'scope-recall' || asset.name === 'scope-recall');
+    if (isScopeRecall) return false;
+  }
+  // rtk 工具的引擎兼容性硬约束（避免盲评 P1-4：codex/dsh 默认勾选会导致创建后绑定必败）
+  if (asset.type === 'tool' && asset.content?.kind === 'rtk') {
+    if (providerId !== 'claude' && providerId !== 'pi') return false;
+  }
+  return true;
 }
 
 // —— position-based masking (§8.1 P1) ————————————————————————————————————

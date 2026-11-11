@@ -5,6 +5,20 @@
 
 ## [Unreleased]
 
+### Added — 资产默认配置给新 Bot 支持（除 scope-recall 外全选默认，2026-11-11）
+
+- **资产模型与校验**：资产支持可选属性 `defaultForNewBots?: boolean`（在 `validateAsset`、
+  `createAssetOp`、`updateAssetOp` 中支持）；纯函数 `isAssetDefaultForBot(asset, providerId)`
+  实现用户裁定逻辑：显式设置优先，未设置时**除 scope-recall 外全默认开启**；同时保留 rtk 对
+  dsh/codex 的专属目录兼容性门禁，避免创建后绑定报错。
+- **创建机器人向导（wizard.js）**：资产预选函数从仅预选 tokenSaver 升级为 `defaultAssetIdsForBot`，
+  向导加载资产或切换引擎时默认勾选全部默认资产；工具栏增加「恢复默认配置」一键按钮；
+  资产列表对默认资产增加「默认」标记徽章。
+- **工具库管理（_legacy/assets.js）**：新建/编辑工具弹窗增加「新机器人默认配置」下拉选项
+  （跟随系统规则/强制默认开启/默认关闭）；工具表格增加默认状态徽章展示。
+- **测试覆盖**：`test/engine/seed-tools.test.js` 扩充 2 个测试套件，覆盖缺省全选、scope-recall
+  排除、显式布尔覆盖、引擎兼容性门禁与 schema 校验；全量 `npm test` 882/882 绿。
+
 ### Fixed — 多模态信封信息面 + 测试面中止话术（ai-service 客服 bot 交付配套，2026-11-11）
 
 - **provider-claude runner**：送达成功的图片附件在信封文本块追加本地路径注记

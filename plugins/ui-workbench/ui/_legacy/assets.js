@@ -38,6 +38,7 @@ const blankForm = (type = 'skill') => ({
   type, name: '', description: '',
   skillName: '', skillDescription: '', body: '',
   servers: '', text: '', notes: '', kind: 'rtk', extraHints: '',
+  defaultForNewBots: null, // null=跟随系统默认规则（除 scope-recall 外全默认开启）
 });
 
 // 从（已剥敏的）清单行回填表单：mcp 的 env/headers 值已是 __MASKED__ 位置掩码。
@@ -49,6 +50,7 @@ const formFromAsset = (a) => ({
   notes: Array.isArray(a.content?.notes) ? a.content.notes.join('\n') : '',
   kind: a.content?.kind === 'ripgrep' ? 'ripgrep' : 'rtk',
   extraHints: a.content?.options?.extraHints ?? '',
+  defaultForNewBots: typeof a.defaultForNewBots === 'boolean' ? a.defaultForNewBots : null,
 });
 
 // 表单 → POST/PATCH body。本地只挡「必填缺失/JSON 不解析/slug 不合法」这类
@@ -91,6 +93,8 @@ const serializeForm = (f) => {
   }
   const body = { type: f.type, name, content };
   if (f.description.trim() !== '') body.description = f.description.trim();
+  if (typeof f.defaultForNewBots === 'boolean') body.defaultForNewBots = f.defaultForNewBots;
+  else if (f.defaultForNewBots === null) body.defaultForNewBots = null;
   return { body, errors };
 };
 
@@ -454,6 +458,20 @@ export default {
           }),
           h('span', { className: `wb-counter${form.description.length > DESC_MAX ? ' over' : ''}` }, `${form.description.length} / ${DESC_MAX}`)),
         ...contentEditor(),
+        h('div', { className: 'wb-field' },
+          h('label', null, '新机器人默认配置',
+            h('span', { className: 'wb-hint', style: { marginLeft: 8 } }, '新建机器人向导中是否默认自动勾选配发')),
+          h('select', {
+            className: 'wb-select',
+            value: form.defaultForNewBots === null ? 'default' : (form.defaultForNewBots ? 'true' : 'false'),
+            onChange: (e) => {
+              const v = e.target.value;
+              setForm({ ...form, defaultForNewBots: v === 'default' ? null : (v === 'true') });
+            },
+          },
+            h('option', { value: 'default' }, '跟随系统规则（除 scope-recall 外默认开启）'),
+            h('option', { value: 'true' }, '强制默认开启（向导默认自动勾选）'),
+            h('option', { value: 'false' }, '默认关闭（向导默认不勾选，需手动勾选）'))),
         formErrors != null && formErrors.length > 0 ? h('div', { className: 'wb-error-box' },
           h('div', null, editor.mode === 'edit' ? '保存未通过：' : '添加未通过：'),
           h('ul', null, formErrors.map((e, i) => h('li', { key: i }, e)))) : null,
@@ -504,10 +522,25 @@ export default {
               h('th', null, '来源'), h('th', null, '更新时间'), h('th', null, '操作'))),
             h('tbody', null, assets.map((a) => {
               const holders = holdersOf(a.id);
+              const isDef = a.defaultForNewBots === true
+                ? '强制开启'
+                : a.defaultForNewBots === false
+                  ? '已关闭'
+                  : (a.type === 'tool' && (a.content?.kind === 'scope-recall' || a.name === 'scope-recall'))
+                    ? null
+                    : '默认';
               return h('tr', { key: a.id },
                 h('td', null, h(TypeBadge, { h, type: a.type })),
                 h('td', null,
-                  h('div', { className: 'wb-mono' }, a.name),
+                  h('div', { className: 'wb-mono', style: { display: 'flex', alignItems: 'center', gap: 6 } },
+                    a.name,
+                    isDef ? h('span', {
+                      className: 'badge',
+                      style: { fontSize: 11, opacity: isDef === '已关闭' ? 0.55 : 0.85 },
+                      title: isDef === '强制开启' ? '强制默认：新建机器人向导中默认自动勾选配发'
+                        : isDef === '已关闭' ? '默认关闭：新建机器人向导中默认不勾选'
+                        : '规则默认：新建机器人向导中默认自动勾选配发（除 scope-recall 外全默认）',
+                    }, isDef) : null),
                   a.description ? h('div', { className: 'wb-sub' }, a.description) : null,
                   h('div', { className: 'wb-sub' }, `v${a.version ?? '?'} · `, h('span', { className: 'wb-mono' }, a.id))),
                 h('td', null, a.bindings > 0
