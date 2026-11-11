@@ -40,3 +40,7 @@
 - pi 模型全败时 exit 0——错误文本只在 `auto_retry_end.finalError`。
 - `--model` 带斜杠 id 必须配 `--provider`，否则被解析成 provider/model。
 - magpie 对 localhost 不校验 caller key（missing-credential 不可真机触发）。
+
+## 0.2.1 (2026-11-12)
+
+- **shell 超时护栏**:pi 的 bash/powershell 工具 timeout 无默认值,模型不带参数的命令可挂到引擎硬帽(11-11 实录:`find /` 挂死企微轮 13+ 分钟)。materializeConfig 落盘 `extensions/wao-shell-guard.js`(tool_call 事件原位补缺省/钳制超上限),runner 恒加 `-e` 并注入 `WAO_BASH_TIMEOUT_SEC`(`bashTimeoutSec` 键,默认 90s)。扩展只依赖文档化事件,版本耦合最低;Mac 真机验证:sleep45 无超时→精确按注入值被掐。

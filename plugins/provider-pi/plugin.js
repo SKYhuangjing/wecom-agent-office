@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { createRunner } from './runner.js';
-import { writeBotModels, removeBotModels, piAgentDirFor } from './models.js';
+import { writeBotModels, removeBotModels, piAgentDirFor, writeShellGuard, shellGuardSeconds } from './models.js';
 
 const PORT_ID = 'pi';
 const APIS = ['anthropic-messages', 'openai-completions', 'openai-responses', 'google-generative-ai'];
@@ -149,6 +149,7 @@ export default {
         { key: 'api', label: '网关协议（写入 models.json）', type: 'enum', options: APIS, default: 'anthropic-messages' },
         { key: 'thinking', label: '思维档位（→ --thinking；off 时省略该 flag）', type: 'enum', options: THINKING_LEVELS },
         { key: 'piArgs', label: '额外 CLI 参数（列表，逐项原样追加；不校验内容）', type: 'list' },
+        { key: 'bashTimeoutSec', label: 'shell 命令超时上限秒数（bash/powershell 工具缺省 timeout 的注入值，默认 90；物化 wao-shell-guard 扩展经 -e 加载）', type: 'string', placeholder: '90' },
         { key: 'apiKeyEnv', label: '凭证环境变量名（models.json 写 $该名字，值来自 model.apiKey 字面量注入；默认 PI_MAGPIE_API_KEY）', type: 'string', default: 'PI_MAGPIE_API_KEY' },
         { key: 'piBin', label: 'pi 可执行文件（PATH 或绝对路径）', type: 'string', default: 'pi' },
         { key: 'piAgentDir', label: 'pi agent 目录', hint: '默认 ~/.pi/agent-wao-<botId>；models.json 与会话数据都在其下，删除机器人保留会话', type: 'string' },
@@ -235,6 +236,14 @@ export default {
       // runner injects, so no secret lands on disk. A throw keeps the
       // last-good file and bubbles to the API as a 400 with this message —
       // writeBotModels errors name the path they worked from.
+      //
+      // The SHELL TIMEOUT GUARD extension rides the same hook (2026-11-11
+      // live incident): pi's bash/powershell tools have NO default timeout —
+      // a model-chosen `find /` hung a WeCom turn 13+ min. The runner loads
+      // the file via -e and injects WAO_BASH_TIMEOUT_SEC (pc.bashTimeoutSec,
+      // default 90). WAO-owned namespaced path, deterministic bytes, always
+      // overwritten — no foreign-file concern (same stance as models.json in
+      // the default dir; a custom piAgentDir is equally per-bot owned).
       async materializeConfig(bot, { log } = {}) {
         if (typeof bot?.id !== 'string' || bot.id === '') {
           throw new Error('materializeConfig: bot.id is required');
@@ -250,7 +259,9 @@ export default {
           model: pc.model,
           thinking: pc.thinking,
         });
+        const guardPath = writeShellGuard(piAgentDirFor({ botId: bot.id, piAgentDir: pc.piAgentDir }));
         log?.info?.(`provider-pi: materialized models.json → ${res.path}`);
+        log?.info?.(`provider-pi: shell timeout guard → ${guardPath} (-e, WAO_BASH_TIMEOUT_SEC=${shellGuardSeconds(pc)})`);
         return { changed: true, path: res.path };
       },
 

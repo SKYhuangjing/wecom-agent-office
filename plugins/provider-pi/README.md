@@ -45,3 +45,12 @@ pi -p --mode json [--session <id>] [--thinking <lvl>] --provider <p> --model <id
 - magpie 对 localhost **不校验 caller key**——missing-credential 无法真机触发,靠正则
   +fake 层锁定(与 codex 锁文案同款闭案)。
 - 带斜杠的模型 id 必须配 `--provider`,否则被解析成 provider/model 硬报错。
+
+## shell 超时护栏(2026-11-12)
+
+pi 的 bash/powershell 工具 timeout 参数无默认值——模型不带参数的命令(实测 `find /`)可挂满引擎 30 分钟硬帽。防护两层:
+
+- **本插件层**:materializeConfig 落盘 `extensions/wao-shell-guard.js`,runner 恒加 `-e` 加载并注入 `WAO_BASH_TIMEOUT_SEC`;`providerConfig.bashTimeoutSec`(默认 90)即上限,缺省填充+超上限钳制,bash/powershell 双覆盖。
+- **引擎层**:`providerConfig.hardTimeoutMin`(core-engine)per-bot 收紧单轮硬帽(会话型 bot 建议 8-10)。
+
+Windows 提示:pi 另有原生 powershell 工具(优先 pwsh 7),`piArgs: ["--tools","+powershell"]` 可加配——超时护栏同样覆盖它。

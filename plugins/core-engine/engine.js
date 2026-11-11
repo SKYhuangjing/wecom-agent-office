@@ -280,6 +280,17 @@ export function toolLoopMaxCalls(bot) {
   return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : TOOL_LOOP_MAX_CALLS_DEFAULT;
 }
 
+// 单轮硬超时的 per-bot 覆盖（2026-11-11 PC1 实录引入）：providerConfig.
+// hardTimeoutMin（分钟，正有限数才有效）→ 毫秒；非法/缺省 → 引擎默认 30min。
+// 会话型 bot 要远低于默认——实锤：一条 `find /` bash 调用挂死企微轮 13+ 分钟，
+// 30 分钟硬帽意味着用户干等。防御式解析同 toolLoopMaxCalls（未知键自由通过）。
+export function hardTimeoutMsOf(bot, limits) {
+  const fallback = limits?.hardTimeoutMs;
+  const v = bot?.providerConfig?.hardTimeoutMin;
+  if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) return fallback;
+  return Math.floor(v * 60_000);
+}
+
 // 纯判定（导出供单测）：pe 无时间戳（历史遗留条目）视为未过期——升级后首条
 // 消息不惊扰既有会话，下一次 upsert 起才参与 TTL。
 export function isSessionStale(pe, now, ttlMin) {
@@ -316,7 +327,7 @@ export async function defaultRunTurn(bot, msg, ac) {
   const streaming = caps.stream !== false;
   const pushable = caps.push !== false;
   const warnAt = Math.max(0, (caps.streamDeadlineMs ?? L.streamDeadlineMs) - L.warnLeadMs);
-  const hardTimeoutMs = L.hardTimeoutMs;
+  const hardTimeoutMs = hardTimeoutMsOf(bot, L);
   const budgetPerMin = L.outboundBudgetPerMin;
   // Masking is ALWAYS on: an injected middleware may replace the pattern, but
   // a missing one must not silently become a passthrough. `middleware` may be

@@ -38,7 +38,7 @@ import { spawnCli } from '../../src/kernel/spawn.js';
 import { childEnv } from '../../src/kernel/safeEnv.js';
 import { readFileSync } from 'node:fs';
 import { readHistory } from './history.js';
-import { piAgentDirFor } from './models.js';
+import { piAgentDirFor, shellGuardPathFor, shellGuardSeconds } from './models.js';
 
 // pi's session-conflict wording is UNKNOWN (no two-process session contention
 // observed on 1.5.0); the patterns are the generic shapes the other runners
@@ -133,6 +133,10 @@ export function createRunner({ bot, providerConfig, assets, log, escalationMs = 
   // bot without explicit piAgentDir saw no gateway and died with `Model not
   // found`, exit 1). One source of truth for the default: models.js.
   extraEnv.PI_CODING_AGENT_DIR = pc.piAgentDir || piAgentDirFor({ botId: bot?.id });
+  // Shell timeout guard (models.js header has the incident): the runner loads
+  // the materialized extension explicitly and injects its ceiling — pi's
+  // bash/powershell tools otherwise have NO default timeout.
+  extraEnv.WAO_BASH_TIMEOUT_SEC = String(shellGuardSeconds(pc));
   const logger = log ?? console;
 
   function run({ prompt, sessionId, signal, timeoutMs, onEvent, attachments } = {}) {
@@ -151,12 +155,15 @@ export function createRunner({ bot, providerConfig, assets, log, escalationMs = 
 
       // Fresh AND resume legs share one argv shape; the resume leg adds
       // `--session <id>` (partial uuid accepted, baseline-proven). Asset
-      // flags ride after the provider's own knobs, binding order.
+      // flags ride after the provider's own knobs, binding order. The shell
+      // guard extension rides BEFORE piArgs so an operator can override the
+      // -e slot deliberately (last -e wins in pi).
       const args = ['-p', '--mode', 'json'];
       if (sessionId) args.push('--session', String(sessionId));
       if (pc.thinking && pc.thinking !== 'off') args.push('--thinking', String(pc.thinking));
       if (pc.provider) args.push('--provider', String(pc.provider));
       if (m?.model) args.push('--model', String(m.model));
+      args.push('-e', shellGuardPathFor({ botId: bot?.id, piAgentDir: pc.piAgentDir }));
       if (Array.isArray(pc.piArgs)) {
         for (const entry of pc.piArgs) args.push(String(entry));
       }
