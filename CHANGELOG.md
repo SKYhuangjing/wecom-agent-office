@@ -5,6 +5,17 @@
 
 ## [Unreleased]
 
+### Fixed — 多模态信封信息面 + 测试面中止话术（ai-service 客服 bot 交付配套，2026-11-11）
+
+- **provider-claude runner**：送达成功的图片附件在信封文本块追加本地路径注记
+  （codex `-i`/pi `@file` 走 argv 天然对模型可见，claude 的 base64 块此前不带
+  路径——补齐三家信息面对齐；归档/转存类工具（如 ai-feedback --media）从此可
+  引用路径）。契约 `attachment-fanout.test.js` 同步（exact text 断言放宽为
+  前缀+路径包含；无图送达不注记）。
+- **api.js testBotOp**：非 completed 探针的 `finalText` 不再透传引擎半截推理语
+  （盲评 P1：aborted 时中间文本会被当"bot 给用户的话"），换固定话术；原文降级
+  `detail.probeTail`（运维面），原始 stderrTail 维持 500 字截断不变。
+
 ### Added — 知识资产模块：呈现 + AI 自主整理 + 版本回滚（DESIGN-KNOWLEDGE，2026-11-11）
 
 bot 的记忆/文档/提示词从黑盒变成平台一等公民资产——**看得见**（bot 维度知识 tab +

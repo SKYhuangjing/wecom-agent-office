@@ -71,12 +71,14 @@ test('claude: image attachment rides the stream-json envelope (fresh leg)', asyn
     assert.ok(argv.includes('--input-format stream-json'), `argv carries --input-format (${argv.trim()})`);
 
     const envelope = JSON.parse(readFileSync(join(dir, 'fake-home', 'last-envelope.json'), 'utf8'));
-    assert.equal(envelope.text, '这张图是什么颜色');
+    assert.ok(envelope.text.startsWith('这张图是什么颜色'), `text keeps prompt as prefix (${envelope.text})`);
+    assert.ok(envelope.text.includes(imgPath), 'delivered image path rides the envelope as a system note');
+    assert.ok(!envelope.text.includes('未能送达'), 'no skip note for a fully-delivered image');
     assert.equal(envelope.images.length, 1);
     assert.equal(envelope.images[0].media_type, 'image/png');
     assert.equal(envelope.images[0].bytes, PNG_BYTES.length, 'base64 block decodes back to the full image');
     // last-prompt 在信封模式下是解码后的 text 块（fake-claude 契约）
-    assert.equal(readFileSync(join(dir, 'fake-home', 'last-prompt'), 'utf8'), '这张图是什么颜色');
+    assert.ok(readFileSync(join(dir, 'fake-home', 'last-prompt'), 'utf8').startsWith('这张图是什么颜色'));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -94,7 +96,7 @@ test('claude: empty prompt (pure image) → placeholder text block; file attachm
     });
     assert.equal(first.code, 'completed');
     let envelope = JSON.parse(readFileSync(join(dir, 'fake-home', 'last-envelope.json'), 'utf8'));
-    assert.equal(envelope.text, '（用户发来图片，无文字说明）', 'pure-image placeholder text block');
+    assert.ok(envelope.text.startsWith('（用户发来图片，无文字说明）'), 'pure-image placeholder text block');
 
     // resume 腿 + 图片信封（probe 实证组合）
     const second = await mk().run({
@@ -107,7 +109,8 @@ test('claude: empty prompt (pure image) → placeholder text block; file attachm
     assert.ok(argv.includes(`--resume ${first.sessionId}`), 'resume leg argv');
     assert.ok(argv.includes('--input-format stream-json'), 'resume leg keeps --input-format');
     envelope = JSON.parse(readFileSync(join(dir, 'fake-home', 'last-envelope.json'), 'utf8'));
-    assert.equal(envelope.text, '继续看这张图');
+    assert.ok(envelope.text.startsWith('继续看这张图'));
+    assert.ok(envelope.text.includes(imgPath), 'resume leg envelope also carries the path note');
     assert.equal(envelope.images.length, 1);
 
     // kind:'file' 条目不进信封（引擎已内联/落盘进 prompt）
@@ -117,6 +120,7 @@ test('claude: empty prompt (pure image) → placeholder text block; file attachm
     });
     envelope = JSON.parse(readFileSync(join(dir, 'fake-home', 'last-envelope.json'), 'utf8'));
     assert.equal(envelope.images.length, 0, 'file-kind attachments never become image blocks');
+    assert.equal(envelope.text, '只带文件', 'no path note when no image was delivered');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

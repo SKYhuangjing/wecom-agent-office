@@ -795,9 +795,14 @@ async function testBotOp(state, id, reqBody) {
     clearTimeout(guardBail);
   }
   usageAcc.observeResult(result);
+  // 中止/超时的探针不得把引擎中间文本当最终回复外发（盲评 P1：aborted 时
+  // finalText 可能是半截推理语，直接返回会误导"这就是 bot 会给用户的话"）。
+  // 非 completed 一律换成固定话术；原始文本降级进 detail.probeTail 供运维排查。
+  const probeDone = result?.code === 'completed';
+  const rawProbeTail = result?.finalText ?? '';
   const body = {
     code: result?.code ?? 'error',
-    finalText: result?.finalText ?? '',
+    finalText: probeDone ? rawProbeTail : '本轮处理超时被中止，未能生成完整回复。可携带原问题重试，或用 sessionId 续跑。',
     sessionId: result?.sessionId ?? null,
     events,
     usage: usageAcc.summary(),
@@ -811,6 +816,7 @@ async function testBotOp(state, id, reqBody) {
     body.detail = d == null || typeof d !== 'object' ? null : {
       exitCode: d.exitCode ?? null,
       stderrTail: typeof d.stderrTail === 'string' ? d.stderrTail.slice(0, 500) : (d.stderrTail ?? null),
+      probeTail: rawProbeTail ? rawProbeTail.slice(0, 500) : null,
     };
     try {
       body.errorText = typeof port.describeError === 'function'

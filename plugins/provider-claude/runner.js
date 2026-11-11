@@ -76,6 +76,7 @@ const MAX_ENVELOPE_BASE64_BYTES = 9 * 1024 * 1024;
 function buildEnvelope(prompt, attachments) {
   const skipped = [];
   const imageBlocks = [];
+  const deliveredPaths = [];
   let budget = MAX_ENVELOPE_BASE64_BYTES;
   for (const a of Array.isArray(attachments) ? attachments : []) {
     if (a == null || typeof a !== 'object' || a.kind !== 'image') continue;
@@ -100,8 +101,14 @@ function buildEnvelope(prompt, attachments) {
       type: 'image',
       source: { type: 'base64', media_type: a.mediaType ?? 'image/png', data },
     });
+    deliveredPaths.push(a.path);
   }
   let text = typeof prompt === 'string' && prompt !== '' ? prompt : '（用户发来图片，无文字说明）';
+  // 成功送达的图片附上本地路径注记（codex -i / pi @file 走 argv 天然对模型可见；
+  // claude 的 base64 块不带路径——补齐三家的信息面对齐，供归档/转存类工具引用）。
+  if (deliveredPaths.length > 0) {
+    text += `\n（系统注记：图片附件已缓存到本地，路径：${deliveredPaths.join('；')}——需要归档/转存该图片时引用此路径。）`;
+  }
   if (skipped.length > 0) {
     text += `\n\n（系统注记：有 ${skipped.length} 张图片未能送达（读取失败或图片总量超限）——请向用户说明，建议重发或分批发送。）`;
   }
