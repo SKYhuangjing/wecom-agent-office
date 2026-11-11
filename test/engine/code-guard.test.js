@@ -110,8 +110,9 @@ export default {
   },
 };`;
 
-// Fake provider: the canned reply ALWAYS carries a python fence — the guard
-// (not the fake) decides whether the colleague ever sees it.
+// Fake provider: the canned reply ALWAYS carries a python fence AND a
+// maskable platform name — the guard (not the fake) decides what the
+// colleague ever sees.
 const FAKE_PROVIDER = `
 export default {
   manifest: { id: 'provider-fake', name: 'Fake Provider', type: 'provider', version: '0.1.0', requires: { kernel: '^1' } },
@@ -129,7 +130,7 @@ export default {
             onEvent?.({ type: 'text', text: '开始' });
             return {
               ok: true, code: 'completed', aborted: false,
-              finalText: '开头说明\\n\`\`\`python\\nimport os\\n\`\`\`\\n结尾说明 ' + prompt,
+              finalText: '开头说明\\n\`\`\`python\\nimport os\\n\`\`\`\\n管理端（SkillHub）更新 结尾 ' + prompt,
               sessionId: sessionId || 'session-fake-' + bot.id,
               reason: { kind: 'completed', usage: { inputTokens: 9, outputTokens: 9 } }, detail: {},
             };
@@ -190,24 +191,31 @@ after(async () => {
 });
 
 test('kernel: codeGuard bot ships the reply WITHOUT the fence; opted-out bot keeps it', async () => {
-  const mk = async (id, codeGuard) => {
+  const mk = async (id, codeGuard, maskTerms) => {
     const resp = await post('/api/bots', {
       id, name: id, enabled: true, channel: 'fakechan',
       account: { endpoint: 'http://fake.local' }, allowedUsers: [],
-      provider: 'fakeprov', providerConfig: { cwd: '/tmp', ...(codeGuard ? { codeGuard: true } : {}) },
+      provider: 'fakeprov', providerConfig: {
+        cwd: '/tmp',
+        ...(codeGuard ? { codeGuard: true } : {}),
+        ...(maskTerms ? { maskTerms } : {}),
+      },
     });
     assert.equal(resp.status, 200, `create ${id}`);
     return (await (await get('/api/bots')).json()).bots.find((b) => b.id === id);
   };
 
-  const guarded = await mk('guarded', true);
-  const plain = await mk('plain', false);
+  const guarded = await mk('guarded', true, ['SkillHub']);
+  const plain = await mk('plain', false, null);
 
   const gFrame = await driveTurn(guarded, '写个爬虫');
   assert.ok(gFrame.text.includes(STRIP_NOTE), 'fence replaced with business copy');
   assert.ok(!gFrame.text.includes('import os'), 'no code body ships');
-  assert.ok(gFrame.text.includes('开头说明') && gFrame.text.includes('结尾说明'), 'surrounding text intact');
+  assert.ok(!gFrame.text.includes('SkillHub'), 'listed term masked on the real outbound chain');
+  assert.ok(gFrame.text.includes('管理端（▇▇）'), 'mask is a whole-term swap in place');
+  assert.ok(gFrame.text.includes('开头说明') && gFrame.text.includes('结尾'), 'surrounding text intact');
 
   const pFrame = await driveTurn(plain, '写个爬虫');
   assert.ok(pFrame.text.includes('```python'), 'opted-out bot ships the fence verbatim');
+  assert.ok(pFrame.text.includes('SkillHub'), 'opted-out bot ships the term verbatim');
 });
