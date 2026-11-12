@@ -372,14 +372,12 @@ export default {
                   notes.push({ assetId: entry.assetId, detail: `rg 未安装：ripgrep 指引已注入但本机无效（预检不失败）——${rgInstallHint()} 后生效` });
                 }
               } else if (entry.content?.kind === 'rtk') {
-                // 2026-11-12 PC1 实录:pi 面不支持 rtk(extensions/rtk.ts 为版本
-                // 耦合产物,不由 WAO 伪造)。曾经的做法是照常计划 rtk-init、让
-                // core 执行器抛错——结果整个 materialize 失败→manifest 缺失→
-                // targetsFor 降级裸 plan→--skill/--append-system-prompt(记忆)
-                // 全部不上车,模型每轮靠 ls/find 现场找技能。改为 note 级跳过,
-                // 单资产缺失不再拖垮其余资产送达(单资产失败的整体降级是
-                // core-materializer 的已知边界,记入 HANDOFF 待产品化)。
-                notes.push({ assetId: entry.assetId, detail: 'rtk 暂不支持 pi 面（extensions 版本耦合）——已跳过，不影响其他资产送达' });
+                // §7.1 (W3 T3): plan the rtk-init write — core-engine's
+                // materializer executes（V5 实证 rtk 1.1.0 `--agent pi` 尊重
+                // PI_CODING_AGENT_DIR：extensions/rtk.ts + .rtk-agents）。目标
+                // 取 agentDir（自定义或 WAO 默认目录——pi 的装备面本就是 per-bot
+                // 命名空间，非共享主目录，checkBind 同判）。
+                writes.push({ kind: 'rtk-init', target: agentDir, flavor: 'pi', for: entry.assetId, owned: false });
               }
               break;
             default:

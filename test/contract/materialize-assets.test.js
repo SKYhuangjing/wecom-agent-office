@@ -580,40 +580,6 @@ test('codex: env value with \\n/\\r/\\t materializes as escaped TOML — never a
   }
 });
 
-// pi + rtk 资产(2026-11-12 PC1 生产实录):pi 面不支持 rtk——曾照常计划 rtk-init
-// 使 core 执行器抛错,整个 materialize 失败→manifest 缺失→targetsFor 降级裸
-// plan→--skill/--append-system-prompt(记忆)全部不上车。断言:rtk 改 note 级跳
-// 过,materialize 成功,其余资产照常送达+enrich。
-test('pi: rtk asset skips with a note — materialize still succeeds, skills/memory still ride', async () => {
-  const booted = await bootProvider(join(REPO, 'plugins/provider-pi'));
-  try {
-    const sc = scenario('pi-rtk');
-    const agentDir = join(sc, 'agent-wao-pi-b3');
-    mkdirSync(join(sc, 'cwd'), { recursive: true });
-    const mat = matOver(booted.impl, dataDirOf('pi-rtk', sc));
-    const bot = { id: 'pi-b3', provider: 'pi', providerConfig: { cwd: join(sc, 'cwd'), model: { model: 'm1' }, piAgentDir: agentDir } };
-    const RTK = { assetId: 'ast-rtk1', type: 'tool', name: 'rtk', mode: 'shared', content: { kind: 'rtk' } };
-
-    // 成功本身即断言:曾经的 rtk-init 计划会让这里 rejects(整个 materialize 抛错)
-    await mat.materialize(bot, mkPlan([SKILL, RTK, MEMORY]));
-    const skillFile = join(agentDir, 'skills', 'wao-company', 'SKILL.md');
-    assert.ok(existsSync(skillFile), 'skill file still written');
-    assert.ok(existsSync(join(agentDir, 'wao-memory.md')), 'memory file still written');
-    const manifest = JSON.parse(readFileSync(join(dataDirOf('pi-rtk', sc), 'assets', 'pi-b3', 'manifest.json'), 'utf8'));
-    assert.ok(!String(manifest.lastResult ?? '').startsWith('failed:'), `manifest not in failed state: ${manifest.lastResult}`);
-    assert.ok(manifest.writes.some((w) => w?.path === skillFile), 'skill write recorded in manifest');
-
-    // enrich survives: skill/memory entries carry targets for the runner
-    const enriched = mat.targetsFor(bot, mkPlan([SKILL, RTK, MEMORY]));
-    const skillEntry = enriched.find((e) => e?.type === 'skill');
-    const memEntry = enriched.find((e) => e?.type === 'memory');
-    assert.equal(skillEntry?.target, skillFile, '--skill value enriches');
-    assert.equal(memEntry?.target, join(agentDir, 'wao-memory.md'), 'memory target enriches');
-  } finally {
-    await booted.stop();
-  }
-});
-
 // ————————————————————————————————————————————————————————————————————————————
 // claude — owned 真值 (W3 T2 review Minor 1): host file pre-dating our first
 // write records owned:false and survives unload by strip, never whole-delete
