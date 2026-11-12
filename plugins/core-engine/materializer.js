@@ -668,9 +668,18 @@ export function createMaterializer({ ports, dataDir, log, rtkBin = 'rtk', scopeR
     }
     // 回退路径（§7.1 双路径之二）：WAO 自写 hook 条目（JSON 条目型——清单记
     // 全文、卸载精确匹配删）。仅 claude/codex 有 JSON hook 面；pi 的扩展文件
-    // 与 rtk 版本耦合，伪造比失败更糟 → failed。
+    // 与 rtk 版本耦合，伪造比失败更糟 → 降级态 failed（2026-11-12 PC1 实录改
+    // 判：这里曾 throw，单优化器缺席把整个 materialize 打成 failed 态→manifest
+    // 降级→--skill/--append-system-prompt(记忆)全部不上车，模型每轮现场找技
+    // 能。rtk 是优化器不是依赖：缺席记 note 保绑定，rematerialize 可重试，
+    // 绝不拖垮其他资产）。
     if (spec.hookFile == null) {
-      throw new Error(`rtk 主路径不可用（${fallbackReason}）且 pi 无 JSON hook 面（extensions/rtk.ts 为版本耦合产物，不由 WAO 伪造）——修复 rtk 后 rematerialize`);
+      toolsOut.push({ ...state, state: 'failed' });
+      notes.push({
+        assetId,
+        detail: `rtk 主路径不可用（${fallbackReason}）且 pi 无 JSON hook 面（extensions/rtk.ts 为版本耦合产物，不由 WAO 伪造）——已跳过装备，不影响其他资产送达；修复 rtk 后 POST rematerialize-assets 重试`,
+      });
+      return;
     }
     const hookFile = join(target, spec.hookFile);
     snap(hookFile);

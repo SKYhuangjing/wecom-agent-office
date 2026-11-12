@@ -193,14 +193,17 @@ test('fallback path (§7.1 dual path): dry-run outside-root / dry-run non-zero �
   }
 });
 
-test('fallback for pi: no JSON hook face (extensions/rtk.ts is version-coupled) → refused, not fabricated', async () => {
+test('fallback for pi: no JSON hook face (extensions/rtk.ts is version-coupled) → degraded note, not fabricated, not fatal (2026-11-12: 单优化器缺席不再拖垮整轮物化)', async () => {
   const sc = scenario('pi-fallback');
   const agentDir = join(sc, 'pi-agent');
   const bot = { id: 'rtk-pi1', provider: 'pi', providerConfig: { cwd: join(sc, 'cwd'), model: { model: 'm1' }, piAgentDir: agentDir } };
   setFakeMode(sc, 'outside');
   const mat = matOver(stubProvider(rtkWrite(agentDir, 'pi')), join(sc, 'data'), FAKE_RTK);
   try {
-    await assert.rejects(mat.materialize(bot, [{ ...RTK_ENTRY, content: { kind: 'rtk' } }]), /pi 无 JSON hook 面（extensions\/rtk\.ts 为版本耦合产物，不由 WAO 伪造）/);
+    const r = await mat.materialize(bot, [{ ...RTK_ENTRY, content: { kind: 'rtk' } }]);
+    assert.ok(r.notes.some((n) => /pi 无 JSON hook 面（extensions\/rtk\.ts 为版本耦合产物，不由 WAO 伪造）——已跳过装备/.test(n.detail)), 'degrade note carries the refusal reason');
+    assert.equal(manifestOf(mat, bot).tools.find((t) => t.kind === 'rtk').state, 'failed', 'tools row records the failed (degraded) state');
+    assert.ok(!String(manifestOf(mat, bot).lastResult ?? '').startsWith('failed:'), 'manifest itself is healthy — other assets unaffected');
   } finally {
     clearFakeMode();
   }

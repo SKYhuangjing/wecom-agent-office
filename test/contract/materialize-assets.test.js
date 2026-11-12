@@ -580,6 +580,48 @@ test('codex: env value with \\n/\\r/\\t materializes as escaped TOML — never a
   }
 });
 
+// pi + rtk 主路径失败(2026-11-12 PC1 生产实录):PC1 的 rtk dry-run 解析不出
+// 将写路径,曾经这里直接 throw——整个 materialize 打成 failed 态→manifest 降
+// 级→targetsFor 给裸 plan→--skill/--append-system-prompt(记忆)全部不上车。
+// 断言:rtk 降级为 note+tools failed 态,其余资产照常落盘+enrich。用注入的假
+// rtkBin 确定性复现"version 探测通过、dry-run 零路径"。
+test('pi: rtk main-path failure degrades to a note — materialize still succeeds, skills/memory still ride', async () => {
+  const booted = await bootProvider(join(REPO, 'plugins/provider-pi'));
+  try {
+    const sc = scenario('pi-rtk');
+    const agentDir = join(sc, 'agent-wao-pi-b3');
+    mkdirSync(join(sc, 'cwd'), { recursive: true });
+    // 假 rtk:任何 --dry-run 调用输出零路径(exit 0);version 探测给 9.9.9。
+    const fakeRtk = join(sc, 'fake-rtk.sh');
+    writeFileSync(fakeRtk, '#!/bin/sh\ncase "$*" in *--dry-run*) echo "no paths would be written"; exit 0;; *) echo "9.9.9"; exit 0;; esac\n');
+    chmodSync(fakeRtk, 0o755);
+    const mat = createMaterializer({
+      ports: { getProvider: () => booted.impl },
+      dataDir: dataDirOf('pi-rtk', sc),
+      rtkBin: fakeRtk,
+      log: { info() {}, warn() {}, error() {} },
+    });
+    const bot = { id: 'pi-b3', provider: 'pi', providerConfig: { cwd: join(sc, 'cwd'), model: { model: 'm1' }, piAgentDir: agentDir } };
+    const RTK = { assetId: 'ast-rtk1', type: 'tool', name: 'rtk', mode: 'shared', content: { kind: 'rtk' } };
+
+    const plan = mkPlan([SKILL, RTK, MEMORY]);
+    await mat.materialize(bot, plan); // 成功本身即断言(曾经的形态是 rejects)
+    const skillFile = join(agentDir, 'skills', 'wao-company', 'SKILL.md');
+    assert.ok(existsSync(skillFile), 'skill file still written');
+    assert.ok(existsSync(join(agentDir, 'wao-memory.md')), 'memory file still written');
+    const manifest = JSON.parse(readFileSync(join(dataDirOf('pi-rtk', sc), 'assets', 'pi-b3', 'manifest.json'), 'utf8'));
+    assert.ok(!String(manifest.lastResult ?? '').startsWith('failed:'), `manifest not failed: ${manifest.lastResult}`);
+    assert.ok(manifest.writes.some((w) => w?.path === skillFile), 'skill write recorded');
+
+    // enrich survives: skill/memory entries carry targets for the runner argv
+    const enriched = mat.targetsFor(bot, plan);
+    assert.equal(enriched.find((e) => e?.type === 'skill')?.target, skillFile, '--skill value enriches');
+    assert.equal(enriched.find((e) => e?.type === 'memory')?.target, join(agentDir, 'wao-memory.md'), 'memory target enriches');
+  } finally {
+    await booted.stop();
+  }
+});
+
 // ————————————————————————————————————————————————————————————————————————————
 // claude — owned 真值 (W3 T2 review Minor 1): host file pre-dating our first
 // write records owned:false and survives unload by strip, never whole-delete
