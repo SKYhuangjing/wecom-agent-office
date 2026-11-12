@@ -26,10 +26,14 @@ const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'ma
 export function skillMarkdown(entry) {
   const c = entry.content ?? {};
   const name = c.name ?? entry.name;
+  // description 永远必写（2026-11-12 PC1 实锤:pi 的技能加载器丢弃无
+  // description 的 SKILL.md——技能文件在盘上却静默不进上下文,模型每轮
+  // ls/find 现场找）。资产没配就兜底 name,保证清单必列出。
+  const description = (c.description !== undefined && c.description !== '') ? String(c.description) : String(name);
   return [
     '---',
     `name: ${name}`,
-    ...(c.description !== undefined && c.description !== '' ? [`description: ${JSON.stringify(String(c.description))}`] : []),
+    `description: ${JSON.stringify(description)}`,
     `x-wao-asset: ${entry.assetId}`,
     '---',
     '',
