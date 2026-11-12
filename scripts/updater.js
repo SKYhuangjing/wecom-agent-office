@@ -142,8 +142,12 @@ export function extractZip(zipPath, extDir, log) {
   rmSync(extDir, { recursive: true, force: true });
   mkdirSync(extDir, { recursive: true });
   if (process.platform === 'win32') {
+    // 2026-11-12 PC1 实锤:裸 'tar.exe' 可能被 PATH 里排前的 Git/MSYS tar 抢
+    // 命中——MSYS tar 把路径里的 'C:' 当远程主机名(「Cannot connect to C:」
+    // exit 128),解压必败。Windows 自带 bsdtar 用绝对路径钉死。
+    const winTar = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe');
     try {
-      execFileSync('tar.exe', ['-xf', zipPath, '-C', extDir], { stdio: 'ignore', timeout: 60000 });
+      execFileSync(winTar, ['-xf', zipPath, '-C', extDir], { stdio: 'ignore', timeout: 60000 });
     } catch {
       execFileSync('powershell', ['-NoProfile', '-Command',
         `Expand-Archive -Path '${zipPath}' -DestinationPath '${extDir}' -Force`], { stdio: 'ignore', timeout: 120000 });
