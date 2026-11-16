@@ -137,3 +137,15 @@ test('empty-string token behaves as unset (auth off)', async () => {
   const k = await start({ token: '' });
   assert.equal((await fetch(`http://127.0.0.1:${k.http.port}/api/state`)).status, 200);
 });
+
+test('token set: /api/oss/upload allows loopback without token (agent curl path)', async () => {
+  const k = await start({ token: TOKEN });
+  // loopback fetch without token must NOT be rejected with 401 by auth gate
+  // (may return 404/405/503 depending on whether route is mounted or method, but never 401)
+  const res = await fetch(`http://127.0.0.1:${k.http.port}/api/oss/upload`, { method: 'POST', body: 'dummy' });
+  assert.notEqual(res.status, 401, 'loopback /api/oss/upload must be exempt from WAO_TOKEN');
+
+  const resSlash = await fetch(`http://127.0.0.1:${k.http.port}/api/oss/upload/`, { method: 'POST', body: 'dummy' });
+  assert.notEqual(resSlash.status, 401, 'loopback /api/oss/upload/ must be exempt from WAO_TOKEN');
+});
+

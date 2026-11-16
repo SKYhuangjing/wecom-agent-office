@@ -80,9 +80,14 @@ node src/index.js version   # → 0.1.0   (拼错命令会被拒绝, 不会猜)
 | `WAO_PLUGINS_PATH` | 额外插件目录（按平台分隔符：POSIX `:` / Windows `;`，追加在仓库 plugins/ 之后） | 无 |
 | `WAO_LOG_LEVEL` | 日志级别 | `info` |
 | `WAO_TOKEN` | 访问鉴权令牌：设置后所有 `/api/*`、`/mcp` 请求须带 `Authorization: Bearer <t>` 或 `X-WAO-Token: <t>` 头 | 未设置=回环无鉴权 |
+| `WAO_OSS_ACCESS_KEY_ID` | OSS 上传凭据 AccessKey ID（亦可在 `plugins.json` 中配置，插件 options 优先） | 无 |
+| `WAO_OSS_ACCESS_KEY_SECRET` | OSS 上传凭据 AccessKey Secret（亦可在 `plugins.json` 中配置） | 无 |
+| `WAO_OSS_BUCKET` | OSS Bucket 名称 | `1data-dev` |
+| `WAO_OSS_ENDPOINT` | OSS 服务 Endpoint | `oss-cn-shanghai.aliyuncs.com` |
+| `WAO_OSS_PREFIX` | OSS 存储前缀 | `wao` |
 
 端口默认 **8792**；端口被占或 data 目录被锁 = 第二实例，拒绝启动（不共享数据目录）。
-`WAO_TOKEN` 设置即启用鉴权（P1 已落地）：`/healthz`（与 `/readyz`）免鉴权供 launchd/doctor 探活；Web 控制台静态资源（`/`、`/assets/*`、`/vendor/*`、`/api/ui/*`）免鉴权——页面先加载，SDK 发现 401 会弹输入框收令牌（存 localStorage，SSE 事件流因 EventSource 不能带头、单独接受 `?wao_token=` 查询参数）；其余 `/api/*` 与 `/mcp` 一律要求令牌，缺失/不符答 401。`wao tui` 与 `wao doctor` 自动带本进程环境里的 `WAO_TOKEN`。
+`WAO_TOKEN` 设置即启用鉴权（P1 已落地）：`/healthz`（与 `/readyz`）免鉴权供 launchd/doctor 探活；Web 控制台静态资源（`/`、`/assets/*`、`/vendor/*`、`/api/ui/*`）免鉴权——页面先加载，SDK 发现 401 会弹输入框收令牌（存 localStorage，SSE 事件流因 EventSource 不能带头、单独接受 `?wao_token=` 查询参数）；本地回环文件上传（`/api/oss/upload`）豁免令牌（专供本地子进程 Agent 上传文件交付外链，因 childEnv 已净化令牌；非回环调用仍严卡令牌）；其余 `/api/*` 与 `/mcp` 一律要求令牌，缺失/不符答 401。`wao tui` 与 `wao doctor` 自动带本进程环境里的 `WAO_TOKEN`。
 
 ## 3. 自检与运维
 

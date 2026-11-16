@@ -120,6 +120,21 @@ const isPublicPath = (pathname) => pathname === '/healthz' || pathname === '/rea
   || pathname.startsWith('/assets/') || pathname.startsWith('/vendor/')
   || pathname.startsWith('/api/ui/');
 
+export const isLoopbackRemote = (req) => {
+  const ip = req?.socket?.remoteAddress;
+  if (typeof ip !== 'string') return false;
+  const clean = ip.replace(/^\[|\]$/g, '').trim().toLowerCase();
+  return clean === '127.0.0.1' || clean === '::1' || clean === '::ffff:127.0.0.1';
+};
+
+const isAuthExemptPath = (req, pathname) => {
+  if (isPublicPath(pathname)) return true;
+  // Local agent OSS upload exemption: agents run with stripped WAO_TOKEN (childEnv hygiene)
+  // but deliver user files via loopback curl. External/LAN requests still demand WAO_TOKEN.
+  if ((pathname === '/api/oss/upload' || pathname === '/api/oss/upload/') && isLoopbackRemote(req)) return true;
+  return false;
+};
+
 // The presented token of a request, or '' when none: Bearer scheme (any case)
 // wins, then X-WAO-Token, then the /api/events query fallback.
 const tokenOf = (req, url) => {
@@ -200,8 +215,8 @@ export function createHttpShell({ log, webDir = null, auth = null, healthExtra =
     }
     const pathname = url.pathname;
     // Auth gate first: one check ahead of every branch (health, SSE, static,
-    // routes) so no dispatch path can dodge it. Public paths pass untouched.
-    if (authToken != null && !isPublicPath(pathname) && tokenOf(req, url) !== authToken) {
+    // routes) so no dispatch path can dodge it. Public & loopback-exempt paths pass untouched.
+    if (authToken != null && !isAuthExemptPath(req, pathname) && tokenOf(req, url) !== authToken) {
       return json(res, 401, { error: AUTH_UNAUTHORIZED });
     }
     if (pathname === '/healthz') {
