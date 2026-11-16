@@ -44,7 +44,7 @@ test('writeShellGuard: deterministic bytes, correct path formula, loadable ESM d
     assert.equal(readFileSync(p1, 'utf8'), bytes1, 'second write is byte-identical');
     assert.ok(bytes1.includes('tool_call'), 'guard hooks the tool_call event');
     assert.ok(bytes1.includes('WAO_BASH_TIMEOUT_SEC'), 'guard reads the env ceiling');
-    assert.ok(bytes1.includes('"bash"') && bytes1.includes('"powershell"'), 'both shell tools covered');
+    assert.ok(bytes1.includes('DESTRUCTIVE'), 'no-destroy policy present (2026-11-16)');
     assert.equal(
       shellGuardPathFor({ botId: 'b9' }),
       join(homedir(), '.pi', 'agent-wao-b9', 'extensions', 'wao-shell-guard.js'),
@@ -65,6 +65,29 @@ test('writeShellGuard: deterministic bytes, correct path formula, loadable ESM d
     const untouched = { toolName: 'read', input: { path: 'x' } };
     await patched(untouched);
     assert.equal(untouched.input.timeout, undefined, 'non-shell tools untouched');
+
+    // no-destroy policy (2026-11-16): deletion commands BLOCK with a reason
+    const blocked = async (toolName, command) => {
+      const ev = { toolName, input: { command, timeout: 30 } };
+      const r = await patched(ev);
+      assert.ok(r && r.block === true, `${toolName} blocks: ${command}`);
+      assert.ok(String(r.reason).includes('删除'), 'reason tells the model to redirect');
+    };
+    await blocked('bash', 'rm -rf /tmp/anything');
+    await blocked('bash', 'rm somefile.txt');
+    await blocked('bash', 'git reset --hard HEAD~1');
+    await blocked('bash', 'git push origin main --force');
+    await blocked('powershell', 'Remove-Item -Recurse -Force C:/Users/1data/x');
+    await blocked('powershell', 'del /s /q stuff');
+    // benign commands still pass (undefined return) and keep the timeout fill
+    const fineBash = { toolName: 'bash', input: { command: 'ls -la && rg -n pattern src/' } };
+    assert.equal(await patched(fineBash), undefined, 'benign bash passes');
+    assert.equal(fineBash.input.timeout, 90, 'timeout fill still applies');
+    const finePs = { toolName: 'powershell', input: { command: 'Get-ChildItem C:/Users | Select-Object -First 5' } };
+    assert.equal(await patched(finePs), undefined, 'benign powershell passes');
+    // word-boundary check: substrings must not false-positive
+    const benignWord = { toolName: 'bash', input: { command: 'echo confirm form format-list' } };
+    assert.equal(await patched(benignWord), undefined, 'substring words do not trigger');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

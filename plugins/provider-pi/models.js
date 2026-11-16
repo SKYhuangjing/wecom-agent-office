@@ -116,22 +116,38 @@ export function shellGuardPathFor({ botId, piAgentDir } = {}) {
 }
 
 // Guard source, deterministic bytes（改这里要同步 provider-pi 单测快照断言）。
-const SHELL_GUARD_SRC = `// WAO shell timeout guard (pi extension, provider-pi materialized): fills a
-// missing \`timeout\` on every bash / powershell tool call and clamps oversized
-// ones, so a model-chosen command (e.g. \`find /\`) can never hang the turn.
-// Ceiling comes from WAO_BASH_TIMEOUT_SEC (runner env); ${SHELL_GUARD_DEFAULT_SEC}s when unset.
-// Harmless by construction: guard errors are swallowed.
+const SHELL_GUARD_SRC = `// WAO shell guard (pi extension, provider-pi materialized), two faces:
+//   1. timeout — fills a missing \`timeout\` on every bash / powershell call and
+//      clamps oversized ones, so a model-chosen command (e.g. \`find /\`) can
+//      never hang the turn. Ceiling: WAO_BASH_TIMEOUT_SEC (runner env),
+//      ${SHELL_GUARD_DEFAULT_SEC}s when unset.
+//   2. no-destroy (2026-11-16 user policy) — deletion/destructive commands are
+//      BLOCKED outright; the reason text tells the model to redirect the user
+//      to a human operator. Answer bots have no delete privilege, ever.
+// Harmless by construction: guard errors are swallowed (fail-open on the guard
+// itself, fail-closed on policy).
+const DESTRUCTIVE = {
+  bash: /\\b(rm|rmdir)\\b|\\bgit\\s+(reset\\s+--hard|clean\\b|push\\b[^\\n]*--force)|\\b(del|rd)\\s+\\/[sq]|\\b(truncate|shred|mkfs)\\b/i,
+  powershell: /\\b(Remove-Item|Clear-Content|Erase-Content|Format-Volume|rm|del|rd|ri)\\b|\\bgit\\s+(reset\\s+--hard|clean\\b|push\\b[^\\n]*--force)|\\b(truncate|shred)\\b/i,
+};
+const BLOCK_REASON = "WAO 策略:机器人无删除或破坏文件的权限——删除、清空、强制回滚这类操作请找技术同事处理。";
 export default function (pi) {
   pi.on("tool_call", async (event) => {
     try {
-      if (event == null || (event.toolName !== "bash" && event.toolName !== "powershell")) return;
+      if (event == null) return;
+      const input = event.input;
+      const command = input != null && typeof input.command === "string" ? input.command : "";
+      if (command !== "" && Object.prototype.hasOwnProperty.call(DESTRUCTIVE, event.toolName)
+        && DESTRUCTIVE[event.toolName].test(command)) {
+        return { block: true, reason: BLOCK_REASON };
+      }
+      if (event.toolName !== "bash" && event.toolName !== "powershell") return;
       const raw = Number(process.env.WAO_BASH_TIMEOUT_SEC);
       const cap = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : ${SHELL_GUARD_DEFAULT_SEC};
-      const input = event.input;
       if (input == null || typeof input !== "object") return;
       if (typeof input.timeout !== "number" || !(input.timeout > 0)) input.timeout = cap;
       else if (input.timeout > cap) input.timeout = cap;
-    } catch { /* never block the tool on guard errors */ }
+    } catch { /* never break the tool pipeline on guard errors */ }
   });
 }
 `;
