@@ -101,4 +101,29 @@ test('claude/pi mcp documents: wao- prefixes, sorted server keys, shapes as-is; 
   assert.equal(pi['x-wao-managed'], true);
   assert.equal(pi['x-wao-bot-id'], 'b1');
   assert.deepEqual(Object.keys(pi.mcpServers), ['wao-aaa', 'wao-zzz']);
+  assert.equal(pi.mcpServers['wao-aaa'].exposure, 'direct');
+  assert.equal(pi.mcpServers['wao-zzz'].exposure, 'direct');
+});
+
+test('pi mcp document: passes explicit exposure and timeout; defaults exposure to direct', () => {
+  const plan = [ENTRY({
+    type: 'mcp', name: 'm', content: {
+      servers: {
+        explicit: { command: 'node', args: ['server.js'], exposure: 'deferred', timeout: 300 },
+        defaulted: { command: 'python', args: ['run.py'] },
+      },
+    },
+  })];
+  const pi = piMcpDocument('b2', plan);
+  assert.deepEqual(pi.mcpServers['wao-explicit'], {
+    command: 'node',
+    args: ['server.js'],
+    exposure: 'deferred',
+    timeout: 300,
+  });
+  assert.deepEqual(pi.mcpServers['wao-defaulted'], {
+    command: 'python',
+    args: ['run.py'],
+    exposure: 'direct',
+  });
 });

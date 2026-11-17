@@ -267,6 +267,16 @@ const validateMcpServers = (servers, errors) => {
     } else {
       errors.push(`content.servers.${serverId} 只能为 stdio（command/args/env）或 http（type/url/headers）之一`);
     }
+    if (server.exposure !== undefined) {
+      if (typeof server.exposure !== 'string' || !MCP_EXPOSURES.includes(server.exposure)) {
+        errors.push(`content.servers.${serverId}.exposure 只能为 ${MCP_EXPOSURES.join('/')} 之一（收到 ${JSON.stringify(server.exposure)}）`);
+      }
+    }
+    if (server.timeout !== undefined) {
+      if (typeof server.timeout !== 'number' || !Number.isInteger(server.timeout) || server.timeout <= 0 || server.timeout > 3600) {
+        errors.push(`content.servers.${serverId}.timeout 必须为 1..3600 秒的正整数（收到 ${JSON.stringify(server.timeout)}）`);
+      }
+    }
   }
 };
 
@@ -281,8 +291,9 @@ const CONTENT_KEYS = {
   prompt: ['text'],
   tool: ['kind', 'options'],
 };
-const MCP_STDIO_KEYS = ['command', 'args', 'env', 'type']; // type listed so stdio+type keeps its dedicated copy
-const MCP_HTTP_KEYS = ['type', 'url', 'headers'];
+export const MCP_EXPOSURES = ['direct', 'deferred', 'codemode', 'hidden'];
+const MCP_STDIO_KEYS = ['command', 'args', 'env', 'type', 'exposure', 'timeout']; // type listed so stdio+type keeps its dedicated copy
+const MCP_HTTP_KEYS = ['type', 'url', 'headers', 'exposure', 'timeout'];
 
 const rejectUnknownKeys = (obj, where, allowed, note, errors = []) => {
   for (const key of Object.keys(obj)) {

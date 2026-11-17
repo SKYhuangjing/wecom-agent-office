@@ -253,6 +253,50 @@ test('closed content schema: unknown keys rejected for all five types, mcp serve
   assert.ok(rg.some((e) => /options\.flags：unexpected key（ripgrep 仅接受 extraHints）/.test(e)), rg.join(';'));
 });
 
+test('mcp schema: exposure and timeout accepted on stdio and http; invalid values rejected', () => {
+  // valid shapes:
+  assert.deepEqual(validateAsset({
+    type: 'mcp', name: 'valid-stdio', content: {
+      servers: { s1: { command: 'node', args: ['x.js'], exposure: 'direct', timeout: 300 } },
+    },
+  }), []);
+  assert.deepEqual(validateAsset({
+    type: 'mcp', name: 'valid-http', content: {
+      servers: { s2: { type: 'http', url: 'https://example.com/mcp', exposure: 'deferred', timeout: 60 } },
+    },
+  }), []);
+
+  // invalid exposure:
+  const badExp = validateAsset({
+    type: 'mcp', name: 'bad-exp', content: {
+      servers: { s1: { command: 'node', exposure: 'invalid' } },
+    },
+  });
+  assert.ok(badExp.some((e) => /exposure 只能为 direct\/deferred\/codemode\/hidden 之一/.test(e)), badExp.join(';'));
+
+  // invalid timeout (non-number, <=0, >3600, float):
+  const badTimeout1 = validateAsset({
+    type: 'mcp', name: 'bad-to-1', content: {
+      servers: { s1: { command: 'node', timeout: 0 } },
+    },
+  });
+  assert.ok(badTimeout1.some((e) => /timeout 必须为 1\.\.3600 秒的正整数/.test(e)), badTimeout1.join(';'));
+
+  const badTimeout2 = validateAsset({
+    type: 'mcp', name: 'bad-to-2', content: {
+      servers: { s1: { command: 'node', timeout: 3601 } },
+    },
+  });
+  assert.ok(badTimeout2.some((e) => /timeout 必须为 1\.\.3600 秒的正整数/.test(e)), badTimeout2.join(';'));
+
+  const badTimeout3 = validateAsset({
+    type: 'mcp', name: 'bad-to-3', content: {
+      servers: { s1: { command: 'node', timeout: 12.5 } },
+    },
+  });
+  assert.ok(badTimeout3.some((e) => /timeout 必须为 1\.\.3600 秒的正整数/.test(e)), badTimeout3.join(';'));
+});
+
 // —— position masking (§8.1 P1: env/headers values masked regardless of key) —
 
 test('maskAsset: mcp env/headers values ALL masked by position; command/args/url intact; no mutation', () => {

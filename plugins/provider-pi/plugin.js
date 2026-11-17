@@ -84,11 +84,17 @@ export function piMcpDocument(botId, plan) {
     for (const serverId of Object.keys(contentServers).sort()) {
       const s = contentServers[serverId];
       const out = {};
-      for (const key of ['command', 'args', 'env', 'type', 'url', 'headers']) {
+      for (const key of ['command', 'args', 'env', 'type', 'url', 'headers', 'exposure', 'timeout']) {
         if (s[key] === undefined) continue;
         out[key] = key === 'env' || key === 'headers'
           ? Object.fromEntries(Object.keys(s[key]).sort().map((k) => [k, s[key][k]]))
           : s[key];
+      }
+      // pi 默认 exposure 为 codemode（对模型隐藏，需要 codemode 环境）；WAO 机器人是
+      // 企微会话型 bot 且默认 --exclude-tools codemode，装备给 bot 的 MCP 服务必须
+      // 默认 direct（声明给模型作为原生工具可见）。若资产显式声明了 exposure 则尊重其设置。
+      if (out.exposure === undefined) {
+        out.exposure = 'direct';
       }
       servers[`wao-${serverId}`] = out;
     }
